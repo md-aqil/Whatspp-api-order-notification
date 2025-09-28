@@ -1,0 +1,10 @@
+# Cloudflare Tunnel Configuration
+tunnel: 0df27a77-c611-40aa-aaaa-70aadc020244
+credentials-file: tunnel-config\credentials.json
+
+ingress:
+  # Main application ingress rule
+  - hostname: lcsw.dpdns.org
+    service: http://localhost:3001
+  # Fallback rule for any other requests
+  - service: http_status:404
