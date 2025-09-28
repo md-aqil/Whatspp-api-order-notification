@@ -12,6 +12,7 @@ import { Separator } from '@/components/ui/separator'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { toast, Toaster } from 'sonner'
+import { TemplatePanel } from '@/components/dashboard/TemplatePanel'
 import { 
   MessageCircle, 
   Store, 
@@ -48,6 +49,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(false)
   const [showCampaignDialog, setShowCampaignDialog] = useState(false)
   const [selectedCampaign, setSelectedCampaign] = useState(null)
+  const [recipient, setRecipient] = useState('')
 
   // Load integrations status on mount
   useEffect(() => {
@@ -160,13 +162,12 @@ export default function DashboardPage() {
     }
   }
 
-  const sendCatalog = async () => {
+  const sendCatalog = async (templateName = null) => {
     if (selectedProducts.length === 0) {
       toast.error('Please select at least one product')
       return
     }
 
-    const recipient = document.getElementById('recipient').value
     if (!recipient) {
       toast.error('Please enter recipient phone number')
       return
@@ -179,14 +180,15 @@ export default function DashboardPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           products: selectedProducts,
-          recipient: recipient
+          recipient: recipient,
+          templateName: templateName
         })
       })
       
       if (response.ok) {
-        toast.success('Catalog sent successfully!')
+        toast.success(templateName ? `Catalog sent with template "${templateName}"!` : 'Catalog sent successfully!')
         setSelectedProducts([])
-        document.getElementById('recipient').value = ''
+        setRecipient('')
       } else {
         const error = await response.json()
         toast.error(error.error || 'Failed to send catalog')
@@ -616,53 +618,67 @@ export default function DashboardPage() {
 
           {/* Send Catalog Tab */}
           <TabsContent value="send" className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Send Product Catalog</CardTitle>
-                <CardDescription>
-                  Send selected products to customers via WhatsApp with payment links
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div>
-                  <Label htmlFor="recipient">Recipient Phone Number</Label>
-                  <Input
-                    id="recipient"
-                    placeholder="+1234567890"
-                    className="mt-1"
-                  />
-                </div>
-                
-                <Separator />
-                
-                <div>
-                  <p className="font-medium mb-2">Selected Products ({selectedProducts.length})</p>
-                  {selectedProducts.length === 0 ? (
-                    <p className="text-muted-foreground">No products selected</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {selectedProducts.map(productId => {
-                        const product = products.find(p => p.id === productId)
-                        return product ? (
-                          <div key={productId} className="flex items-center justify-between p-2 bg-muted rounded">
-                            <span className="text-sm">{product.title}</span>
-                            <Badge variant="outline">${product.price}</Badge>
-                          </div>
-                        ) : null
-                      })}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="lg:col-span-2 space-y-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Send Product Catalog</CardTitle>
+                    <CardDescription>
+                      Send selected products to customers via WhatsApp with payment links
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div>
+                      <Label htmlFor="recipient">Recipient Phone Number</Label>
+                      <Input
+                        id="recipient"
+                        placeholder="+1234567890"
+                        className="mt-1"
+                        value={recipient}
+                        onChange={(e) => setRecipient(e.target.value)}
+                      />
                     </div>
-                  )}
-                </div>
+                    
+                    <Separator />
+                    
+                    <div>
+                      <p className="font-medium mb-2">Selected Products ({selectedProducts.length})</p>
+                      {selectedProducts.length === 0 ? (
+                        <p className="text-muted-foreground">No products selected</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {selectedProducts.map(productId => {
+                            const product = products.find(p => p.id === productId)
+                            return product ? (
+                              <div key={productId} className="flex items-center justify-between p-2 bg-muted rounded">
+                                <span className="text-sm">{product.title}</span>
+                                <Badge variant="outline">${product.price}</Badge>
+                              </div>
+                            ) : null
+                          })}
+                        </div>
+                      )}
+                    </div>
 
-                <Button 
-                  onClick={sendCatalog} 
-                  disabled={loading || selectedProducts.length === 0 || !integrations.whatsapp.connected}
-                  className="w-full"
-                >
-                  {loading ? 'Sending...' : 'Send Catalog via WhatsApp'}
-                </Button>
-              </CardContent>
-            </Card>
+                    <Button 
+                      onClick={() => sendCatalog()}
+                      disabled={loading || selectedProducts.length === 0 || !integrations.whatsapp.connected}
+                      className="w-full"
+                    >
+                      {loading ? 'Sending...' : 'Send Catalog via WhatsApp'}
+                    </Button>
+                  </CardContent>
+                </Card>
+              </div>
+              
+              <div className="lg:col-span-1">
+                <TemplatePanel 
+                  selectedProducts={selectedProducts}
+                  recipient={recipient}
+                  onSendWithTemplate={(templateName) => sendCatalog(templateName)}
+                />
+              </div>
+            </div>
           </TabsContent>
 
           {/* Campaigns Tab */}

@@ -18,8 +18,8 @@ echo This may take a few moments...
 echo.
 
 REM Navigate to the app directory and start the development server
-cd /d "%~dp0app"
-echo Starting development server on port 3001...
+cd /d "%~dp0"
+echo Starting development server on port 3000...
 start "WhatsApp Commerce Hub Server" cmd /k "yarn dev:no-reload"
 
 timeout /t 3 /nobreak >nul
@@ -27,7 +27,7 @@ timeout /t 3 /nobreak >nul
 echo.
 echo ==========================================
 echo   Server starting...
-echo   Local URL: http://localhost:3001
+echo   Local URL: http://localhost:3000
 echo   Webhook URL: https://lcsw.dpdns.org/api/webhook/shopify
 echo ==========================================
 echo.

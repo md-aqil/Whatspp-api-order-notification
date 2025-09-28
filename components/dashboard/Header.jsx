@@ -7,10 +7,11 @@ import {
   Search,
   User
 } from 'lucide-react'
+import { ThemeToggle } from '@/components/dashboard/ThemeToggle'
 
 export function Header({ setSidebarOpen }) {
   return (
-    <header className="bg-white shadow-sm">
+    <header className="bg-white shadow-sm dark:bg-gray-800">
       <div className="flex items-center justify-between h-16 px-4">
         <div className="flex items-center">
           <button
@@ -21,7 +22,7 @@ export function Header({ setSidebarOpen }) {
             <Menu className="h-6 w-6" />
           </button>
           <div className="ml-4 lg:ml-0">
-            <h1 className="text-xl font-semibold text-gray-900">Dashboard</h1>
+            <h1 className="text-xl font-semibold text-gray-900 dark:text-white">Dashboard</h1>
           </div>
         </div>
         
@@ -33,11 +34,13 @@ export function Header({ setSidebarOpen }) {
             <input
               type="text"
               placeholder="Search..."
-              className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+              className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 sm:text-sm dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white"
             />
           </div>
           
-          <button className="p-1 text-gray-500 rounded-full hover:text-gray-700 focus:outline-none">
+          <ThemeToggle />
+          
+          <button className="p-1 text-gray-500 rounded-full hover:text-gray-700 focus:outline-none dark:text-gray-400 dark:hover:text-gray-200">
             <Bell className="h-6 w-6" />
           </button>
           

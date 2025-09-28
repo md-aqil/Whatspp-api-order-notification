@@ -476,7 +476,9 @@ async function handleRoute(request, { params }) {
         // Return data without sensitive fields
         defaultIntegrations.whatsapp.data = {
           phoneNumberId: integrations.whatsapp?.phoneNumberId || '',
-          businessAccountId: integrations.whatsapp?.businessAccountId || ''
+          businessAccountId: integrations.whatsapp?.businessAccountId || '',
+          catalogId: integrations.whatsapp?.catalogId || '', // Add catalogId to the response
+          webhookVerifyToken: integrations.whatsapp?.webhookVerifyToken || ''
         }
         defaultIntegrations.shopify.data = {
           shopDomain: integrations.shopify?.shopDomain || '',
@@ -505,7 +507,7 @@ async function handleRoute(request, { params }) {
       try {
         if (type === 'whatsapp' && data.phoneNumberId && data.accessToken) {
           // Test WhatsApp connection by getting phone number info
-          const testUrl = `https://graph.facebook.com/v17.0/${data.phoneNumberId}`
+          const testUrl = `https://graph.facebook.com/v22.0/${data.phoneNumberId}`
           const testResponse = await fetch(testUrl, {
             headers: { 'Authorization': `Bearer ${data.accessToken}` }
           })
@@ -530,6 +532,15 @@ async function handleRoute(request, { params }) {
           { error: `Integration test failed: ${error.message}` }, 
           { status: 400 }
         ))
+      }
+
+      // Ensure WhatsApp configuration has the right structure
+      if (type === 'whatsapp') {
+        data.connected = !!(data.phoneNumberId && data.accessToken);
+        // Ensure catalogId is properly handled
+        if (data.catalogId === '') {
+          delete data.catalogId;
+        }
       }
 
       // Save integration
@@ -857,53 +868,53 @@ async function handleRoute(request, { params }) {
       }
     }
 
-    // Send catalog endpoint
+    // Update the send catalog endpoint to support template selection
     if (route === '/send-catalog' && method === 'POST') {
       try {
         const db = await connectToMongo();
-        const body = await request.json()
-        const { products: productIds, recipient } = body
+        const body = await request.json();
+        const { products: productIds, recipient, templateName } = body;
 
         if (!productIds || !Array.isArray(productIds) || productIds.length === 0) {
           return handleCORS(NextResponse.json(
             { error: "Products array is required" }, 
             { status: 400 }
-          ))
+          ));
         }
 
         if (!recipient) {
           return handleCORS(NextResponse.json(
             { error: "Recipient phone number is required" }, 
             { status: 400 }
-          ))
+          ));
         }
 
         // Get integrations
-        const integrations = await db.collection('integrations').findOne({ userId: 'default' })
+        const integrations = await db.collection('integrations').findOne({ userId: 'default' });
         
         if (!integrations?.whatsapp?.phoneNumberId || !integrations?.whatsapp?.accessToken) {
           return handleCORS(NextResponse.json(
             { error: "WhatsApp not configured" }, 
             { status: 400 }
-          ))
+          ));
         }
 
         // Get products
-        const productsData = await db.collection('products').findOne({ userId: 'default' })
+        const productsData = await db.collection('products').findOne({ userId: 'default' });
         if (!productsData) {
           return handleCORS(NextResponse.json(
             { error: "No products found. Please sync products first." }, 
             { status: 400 }
-          ))
+          ));
         }
 
-        const selectedProducts = productsData.products.filter(p => productIds.includes(p.id))
+        const selectedProducts = productsData.products.filter(p => productIds.includes(p.id));
         
         if (selectedProducts.length === 0) {
           return handleCORS(NextResponse.json(
             { error: "Selected products not found" }, 
             { status: 400 }
-          ))
+          ));
         }
 
         try {
@@ -918,45 +929,98 @@ async function handleRoute(request, { params }) {
             return handleCORS(NextResponse.json(
               { error: "Invalid phone number format. Please include country code." }, 
               { status: 400 }
-            ))
+            ));
           }
 
-          // Check if we have a catalog ID configured
-          const hasCatalogId = integrations.whatsapp.catalogId;
-          
-          // Use catalog link message as it's more reliable
-          if (hasCatalogId) {
-            // Send a catalog link message with selected product information
-            // Use businessAccountId for catalog links, not phoneNumberId
-            const businessAccountId = integrations.whatsapp.businessAccountId || integrations.whatsapp.phoneNumberId;
-            const catalogLink = `https://wa.me/c/${businessAccountId}`;
-            
-            // Create a message that includes information about selected products
-            let productInfo = "";
-            if (selectedProducts.length > 0) {
-              productInfo = "\nSelected products:\n";
-              selectedProducts.slice(0, 3).forEach((product, index) => {
-                productInfo += `${index + 1}. ${product.title} - $${product.price}\n`;
-              });
-              if (selectedProducts.length > 3) {
-                productInfo += `...and ${selectedProducts.length - 3} more items\n`;
-              }
-              productInfo += "\n";
-            }
-            
+          // Check if we're using a template
+          if (templateName) {
+            // Send using the selected template
             const messageData = {
               messaging_product: "whatsapp",
               to: formattedRecipient,
-              type: "text",
-              text: {
-                body: `🛍️ *Our Product Catalog*
+              type: "template",
+              template: {
+                name: templateName,
+                language: {
+                  code: "en"
+                },
+                components: [
+                  {
+                    type: "body",
+                    parameters: [
+                      {
+                        type: "text",
+                        text: selectedProducts.length.toString()
+                      }
+                    ]
+                  }
+                ]
+              }
+            };
+
+            const result = await sendWhatsAppMessage(
+              integrations.whatsapp.phoneNumberId,
+              integrations.whatsapp.accessToken,
+              formattedRecipient,
+              messageData
+            );
+
+            // Log the message
+            await db.collection('messages').insertOne({
+              id: uuidv4(),
+              userId: 'default',
+              recipient: formattedRecipient,
+              products: selectedProducts,
+              template: templateName,
+              whatsappMessageId: result.messages?.[0]?.id,
+              status: 'sent',
+              sentAt: new Date()
+            });
+
+            return handleCORS(NextResponse.json({ 
+              success: true, 
+              messageId: result.messages?.[0]?.id 
+            }));
+          } else {
+            // Use the existing text-based approach
+            const hasCatalogId = integrations.whatsapp.catalogId;
+            
+            // Always use text-based messages to avoid template approval requirements
+            // Create a catalog link
+            const businessAccountId = integrations.whatsapp.businessAccountId || integrations.whatsapp.phoneNumberId;
+            const catalogLink = `https://wa.me/c/${businessAccountId}`;
+            
+            // Create a message that includes information about selected products with images
+            let productInfo = "Selected products:\n";
+            selectedProducts.slice(0, 3).forEach((product, index) => {
+              let productEntry = `${index + 1}. *${product.title}* - $${product.price}\n`;
+              if (product.image) {
+                productEntry += `   📷 Image: ${product.image}\n`;
+              }
+              if (product.description) {
+                productEntry += `   📝 ${product.description.substring(0, 100)}${product.description.length > 100 ? '...' : ''}\n`;
+              }
+              productInfo += productEntry + "\n";
+            });
+            if (selectedProducts.length > 3) {
+              productInfo += `...and ${selectedProducts.length - 3} more items\n`;
+            }
+            
+            const catalogMessage = `🛍️ *Our Product Catalog*
 
 Check out our latest products:
 ${catalogLink}
 
 ${productInfo}Browse our full collection and find something special just for you!
 
-🛍️ *Shop Now* - Click the link above to browse our catalog`,
+🛍️ *Shop Now* - Click the link above to browse our catalog with images`;
+
+            const messageData = {
+              messaging_product: "whatsapp",
+              to: formattedRecipient,
+              type: "text",
+              text: {
+                body: catalogMessage,
                 preview_url: true
               }
             };
@@ -987,167 +1051,111 @@ ${productInfo}Browse our full collection and find something special just for you
               success: true, 
               messageId: result.messages?.[0]?.id 
             }));
-          } else {
-            // Fallback to text message if no catalog ID is configured
-            if (selectedProducts.length === 1) {
-              // For single product, include image link and better formatting
-              const product = selectedProducts[0];
-              let catalogText = `🛍️ *${product.title}*\n\n`;
-              
-              if (product.image) {
-                catalogText += `${product.image}\n\n`;
-              }
-              
-              if (product.description) {
-                catalogText += `${product.description.substring(0, 200)}${product.description.length > 200 ? '...' : ''}\n\n`;
-              }
-              
-              catalogText += `💰 *Price: $${product.price}*\n\n`;
-              
-              // Create Stripe checkout session for individual product
-              if (integrations.stripe?.secretKey) {
-                const checkoutSession = await createStripeCheckoutSession([
-                  {
-                    price_data: {
-                      currency: 'usd',
-                      product_data: {
-                        name: product.title,
-                        description: product.description
-                      },
-                      unit_amount: Math.round(parseFloat(product.price) * 100)
-                    },
-                    quantity: 1
-                  }
-                ], { productId: product.id });
-                
-                catalogText += `🛒 *Buy now:* ${checkoutSession.url}\n\n`;
-              } else {
-                catalogText += `🛒 Contact us to purchase\n\n`;
-              }
-              
-              catalogText += "_💡 Tip: Connect your Facebook catalog for a better shopping experience with images!_";
-
-              const messageData = {
-                messaging_product: "whatsapp",
-                to: formattedRecipient,
-                type: "text",
-                text: {
-                  body: catalogText
-                }
-              };
-
-              console.log('Sending message with data:', JSON.stringify(messageData, null, 2));
-
-              const result = await sendWhatsAppMessage(
-                integrations.whatsapp.phoneNumberId,
-                integrations.whatsapp.accessToken,
-                formattedRecipient,
-                messageData
-              );
-
-              console.log('WhatsApp API response:', JSON.stringify(result, null, 2));
-
-              // Log the message
-              await db.collection('messages').insertOne({
-                id: uuidv4(),
-                userId: 'default',
-                recipient: formattedRecipient,
-                products: selectedProducts,
-                whatsappMessageId: result.messages?.[0]?.id,
-                status: 'sent',
-                sentAt: new Date()
-              });
-
-              return handleCORS(NextResponse.json({ 
-                success: true, 
-                messageId: result.messages?.[0]?.id 
-              }));
-            } else {
-              // Fallback to text message for multiple products
-              let catalogText = "🛍️ *Product Catalog*\n\n";
-              
-              for (const product of selectedProducts) {
-                catalogText += `*${product.title}*\n`;
-                if (product.description) {
-                  catalogText += `${product.description.substring(0, 100)}...\n`;
-                }
-                catalogText += `💰 Price: $${product.price}\n`;
-                
-                // Create Stripe checkout session for individual product
-                if (integrations.stripe?.secretKey) {
-                  const checkoutSession = await createStripeCheckoutSession([
-                    {
-                      price_data: {
-                        currency: 'usd',
-                        product_data: {
-                          name: product.title,
-                          description: product.description
-                        },
-                        unit_amount: Math.round(parseFloat(product.price) * 100)
-                      },
-                      quantity: 1
-                    }
-                  ], { productId: product.id });
-                  
-                  catalogText += `🛒 Buy now: ${checkoutSession.url}\n\n`;
-                } else {
-                  catalogText += `🛒 Contact us to purchase\n\n`;
-                }
-              }
-
-              // Add a note about setting up catalog for better experience
-              catalogText += "_💡 Tip: Connect your Facebook catalog for a better shopping experience!_";
-
-              const messageData = {
-                messaging_product: "whatsapp",
-                to: formattedRecipient,
-                type: "text",
-                text: {
-                  body: catalogText
-                }
-              };
-
-              console.log('Sending message with data:', JSON.stringify(messageData, null, 2));
-
-              const result = await sendWhatsAppMessage(
-                integrations.whatsapp.phoneNumberId,
-                integrations.whatsapp.accessToken,
-                formattedRecipient,
-                messageData
-              );
-
-              console.log('WhatsApp API response:', JSON.stringify(result, null, 2));
-
-              // Log the message
-              await db.collection('messages').insertOne({
-                id: uuidv4(),
-                userId: 'default',
-                recipient: formattedRecipient,
-                products: selectedProducts,
-                whatsappMessageId: result.messages?.[0]?.id,
-                status: 'sent',
-                sentAt: new Date()
-              });
-
-              return handleCORS(NextResponse.json({ 
-                success: true, 
-                messageId: result.messages?.[0]?.id 
-              }));
-            }
           }
         } catch (error) {
           console.error('Failed to send catalog message:', error);
           return handleCORS(NextResponse.json(
             { error: `Failed to send message: ${error.message}` }, 
             { status: 400 }
-          ))
+          ));
         }
       } catch (error) {
         console.error('Failed to send catalog:', error);
         return handleCORS(NextResponse.json(
           { error: 'Failed to send catalog' },
           { status: 500 }
-        ))
+        ));
+      }
+    }
+
+    // New endpoint to fetch WhatsApp templates
+    if (route === '/whatsapp-templates' && method === 'GET') {
+      try {
+        const db = await connectToMongo();
+        
+        // Get WhatsApp integration details
+        const integrations = await db.collection('integrations').findOne({ userId: 'default' });
+        
+        if (!integrations?.whatsapp?.phoneNumberId || !integrations?.whatsapp?.accessToken) {
+          return handleCORS(NextResponse.json(
+            { 
+              error: "WhatsApp not configured properly. Missing phone number ID or access token.",
+              guidance: "Please check your WhatsApp integration settings in the dashboard."
+            },
+            { status: 400 }
+          ));
+        }
+
+        // Use the business account ID from integration settings
+        const businessAccountId = integrations.whatsapp.businessAccountId;
+        
+        if (!businessAccountId) {
+          return handleCORS(NextResponse.json(
+            { 
+              error: "Business account ID not found in integration settings",
+              guidance: "Please ensure your WhatsApp Business Account is properly configured."
+            },
+            { status: 400 }
+          ));
+        }
+
+        // Fetch templates from WhatsApp API using the business account ID
+        const url = `https://graph.facebook.com/v22.0/${businessAccountId}/message_templates`;
+        
+        const templateResponse = await fetch(url, {
+          headers: {
+            'Authorization': `Bearer ${integrations.whatsapp.accessToken}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        const data = await templateResponse.json();
+        
+        if (!templateResponse.ok) {
+          console.error('WhatsApp Templates API Error:', data);
+          
+          // Provide more detailed error information
+          let errorMessage = "Failed to fetch templates from WhatsApp API";
+          let guidance = "";
+          
+          if (data.error?.code === 100) {
+            if (data.error?.message?.includes('message_templates')) {
+              errorMessage = "Unable to access message templates";
+              guidance = "Your business account may not have the required permissions or the account ID may be incorrect.";
+            } else {
+              errorMessage = "Invalid request to WhatsApp API";
+              guidance = "There may be an issue with your business account configuration.";
+            }
+          } else if (data.error?.code === 200) {
+            errorMessage = "Insufficient permissions";
+            guidance = "Your access token may not have the required business_management permissions.";
+          }
+          
+          // Return an empty array with error details instead of an error to allow the UI to still function
+          return handleCORS(NextResponse.json({
+            data: [],
+            error: errorMessage,
+            guidance: guidance,
+            apiError: data.error
+          }));
+        }
+
+        // Filter for approved templates only
+        const approvedTemplates = data.data?.filter(template => 
+          template.status === 'APPROVED'
+        ) || [];
+
+        return handleCORS(NextResponse.json(approvedTemplates));
+      } catch (error) {
+        console.error('Failed to fetch WhatsApp templates:', error);
+        return handleCORS(NextResponse.json(
+          { 
+            error: 'Failed to fetch WhatsApp templates',
+            guidance: "Please check your internet connection and WhatsApp integration settings.",
+            technicalError: error.message
+          },
+          { status: 500 }
+        ));
       }
     }
 
