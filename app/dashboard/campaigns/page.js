@@ -22,7 +22,8 @@ import {
   Send,
   CheckCircle,
   AlertCircle,
-  Calendar
+  Calendar,
+  AlertTriangle
 } from 'lucide-react'
 
 export default function CampaignsPage() {
@@ -43,46 +44,13 @@ export default function CampaignsPage() {
   const loadCampaigns = async () => {
     try {
       setLoading(true)
-      // In a real implementation, this would fetch from your API
-      // const response = await fetch('/api/campaigns')
-      // if (response.ok) {
-      //   const data = await response.json()
-      //   setCampaigns(data)
-      // }
-      
-      // Mock data for demonstration
-      const mockCampaigns = [
-        {
-          id: '1',
-          name: 'Summer Sale Campaign',
-          template: 'summer_sale_2025',
-          message: '🌟 Summer Sale Alert! Get 30% off all products. Shop now!',
-          audience: 'all_customers',
-          recipients: 1250,
-          status: 'sent',
-          sentAt: new Date('2025-07-15'),
-        },
-        {
-          id: '2',
-          name: 'New Product Launch',
-          template: 'product_launch',
-          message: '🚀 Exciting news! Our new product line is now available. Check it out!',
-          audience: 'recent_buyers',
-          recipients: 842,
-          status: 'scheduled',
-          scheduledAt: new Date('2025-08-01'),
-        },
-        {
-          id: '3',
-          name: 'Customer Feedback Request',
-          template: 'feedback_request',
-          message: 'We value your opinion! Please share your feedback on your recent purchase.',
-          audience: 'recent_buyers',
-          recipients: 320,
-          status: 'draft',
-        }
-      ]
-      setCampaigns(mockCampaigns)
+      const response = await fetch('/api/campaigns')
+      if (response.ok) {
+        const data = await response.json()
+        setCampaigns(data)
+      } else {
+        throw new Error('Failed to load campaigns')
+      }
     } catch (error) {
       console.error('Failed to load campaigns:', error)
       toast.error('Failed to load campaigns')
@@ -93,69 +61,43 @@ export default function CampaignsPage() {
 
   const loadTemplates = async () => {
     try {
-      // In a real implementation, this would fetch from your API
-      // const response = await fetch('/api/whatsapp-templates')
-      // if (response.ok) {
-      //   const data = await response.json()
-      //   setTemplates(data)
-      // }
-      
-      // Mock data for demonstration
-      const mockTemplates = [
-        {
-          id: '1',
-          name: 'summer_sale_2025',
-          category: 'MARKETING',
-          language: 'en_US',
-          status: 'APPROVED',
-          components: [
-            {
-              type: 'BODY',
-              text: '🌟 Summer Sale Alert! Get {discount}% off all products. Shop now at {shop_url}'
-            }
-          ]
-        },
-        {
-          id: '2',
-          name: 'product_launch',
-          category: 'MARKETING',
-          language: 'en_US',
-          status: 'APPROVED',
-          components: [
-            {
-              type: 'BODY',
-              text: '🚀 Exciting news! Our new {product_line} is now available. Check it out at {shop_url}'
-            }
-          ]
-        },
-        {
-          id: '3',
-          name: 'feedback_request',
-          category: 'UTILITY',
-          language: 'en_US',
-          status: 'APPROVED',
-          components: [
-            {
-              type: 'BODY',
-              text: 'We value your opinion! Please share your feedback on your recent purchase by clicking {feedback_link}'
-            }
-          ]
-        },
-        {
-          id: '4',
-          name: 'order_confirmation',
-          category: 'UTILITY',
-          language: 'en_US',
-          status: 'APPROVED',
-          components: [
-            {
-              type: 'BODY',
-              text: 'Thank you for your order #{order_number}! Your order is confirmed and will be shipped soon.'
-            }
-          ]
-        }
-      ]
-      setTemplates(mockTemplates)
+      const response = await fetch('/api/whatsapp-templates')
+      if (response.ok) {
+        const data = await response.json()
+        setTemplates(data)
+      } else {
+        // Fallback to mock data if API fails
+        const mockTemplates = [
+          {
+            id: '1',
+            name: 'summer_sale_2025',
+            category: 'MARKETING',
+            language: 'en_US',
+            status: 'APPROVED',
+            components: [
+              {
+                type: 'BODY',
+                text: '🌟 Summer Sale Alert! Get {discount}% off all products. Shop now at {shop_url}'
+              }
+            ]
+          },
+          {
+            id: '2',
+            name: 'product_launch',
+            category: 'MARKETING',
+            language: 'en_US',
+            status: 'APPROVED',
+            components: [
+              {
+                type: 'BODY',
+                text: '🚀 Exciting news! Our new {product_line} is now available. Check it out at {shop_url}'
+              }
+            ]
+          }
+        ]
+        setTemplates(mockTemplates)
+        toast.warning('Using mock templates. Connect WhatsApp to see actual templates.')
+      }
     } catch (error) {
       console.error('Failed to load templates:', error)
       toast.error('Failed to load templates')
@@ -165,29 +107,23 @@ export default function CampaignsPage() {
   const createCampaign = async (campaignData) => {
     try {
       setLoading(true)
-      // In a real implementation, this would POST to your API
-      // const response = await fetch('/api/campaigns', {
-      //   method: 'POST',
-      //   headers: { 'Content-Type': 'application/json' },
-      //   body: JSON.stringify(campaignData)
-      // })
+      const response = await fetch('/api/campaigns', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(campaignData)
+      })
       
-      // if (response.ok) {
-      //   await loadCampaigns()
-      //   toast.success('Campaign created successfully!')
-      //   setShowCreateDialog(false)
-      // } else {
-      //   const error = await response.json()
-      //   toast.error(error.error || 'Failed to create campaign')
-      // }
-      
-      // Mock implementation for demonstration
-      toast.success('Campaign created successfully!')
-      setShowCreateDialog(false)
-      loadCampaigns()
+      if (response.ok) {
+        await loadCampaigns()
+        toast.success('Campaign created successfully!')
+        setShowCreateDialog(false)
+      } else {
+        const error = await response.json()
+        toast.error(error.error || 'Failed to create campaign')
+      }
     } catch (error) {
       console.error('Failed to create campaign:', error)
-      toast.error('Failed to create campaign')
+      toast.error('Failed to create campaign: ' + error.message)
     } finally {
       setLoading(false)
     }
@@ -196,26 +132,26 @@ export default function CampaignsPage() {
   const sendCampaign = async (campaignId) => {
     try {
       setLoading(true)
-      // In a real implementation, this would POST to your API
-      // const response = await fetch(`/api/campaigns/${campaignId}/send`, {
-      //   method: 'POST',
-      //   headers: { 'Content-Type': 'application/json' }
-      // })
+      const response = await fetch(`/api/campaigns/${campaignId}/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      })
       
-      // if (response.ok) {
-      //   await loadCampaigns()
-      //   toast.success('Campaign sent successfully!')
-      // } else {
-      //   const error = await response.json()
-      //   toast.error(error.error || 'Failed to send campaign')
-      // }
-      
-      // Mock implementation for demonstration
-      toast.success('Campaign sent successfully!')
-      loadCampaigns()
+      if (response.ok) {
+        const result = await response.json()
+        await loadCampaigns()
+        if (result.success) {
+          toast.success(result.message || 'Campaign sent successfully!')
+        } else {
+          toast.warning(result.message || 'Campaign completed with some issues')
+        }
+      } else {
+        const error = await response.json()
+        toast.error(error.error || 'Failed to send campaign')
+      }
     } catch (error) {
       console.error('Failed to send campaign:', error)
-      toast.error('Failed to send campaign')
+      toast.error('Failed to send campaign: ' + error.message)
     } finally {
       setLoading(false)
     }
@@ -223,25 +159,20 @@ export default function CampaignsPage() {
 
   const deleteCampaign = async (campaignId) => {
     try {
-      // In a real implementation, this would DELETE to your API
-      // const response = await fetch(`/api/campaigns/${campaignId}`, {
-      //   method: 'DELETE'
-      // })
+      const response = await fetch(`/api/campaigns/${campaignId}`, {
+        method: 'DELETE'
+      })
       
-      // if (response.ok) {
-      //   await loadCampaigns()
-      //   toast.success('Campaign deleted successfully!')
-      // } else {
-      //   const error = await response.json()
-      //   toast.error(error.error || 'Failed to delete campaign')
-      // }
-      
-      // Mock implementation for demonstration
-      toast.success('Campaign deleted successfully!')
-      loadCampaigns()
+      if (response.ok) {
+        await loadCampaigns()
+        toast.success('Campaign deleted successfully!')
+      } else {
+        const error = await response.json()
+        toast.error(error.error || 'Failed to delete campaign')
+      }
     } catch (error) {
       console.error('Failed to delete campaign:', error)
-      toast.error('Failed to delete campaign')
+      toast.error('Failed to delete campaign: ' + error.message)
     }
   }
 
@@ -256,8 +187,13 @@ export default function CampaignsPage() {
     })
 
     const handleCreateCampaign = () => {
-      if (!campaignForm.name || !campaignForm.template) {
-        toast.error('Campaign name and template are required')
+      if (!campaignForm.name) {
+        toast.error('Campaign name is required')
+        return
+      }
+
+      if (!campaignForm.template && !campaignForm.message.trim()) {
+        toast.error('Message content is required when not using a template')
         return
       }
 
@@ -267,9 +203,19 @@ export default function CampaignsPage() {
 
       createCampaign({
         ...campaignForm,
+        template: campaignForm.template === 'no-template' ? '' : campaignForm.template,
         recipients: recipients,
         status: campaignForm.scheduledAt ? 'scheduled' : 'draft'
       })
+    }
+
+    // Get template body text for preview
+    const getTemplateBody = (templateName) => {
+      const template = templates.find(t => t.name === templateName)
+      if (!template) return ''
+      
+      const bodyComponent = template.components?.find(c => c.type === 'BODY')
+      return bodyComponent?.text || 'No preview available'
     }
 
     return (
@@ -284,43 +230,48 @@ export default function CampaignsPage() {
           
           <div className="space-y-6">
             <div>
-              <Label htmlFor="campaign-name">Campaign Name</Label>
+              <Label htmlFor="campaign-name">Campaign Name *</Label>
               <Input
                 id="campaign-name"
                 placeholder="Summer Sale Campaign"
                 value={campaignForm.name}
                 onChange={(e) => setCampaignForm(prev => ({ ...prev, name: e.target.value }))}
+                required
               />
             </div>
 
             <div>
-              <Label htmlFor="campaign-template">Select Template</Label>
+              <Label htmlFor="campaign-template">Select Template (Optional)</Label>
               <Select 
-                value={campaignForm.template} 
-                onValueChange={(value) => setCampaignForm(prev => ({ ...prev, template: value }))}
+                value={campaignForm.template || 'no-template'} 
+                onValueChange={(value) => setCampaignForm(prev => ({ ...prev, template: value === 'no-template' ? '' : value }))}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Select a template" />
                 </SelectTrigger>
                 <SelectContent>
-                  {templates.map((template) => (
-                    <SelectItem key={template.id} value={template.name}>
-                      <div className="flex items-center justify-between w-full">
-                        <span>{template.name}</span>
-                        <Badge variant="outline" className="ml-2">
-                          {template.status}
-                        </Badge>
-                      </div>
-                    </SelectItem>
-                  ))}
+                  <SelectItem value="no-template">No Template (Text Message)</SelectItem>
+                  {templates
+                    .filter(template => template.status === 'APPROVED')
+                    .map((template) => (
+                      <SelectItem key={template.id} value={template.name}>
+                        <div className="flex items-center justify-between w-full">
+                          <span>{template.name}</span>
+                          <Badge variant="outline" className="ml-2">
+                            {template.status}
+                          </Badge>
+                        </div>
+                      </SelectItem>
+                    ))
+                  }
                 </SelectContent>
               </Select>
               <p className="text-sm text-muted-foreground mt-1">
-                Choose from your approved Meta campaign templates
+                Choose from your approved Meta campaign templates or send as a regular text message
               </p>
             </div>
 
-            {campaignForm.template && (
+            {campaignForm.template && campaignForm.template !== 'no-template' && (
               <Card>
                 <CardHeader>
                   <CardTitle className="text-lg flex items-center">
@@ -342,7 +293,7 @@ export default function CampaignsPage() {
                         </div>
                         <div className="bg-gray-50 p-4 rounded-lg">
                           <p className="text-sm">
-                            {template.components?.find(c => c.type === 'BODY')?.text || 'No preview available'}
+                            {getTemplateBody(template.name)}
                           </p>
                         </div>
                       </div>
@@ -351,6 +302,23 @@ export default function CampaignsPage() {
                 </CardContent>
               </Card>
             )}
+
+            {!campaignForm.template || campaignForm.template === 'no-template' ? (
+              <div>
+                <Label htmlFor="campaign-message">Message *</Label>
+                <Textarea
+                  id="campaign-message"
+                  placeholder="Enter your campaign message here..."
+                  value={campaignForm.message}
+                  onChange={(e) => setCampaignForm(prev => ({ ...prev, message: e.target.value }))}
+                  rows={4}
+                  required
+                />
+                <p className="text-sm text-muted-foreground mt-1">
+                  This message will be sent as a regular text message
+                </p>
+              </div>
+            ) : null}
 
             <div>
               <Label htmlFor="audience">Audience</Label>
@@ -411,16 +379,18 @@ export default function CampaignsPage() {
 
   const getStatusBadge = (status) => {
     const statusConfig = {
-      draft: { color: 'bg-gray-500', label: 'Draft' },
-      scheduled: { color: 'bg-blue-500', label: 'Scheduled' },
-      sent: { color: 'bg-green-500', label: 'Sent' },
-      failed: { color: 'bg-red-500', label: 'Failed' }
+      draft: { color: 'bg-gray-500', label: 'Draft', icon: null },
+      scheduled: { color: 'bg-blue-500', label: 'Scheduled', icon: <Calendar className="w-3 h-3 mr-1" /> },
+      sent: { color: 'bg-green-500', label: 'Sent', icon: <CheckCircle className="w-3 h-3 mr-1" /> },
+      partially_sent: { color: 'bg-yellow-500', label: 'Partially Sent', icon: <AlertTriangle className="w-3 h-3 mr-1" /> },
+      failed: { color: 'bg-red-500', label: 'Failed', icon: <AlertCircle className="w-3 h-3 mr-1" /> }
     }
     
     const config = statusConfig[status] || statusConfig.draft
     
     return (
       <Badge variant="default" className={config.color}>
+        {config.icon}
         {config.label}
       </Badge>
     )
@@ -428,11 +398,15 @@ export default function CampaignsPage() {
 
   // Filter campaigns based on search and filters
   const filteredCampaigns = campaigns.filter(campaign => {
-    const matchesSearch = campaign.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                          campaign.template.toLowerCase().includes(searchTerm.toLowerCase())
+    const safeSearchTerm = searchTerm || '';
+    const matchesSearch = 
+      (campaign.name && campaign.name.toLowerCase().includes(safeSearchTerm.toLowerCase())) || 
+      (campaign.template && campaign.template.toLowerCase().includes(safeSearchTerm.toLowerCase()))
     
     const matchesStatus = filterStatus === 'all' || campaign.status === filterStatus
-    const matchesTemplate = filterTemplate === 'all' || campaign.template === filterTemplate
+    const matchesTemplate = filterTemplate === 'all' || 
+                           (filterTemplate === 'no-template' && (!campaign.template || campaign.template === '' || campaign.template.trim() === '')) || 
+                           campaign.template === filterTemplate
     
     return matchesSearch && matchesStatus && matchesTemplate
   })
@@ -476,6 +450,8 @@ export default function CampaignsPage() {
               <SelectItem value="draft">Draft</SelectItem>
               <SelectItem value="scheduled">Scheduled</SelectItem>
               <SelectItem value="sent">Sent</SelectItem>
+              <SelectItem value="partially_sent">Partially Sent</SelectItem>
+              <SelectItem value="failed">Failed</SelectItem>
             </SelectContent>
           </Select>
           <Select value={filterTemplate} onValueChange={setFilterTemplate}>
@@ -484,11 +460,19 @@ export default function CampaignsPage() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Templates</SelectItem>
-              {Array.from(new Set(campaigns.map(c => c.template))).map(template => (
-                <SelectItem key={template} value={template}>{template}</SelectItem>
+              {Array.from(new Set(
+                campaigns
+                  .map(c => (c.template && c.template.trim() !== '') ? c.template : 'no-template')
+                  .filter(t => t && t !== '')
+              )).map(template => (
+                <SelectItem key={template} value={template}>
+                  {template === 'no-template' ? 'No Template' : template}
+                </SelectItem>
               ))}
+              <SelectItem value="no-template">No Template</SelectItem>
             </SelectContent>
           </Select>
+
         </div>
       </div>
 
@@ -498,24 +482,33 @@ export default function CampaignsPage() {
           <Card key={campaign.id} className="hover:shadow-md transition-shadow">
             <CardHeader>
               <div className="flex items-center justify-between">
-                <CardTitle className="text-lg truncate">{campaign.name}</CardTitle>
+                <CardTitle className="text-lg truncate">{campaign.name || 'Untitled Campaign'}</CardTitle>
                 {getStatusBadge(campaign.status)}
               </div>
               <CardDescription className="flex items-center">
-                <Sparkles className="w-4 h-4 mr-1" />
-                {campaign.template}
+                {campaign.template ? (
+                  <>
+                    <Sparkles className="w-4 h-4 mr-1" />
+                    {campaign.template}
+                  </>
+                ) : (
+                  <>
+                    <MessageSquare className="w-4 h-4 mr-1" />
+                    Text Message
+                  </>
+                )}
               </CardDescription>
             </CardHeader>
             <CardContent>
               <p className="text-sm text-muted-foreground mb-4 line-clamp-3">
-                {campaign.message}
+                {campaign.message || getTemplateBody(campaign.template) || 'No message content'}
               </p>
               
               <div className="flex items-center justify-between text-sm text-muted-foreground mb-4">
                 <span>
                   {campaign.audience === 'all_customers' ? 'All Customers' : 
                    campaign.audience === 'recent_buyers' ? 'Recent Buyers' : 
-                   `${campaign.recipients} Recipients`}
+                   `${(campaign.recipients && campaign.recipients.length) || campaign.sentCount || campaign.failedCount || 0} Recipients`}
                 </span>
                 <span>
                   {campaign.status === 'scheduled' && campaign.scheduledAt && (
@@ -530,11 +523,31 @@ export default function CampaignsPage() {
                       {new Date(campaign.sentAt).toLocaleDateString()}
                     </div>
                   )}
+                  {(campaign.status === 'partially_sent' || campaign.status === 'failed') && campaign.sentAt && (
+                    <div className="flex items-center">
+                      <Calendar className="w-4 h-4 mr-1" />
+                      {new Date(campaign.sentAt).toLocaleDateString()}
+                    </div>
+                  )}
                 </span>
+
               </div>
               
+              {(campaign.sentCount > 0 || campaign.failedCount > 0) && (
+                <div className="flex items-center text-sm mb-4">
+                  <CheckCircle className="w-4 h-4 mr-1 text-green-500" />
+                  <span className="mr-3">{campaign.sentCount || 0} sent</span>
+                  {campaign.failedCount > 0 && (
+                    <>
+                      <AlertCircle className="w-4 h-4 mr-1 text-red-500" />
+                      <span>{campaign.failedCount} failed</span>
+                    </>
+                  )}
+                </div>
+              )}
+              
               <div className="flex gap-2">
-                {campaign.status === 'draft' && (
+                {(campaign.status === 'draft' || campaign.status === 'scheduled') && (
                   <Button 
                     size="sm" 
                     onClick={() => sendCampaign(campaign.id)}
@@ -549,6 +562,7 @@ export default function CampaignsPage() {
                   size="sm" 
                   variant="outline"
                   onClick={() => deleteCampaign(campaign.id)}
+                  disabled={loading}
                 >
                   <Trash className="w-3 h-3 mr-1" />
                   Delete

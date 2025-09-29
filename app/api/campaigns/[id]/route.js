@@ -1,16 +1,36 @@
 import { NextResponse } from 'next/server'
+import { MongoClient } from 'mongodb'
+
+// Database connection
+let client
+let db
+
+async function connectToMongo() {
+  if (!client) {
+    client = new MongoClient(process.env.MONGO_URL)
+    await client.connect()
+    db = client.db(process.env.DB_NAME)
+  }
+  return db
+}
 
 // DELETE /api/campaigns/[id] - Delete a campaign
 export async function DELETE(request, { params }) {
   try {
     const { id } = params
+    const db = await connectToMongo()
     
-    // In a real implementation, you would delete from your database
-    // const { db } = await connectToDatabase()
-    // const result = await db.collection('campaigns').deleteOne({ id })
+    const result = await db.collection('campaigns').deleteOne({ 
+      id: id, 
+      userId: 'default' 
+    })
     
-    // Mock implementation for demonstration
-    console.log(`Deleting campaign ${id} from database`)
+    if (result.deletedCount === 0) {
+      return NextResponse.json(
+        { error: 'Campaign not found' },
+        { status: 404 }
+      )
+    }
     
     return NextResponse.json({ 
       success: true, 
