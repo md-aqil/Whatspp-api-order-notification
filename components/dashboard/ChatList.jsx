@@ -64,13 +64,13 @@ export function ChatList({ chats, activeChatId, onSelectChat }) {
   }
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="p-4 border-b flex justify-between items-center">
+    <div className="flex flex-col h-full bg-white">
+      <div className="p-3 border-b flex justify-between items-center bg-gray-50">
         <h2 className="text-lg font-semibold">Chats</h2>
         <Dialog open={showNewChatDialog} onOpenChange={setShowNewChatDialog}>
           <DialogTrigger asChild>
-            <Button size="sm" variant="outline" onClick={() => setShowNewChatDialog(true)}>
-              <Plus className="w-4 h-4" />
+            <Button size="sm" variant="ghost" className="rounded-full p-2" onClick={() => setShowNewChatDialog(true)}>
+              <Plus className="w-5 h-5" />
             </Button>
           </DialogTrigger>
           <DialogContent>
@@ -120,8 +120,8 @@ export function ChatList({ chats, activeChatId, onSelectChat }) {
         {chats.map((chat) => (
           <div
             key={chat.id}
-            className={`flex items-center p-4 border-b cursor-pointer hover:bg-gray-50 ${
-              activeChatId === chat.id ? 'bg-blue-50' : ''
+            className={`flex items-center p-3 border-b cursor-pointer hover:bg-gray-100 ${
+              activeChatId === chat.id ? 'bg-green-50' : ''
             }`}
             onClick={() => onSelectChat(chat)}
           >
@@ -132,7 +132,7 @@ export function ChatList({ chats, activeChatId, onSelectChat }) {
                 className="w-12 h-12 rounded-full object-cover"
               />
               {chat.unread > 0 && (
-                <div className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
+                <div className="absolute -top-1 -right-1 bg-green-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
                   {chat.unread}
                 </div>
               )}
@@ -151,7 +151,7 @@ export function ChatList({ chats, activeChatId, onSelectChat }) {
                   {chat.lastMessage}
                 </p>
                 {chat.unread > 0 && (
-                  <span className="bg-blue-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
+                  <span className="bg-green-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
                     {chat.unread}
                   </span>
                 )}

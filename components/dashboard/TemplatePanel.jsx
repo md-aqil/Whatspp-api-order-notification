@@ -59,7 +59,7 @@ export function TemplatePanel({ selectedProducts, recipient, onSendWithTemplate 
     }
 
     if (!recipient) {
-      toast.error('Please enter recipient phone number')
+      toast.error('Please enter recipient phone number(s)')
       return
     }
 

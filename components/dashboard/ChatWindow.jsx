@@ -127,9 +127,9 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full bg-white">
       {/* Chat Header - Fixed to top */}
-      <div className="border-b p-4 sticky -top-6 bg-white z-10">
+      <div className="border-b p-4 sticky top-0 bg-gray-50 z-10">
         <div className="flex items-center">
           <img
             src={chat.avatar}
@@ -146,51 +146,54 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
       {/* Messages Container */}
       <div 
         ref={messagesContainerRef}
-        className="flex-1 overflow-y-auto p-4 bg-gray-50"
+        className="flex-1 overflow-y-auto overflow-x-hidden p-4 bg-gray-100"
       >
-        {messages.map((message) => (
-          <div
-            key={message.id}
-            className={`flex mb-4 ${message.isCustomer ? 'justify-start' : 'justify-end'}`}
-          >
+        <div className="space-y-2">
+          {messages.map((message) => (
             <div
-              className={`max-w-xs md:max-w-md px-4 py-2 rounded-lg ${
-                message.isCustomer
-                  ? 'bg-gray-200 text-gray-800 rounded-tl-none'
-                  : 'bg-blue-500 text-white rounded-tr-none'
-              }`}
+              key={message.id}
+              className={`flex ${message.isCustomer ? 'justify-start' : 'justify-end'}`}
             >
-              <p className="text-sm">{message.text}</p>
-              <p
-                className={`text-xs mt-1 ${
-                  message.isCustomer ? 'text-gray-500' : 'text-blue-100'
-                } text-right`}
+              <div
+                className={`max-w-xs md:max-w-md px-3 py-2 rounded-lg ${
+                  message.isCustomer
+                    ? 'bg-white text-gray-800 rounded-tl-none'
+                    : 'bg-green-100 text-gray-800 rounded-tr-none'
+                }`}
               >
-                {formatTime(message.timestamp)}
-              </p>
+                <p className="text-sm whitespace-pre-wrap break-words">{message.text}</p>
+                <p
+                  className={`text-xs mt-1 ${
+                    message.isCustomer ? 'text-gray-500' : 'text-gray-600'
+                  } text-right`}
+                >
+                  {formatTime(message.timestamp)}
+                </p>
+              </div>
             </div>
-          </div>
-        ))}
+          ))}
+        </div>
         <div ref={messagesEndRef} />
       </div>
 
       {/* Input Area */}
-      <div className="border-t p-4 bg-white">
+      <div className="border-t p-3 bg-white">
         <div className="flex items-end space-x-2">
           <Textarea
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             onKeyPress={handleKeyPress}
-            placeholder="Type your message..."
-            className="flex-1 resize-none"
+            placeholder="Type a message"
+            className="flex-1 resize-none border rounded-full py-2 px-4"
             rows="1"
           />
           <Button
             onClick={handleSendMessage}
             disabled={inputValue.trim() === ''}
             size="icon"
+            className="rounded-full bg-green-500 hover:bg-green-600"
           >
-            <Send className="w-4 h-4" />
+            <Send className="w-4 h-4 text-white" />
           </Button>
         </div>
       </div>

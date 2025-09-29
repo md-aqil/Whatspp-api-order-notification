@@ -1,7 +1,7 @@
 # WhatsApp Commerce Hub Dashboard
 
 ## Overview
-The WhatsApp Commerce Hub now includes a dedicated dashboard with a separate layout that provides a more organized interface for managing your WhatsApp Business integration, orders, and customer communications.
+The WhatsApp Commerce Hub now includes a dedicated dashboard with a separate layout that provides a more organized interface for managing your WhatsApp Business integration and customer communications.
 
 ## Features
 
@@ -17,13 +17,7 @@ The WhatsApp Commerce Hub now includes a dedicated dashboard with a separate lay
 - Ability to send and receive messages directly from the dashboard
 - Unread message indicators
 
-### 3. Orders Management
-- Overview of all Shopify orders
-- Status tracking (pending, shipped, fulfilled, cancelled, refunded)
-- Customer information and order details
-- Quick access to order actions
-
-### 4. Settings & Integrations
+### 3. Settings & Integrations
 - Centralized configuration for all service integrations
 - WhatsApp Business API setup
 - Shopify store connection
@@ -60,7 +54,6 @@ The dashboard uses the following MongoDB collections:
 - `messages` - Individual messages (both incoming and outgoing)
 - `integrations` - Service integration credentials
 - `orders` - Shopify order data
-- `products` - Shopify product catalog
 - `campaigns` - Marketing campaigns
 - `webhooks` - Webhook configuration
 - `webhook_logs` - Webhook event logs
@@ -97,3 +90,15 @@ To process payments:
 1. Obtain your Stripe API keys
 2. Enter your Publishable Key and Secret Key in Settings
 3. Use the integrated payment processing in your workflows
+
+## Order Management
+
+Order management has been moved to a dedicated Orders page to provide a more focused experience for managing your Shopify orders. The Orders page includes a comprehensive table view with real order data, including:
+
+- Order ID and customer information
+- Order date and status tracking
+- Item counts and total amounts
+- Visual status indicators
+- Action buttons for order management
+
+You can access the Orders page directly through the navigation sidebar.

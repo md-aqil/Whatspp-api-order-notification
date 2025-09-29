@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { ChatWindow } from '@/components/dashboard/ChatWindow'
 import { ChatList } from '@/components/dashboard/ChatList'
 import { Card, CardContent } from '@/components/ui/card'
+import { toast, Toaster } from 'sonner'
 import { v4 as uuidv4 } from 'uuid'
 
 export default function DashboardChatPage() {
@@ -133,6 +134,19 @@ export default function DashboardChatPage() {
           const data = await response.json()
           // Only update if we have new messages
           if (data.length !== lastMessageCountRef.current) {
+            // Check for new incoming messages (from customer)
+            const newMessages = data.slice(lastMessageCountRef.current)
+            const newIncomingMessages = newMessages.filter(msg => msg.isCustomer === true)
+            
+            // Show toast notifications for each new incoming message
+            newIncomingMessages.forEach(msg => {
+              toast(`New message from ${activeChat.name}`, {
+                description: msg.text,
+                duration: 5000,
+                icon: '💬'
+              })
+            })
+            
             setMessages(data)
             lastMessageCountRef.current = data.length
           }
@@ -222,7 +236,8 @@ export default function DashboardChatPage() {
   }
 
   return (
-    <div className="flex h-full -ml-6 -mt-6 border-t border-gray-200">
+    <div className="flex h-full -ml-6 -mt-6 border-t border-gray-200 bg-gray-100">
+      <Toaster position="bottom-right" />
       {/* Left Panel - Chat List */}
       <div className="w-1/3 border-r flex flex-col h-full bg-white">
         <ChatList 
@@ -241,8 +256,15 @@ export default function DashboardChatPage() {
             onSendMessage={handleSendMessage} 
           />
         ) : (
-          <div className="flex-1 flex items-center justify-center">
-            <p className="text-gray-500">Select a chat to start messaging</p>
+          <div className="flex-1 flex items-center justify-center bg-gray-100">
+            <div className="text-center">
+              <div className="bg-gray-200 border-2 border-dashed rounded-xl w-16 h-16 mx-auto mb-4" />
+              <h3 className="text-xl font-semibold text-gray-800 mb-2">WhatsApp Web</h3>
+              <p className="text-gray-500 max-w-md">
+                Send and receive messages without keeping your phone online.
+                Use WhatsApp on up to 4 linked devices and 1 phone at the same time.
+              </p>
+            </div>
           </div>
         )}
       </div>

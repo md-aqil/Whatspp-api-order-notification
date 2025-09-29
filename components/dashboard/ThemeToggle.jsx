@@ -13,6 +13,13 @@ export function ThemeToggle() {
     setMounted(true)
   }, [])
 
+  // Always default to light theme, but allow manual toggling
+  useEffect(() => {
+    if (mounted && theme !== 'light' && theme !== 'dark') {
+      setTheme('light')
+    }
+  }, [mounted, theme, setTheme])
+
   if (!mounted) {
     return (
       <div className="w-10 h-10 flex items-center justify-center">

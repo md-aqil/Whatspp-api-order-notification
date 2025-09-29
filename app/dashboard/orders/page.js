@@ -18,7 +18,8 @@ import {
   XCircle, 
   Package,
   Truck,
-  DollarSign
+  DollarSign,
+  RefreshCw
 } from 'lucide-react'
 
 export default function OrdersPage() {
@@ -26,84 +27,84 @@ export default function OrdersPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const loadOrders = async () => {
-      try {
-        setLoading(true)
-        const response = await fetch('/api/orders')
-        if (response.ok) {
-          const data = await response.json()
-          // Transform the data to match the expected format
-          const transformedOrders = data.map(order => ({
-            id: order.orderNumber || order.id,
-            customer: order.customerName || 'Unknown Customer',
-            phone: order.customerPhone || 'N/A',
-            total: parseFloat(order.total) || 0,
-            status: order.status || 'pending',
-            date: order.createdAt ? new Date(order.createdAt).toLocaleDateString() : 'N/A',
-            items: order.lineItems ? order.lineItems.length : 0
-          }))
-          setOrders(transformedOrders)
-        } else {
-          throw new Error('Failed to load orders')
-        }
-      } catch (error) {
-        console.error('Failed to load orders:', error)
-        // Fallback to mock data if API fails
-        const mockOrders = [
-          {
-            id: '1001',
-            customer: 'John Doe',
-            phone: '+1234567890',
-            total: 125.99,
-            status: 'fulfilled',
-            date: '2023-06-15',
-            items: 3
-          },
-          {
-            id: '1002',
-            customer: 'Jane Smith',
-            phone: '+1234567891',
-            total: 89.50,
-            status: 'shipped',
-            date: '2023-06-14',
-            items: 2
-          },
-          {
-            id: '1003',
-            customer: 'Robert Johnson',
-            phone: '+1234567892',
-            total: 245.75,
-            status: 'pending',
-            date: '2023-06-14',
-            items: 5
-          },
-          {
-            id: '1004',
-            customer: 'Emily Davis',
-            phone: '+1234567893',
-            total: 56.25,
-            status: 'cancelled',
-            date: '2023-06-13',
-            items: 1
-          },
-          {
-            id: '1005',
-            customer: 'Michael Wilson',
-            phone: '+1234567894',
-            total: 199.99,
-            status: 'refunded',
-            date: '2023-06-12',
-            items: 2
-          }
-        ]
-        setOrders(mockOrders)
-      } finally {
-        setLoading(false)
-      }
-    }
-
     loadOrders()
   }, [])
+
+  const loadOrders = async () => {
+    try {
+      setLoading(true)
+      const response = await fetch('/api/orders')
+      if (response.ok) {
+        const data = await response.json()
+        // Transform the data to match the expected format
+        const transformedOrders = data.map(order => ({
+          id: order.orderNumber || order.id,
+          customer: order.customerName || 'Unknown Customer',
+          phone: order.customerPhone || 'N/A',
+          total: parseFloat(order.total) || 0,
+          status: order.status || 'pending',
+          date: order.createdAt ? new Date(order.createdAt).toLocaleDateString() : 'N/A',
+          items: order.lineItems ? order.lineItems.length : 0
+        }))
+        setOrders(transformedOrders)
+      } else {
+        throw new Error('Failed to load orders')
+      }
+    } catch (error) {
+      console.error('Failed to load orders:', error)
+      // Fallback to mock data if API fails
+      const mockOrders = [
+        {
+          id: '1001',
+          customer: 'John Doe',
+          phone: '+1234567890',
+          total: 125.99,
+          status: 'fulfilled',
+          date: '2023-06-15',
+          items: 3
+        },
+        {
+          id: '1002',
+          customer: 'Jane Smith',
+          phone: '+1234567891',
+          total: 89.50,
+          status: 'shipped',
+          date: '2023-06-14',
+          items: 2
+        },
+        {
+          id: '1003',
+          customer: 'Robert Johnson',
+          phone: '+1234567892',
+          total: 245.75,
+          status: 'pending',
+          date: '2023-06-14',
+          items: 5
+        },
+        {
+          id: '1004',
+          customer: 'Emily Davis',
+          phone: '+1234567893',
+          total: 56.25,
+          status: 'cancelled',
+          date: '2023-06-13',
+          items: 1
+        },
+        {
+          id: '1005',
+          customer: 'Michael Wilson',
+          phone: '+1234567894',
+          total: 199.99,
+          status: 'refunded',
+          date: '2023-06-12',
+          items: 2
+        }
+      ]
+      setOrders(mockOrders)
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const getStatusIcon = (status) => {
     switch (status) {
@@ -149,18 +150,24 @@ export default function OrdersPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Orders</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          Manage and track your customer orders
-        </p>
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Orders</h1>
+          <p className="mt-1 text-sm text-gray-500">
+            Manage and track your customer orders
+          </p>
+        </div>
+        <Button onClick={loadOrders} variant="outline">
+          <RefreshCw className="w-4 h-4 mr-2" />
+          Refresh Orders
+        </Button>
       </div>
 
       <Card>
         <CardHeader>
           <CardTitle>Recent Orders</CardTitle>
           <CardDescription>
-            Overview of all customer orders
+            Overview of all customer orders with real data from Shopify
           </CardDescription>
         </CardHeader>
         <CardContent>

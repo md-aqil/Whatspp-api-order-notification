@@ -868,12 +868,12 @@ async function handleRoute(request, { params }) {
       }
     }
 
-    // Update the send catalog endpoint to support template selection
+    // Update the send catalog endpoint to support template selection and multiple recipients
     if (route === '/send-catalog' && method === 'POST') {
       try {
         const db = await connectToMongo();
         const body = await request.json();
-        const { products: productIds, recipient, templateName } = body;
+        const { products: productIds, recipient, recipients, templateName } = body;
 
         if (!productIds || !Array.isArray(productIds) || productIds.length === 0) {
           return handleCORS(NextResponse.json(
@@ -882,9 +882,16 @@ async function handleRoute(request, { params }) {
           ));
         }
 
-        if (!recipient) {
+        // Handle both single recipient and multiple recipients
+        let recipientList = [];
+        if (recipients && Array.isArray(recipients) && recipients.length > 0) {
+          recipientList = recipients;
+        } else if (recipient) {
+          // Support both single recipient and comma-separated recipients
+          recipientList = recipient.split(',').map(r => r.trim()).filter(r => r);
+        } else {
           return handleCORS(NextResponse.json(
-            { error: "Recipient phone number is required" }, 
+            { error: "Recipient phone number(s) required" }, 
             { status: 400 }
           ));
         }
@@ -917,96 +924,102 @@ async function handleRoute(request, { params }) {
           ));
         }
 
-        try {
-          // Validate and format phone number
-          const formattedRecipient = recipient.replace(/\D/g, '');
-          
-          // Log the recipient number for debugging
-          console.log(`Sending catalog to: ${recipient}, formatted: ${formattedRecipient}`);
-          
-          // Check if the number seems valid
-          if (formattedRecipient.length < 10) {
-            return handleCORS(NextResponse.json(
-              { error: "Invalid phone number format. Please include country code." }, 
-              { status: 400 }
-            ));
-          }
-
-          // Check if we're using a template
-          if (templateName) {
-            // Send using the selected template
-            const messageData = {
-              messaging_product: "whatsapp",
-              to: formattedRecipient,
-              type: "template",
-              template: {
-                name: templateName,
-                language: {
-                  code: "en"
-                },
-                components: [
-                  {
-                    type: "body",
-                    parameters: [
-                      {
-                        type: "text",
-                        text: selectedProducts.length.toString()
-                      }
-                    ]
-                  }
-                ]
-              }
-            };
-
-            const result = await sendWhatsAppMessage(
-              integrations.whatsapp.phoneNumberId,
-              integrations.whatsapp.accessToken,
-              formattedRecipient,
-              messageData
-            );
-
-            // Log the message
-            await db.collection('messages').insertOne({
-              id: uuidv4(),
-              userId: 'default',
-              recipient: formattedRecipient,
-              products: selectedProducts,
-              template: templateName,
-              whatsappMessageId: result.messages?.[0]?.id,
-              status: 'sent',
-              sentAt: new Date()
-            });
-
-            return handleCORS(NextResponse.json({ 
-              success: true, 
-              messageId: result.messages?.[0]?.id 
-            }));
-          } else {
-            // Use the existing text-based approach
-            const hasCatalogId = integrations.whatsapp.catalogId;
+        // Send to each recipient
+        const results = [];
+        for (const recipient of recipientList) {
+          try {
+            // Validate and format phone number
+            const formattedRecipient = recipient.replace(/\D/g, '');
             
-            // Always use text-based messages to avoid template approval requirements
-            // Create a catalog link
-            const businessAccountId = integrations.whatsapp.businessAccountId || integrations.whatsapp.phoneNumberId;
-            const catalogLink = `https://wa.me/c/${businessAccountId}`;
+            // Log the recipient number for debugging
+            console.log(`Sending catalog to: ${recipient}, formatted: ${formattedRecipient}`);
             
-            // Create a message that includes information about selected products with images
-            let productInfo = "Selected products:\n";
-            selectedProducts.slice(0, 3).forEach((product, index) => {
-              let productEntry = `${index + 1}. *${product.title}* - $${product.price}\n`;
-              if (product.image) {
-                productEntry += `   📷 Image: ${product.image}\n`;
-              }
-              if (product.description) {
-                productEntry += `   📝 ${product.description.substring(0, 100)}${product.description.length > 100 ? '...' : ''}\n`;
-              }
-              productInfo += productEntry + "\n";
-            });
-            if (selectedProducts.length > 3) {
-              productInfo += `...and ${selectedProducts.length - 3} more items\n`;
+            // Check if the number seems valid
+            if (formattedRecipient.length < 10) {
+              results.push({
+                recipient: recipient,
+                success: false,
+                error: "Invalid phone number format. Please include country code."
+              });
+              continue;
             }
-            
-            const catalogMessage = `🛍️ *Our Product Catalog*
+
+            // Check if we're using a template
+            if (templateName) {
+              // Send using the selected template
+              const messageData = {
+                messaging_product: "whatsapp",
+                to: formattedRecipient,
+                type: "template",
+                template: {
+                  name: templateName,
+                  language: {
+                    code: "en"
+                  },
+                  components: [
+                    {
+                      type: "body",
+                      parameters: [
+                        {
+                          type: "text",
+                          text: selectedProducts.length.toString()
+                        }
+                      ]
+                    }
+                  ]
+                }
+              };
+
+              const result = await sendWhatsAppMessage(
+                integrations.whatsapp.phoneNumberId,
+                integrations.whatsapp.accessToken,
+                formattedRecipient,
+                messageData
+              );
+
+              // Log the message
+              await db.collection('messages').insertOne({
+                id: uuidv4(),
+                userId: 'default',
+                recipient: formattedRecipient,
+                products: selectedProducts,
+                template: templateName,
+                whatsappMessageId: result.messages?.[0]?.id,
+                status: 'sent',
+                sentAt: new Date()
+              });
+
+              results.push({
+                recipient: recipient,
+                success: true,
+                messageId: result.messages?.[0]?.id
+              });
+            } else {
+              // Use the existing text-based approach
+              const hasCatalogId = integrations.whatsapp.catalogId;
+              
+              // Always use text-based messages to avoid template approval requirements
+              // Create a catalog link
+              const businessAccountId = integrations.whatsapp.businessAccountId || integrations.whatsapp.phoneNumberId;
+              const catalogLink = `https://wa.me/c/${businessAccountId}`;
+              
+              // Create a message that includes information about selected products with images
+              let productInfo = "Selected products:\n";
+              selectedProducts.slice(0, 3).forEach((product, index) => {
+                let productEntry = `${index + 1}. *${product.title}* - $${product.price}\n`;
+                if (product.image) {
+                  productEntry += `   📷 Image: ${product.image}\n`;
+                }
+                if (product.description) {
+                  productEntry += `   📝 ${product.description.substring(0, 100)}${product.description.length > 100 ? '...' : ''}\n`;
+                }
+                productInfo += productEntry + "\n";
+              });
+              if (selectedProducts.length > 3) {
+                productInfo += `...and ${selectedProducts.length - 3} more items\n`;
+              }
+              
+              const catalogMessage = `🛍️ *Our Product Catalog*
 
 Check out our latest products:
 ${catalogLink}
@@ -1015,50 +1028,64 @@ ${productInfo}Browse our full collection and find something special just for you
 
 🛍️ *Shop Now* - Click the link above to browse our catalog with images`;
 
-            const messageData = {
-              messaging_product: "whatsapp",
-              to: formattedRecipient,
-              type: "text",
-              text: {
-                body: catalogMessage,
-                preview_url: true
-              }
-            };
+              const messageData = {
+                messaging_product: "whatsapp",
+                to: formattedRecipient,
+                type: "text",
+                text: {
+                  body: catalogMessage,
+                  preview_url: true
+                }
+              };
 
-            console.log('Sending message with data:', JSON.stringify(messageData, null, 2));
+              console.log('Sending message with data:', JSON.stringify(messageData, null, 2));
 
-            const result = await sendWhatsAppMessage(
-              integrations.whatsapp.phoneNumberId,
-              integrations.whatsapp.accessToken,
-              formattedRecipient,
-              messageData
-            );
+              const result = await sendWhatsAppMessage(
+                integrations.whatsapp.phoneNumberId,
+                integrations.whatsapp.accessToken,
+                formattedRecipient,
+                messageData
+              );
 
-            console.log('WhatsApp API response:', JSON.stringify(result, null, 2));
+              console.log('WhatsApp API response:', JSON.stringify(result, null, 2));
 
-            // Log the message
-            await db.collection('messages').insertOne({
-              id: uuidv4(),
-              userId: 'default',
-              recipient: formattedRecipient,
-              products: selectedProducts,
-              whatsappMessageId: result.messages?.[0]?.id,
-              status: 'sent',
-              sentAt: new Date()
+              // Log the message
+              await db.collection('messages').insertOne({
+                id: uuidv4(),
+                userId: 'default',
+                recipient: formattedRecipient,
+                products: selectedProducts,
+                whatsappMessageId: result.messages?.[0]?.id,
+                status: 'sent',
+                sentAt: new Date()
+              });
+
+              results.push({
+                recipient: recipient,
+                success: true,
+                messageId: result.messages?.[0]?.id
+              });
+            }
+          } catch (error) {
+            console.error(`Failed to send catalog message to ${recipient}:`, error);
+            results.push({
+              recipient: recipient,
+              success: false,
+              error: error.message || 'Failed to send message'
             });
-
-            return handleCORS(NextResponse.json({ 
-              success: true, 
-              messageId: result.messages?.[0]?.id 
-            }));
           }
-        } catch (error) {
-          console.error('Failed to send catalog message:', error);
-          return handleCORS(NextResponse.json(
-            { error: `Failed to send message: ${error.message}` }, 
-            { status: 400 }
-          ));
         }
+
+        // Return results
+        const successfulSends = results.filter(r => r.success).length;
+        const failedSends = results.filter(r => !r.success).length;
+        
+        return handleCORS(NextResponse.json({ 
+          success: successfulSends > 0,
+          sentCount: successfulSends,
+          failedCount: failedSends,
+          results: results
+        }));
       } catch (error) {
         console.error('Failed to send catalog:', error);
         return handleCORS(NextResponse.json(
