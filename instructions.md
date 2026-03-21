@@ -3,7 +3,7 @@
 ## Prerequisites
 
 1. Node.js (version 18 or higher)
-2. MongoDB (local or remote instance)
+2. PostgreSQL (local or remote instance)
 3. Facebook/WhatsApp Business account
 4. Shopify account (for integration)
 5. Cloudflare account with Argo Tunnel enabled
@@ -16,15 +16,19 @@
    yarn install
    ```
 3. Set up your environment variables in `.env`:
-   ```
-   MONGO_URL=mongodb://localhost:27017
-   DB_NAME=WhatsApp_api
+   ```env
+   DB_HOST=localhost
+   DB_PORT=5432
+   DB_NAME=whatsapp_api
+   DB_USER=mdaqil
+   DB_PASSWORD=
+   DB_URL=postgresql://mdaqil@localhost:5432/whatsapp_api
    NEXT_PUBLIC_BASE_URL=https://lcsw.dpdns.org
    CORS_ORIGINS=*
    ```
 4. Initialize the database:
    ```
-   node scripts/init-db.js
+   node setup-postgres-tables.js
    ```
 
 ## Cloudflare Tunnel Setup
@@ -76,28 +80,14 @@ Once the tunnel is running, your webhook URLs will be:
    - Access token
 3. Configure these in the dashboard settings
 
-## Testing
-
-You can test various components using the provided scripts:
-
-```
-node test-db.js              # Test database connection
-node test-webhook-access.js  # Test webhook endpoint accessibility
-node test-whatsapp-api.js    # Test WhatsApp API connectivity
-node check-webhook-logs.js   # Check recent webhook logs
-```
-
 ## Support
 
-If you continue to have issues, please run:
-```
-node check_webhook_logs.js
-node check_whatsapp_logs.js
-```
-
-And share the output for further assistance.
+If you continue to have issues, verify:
+- PostgreSQL is reachable with the credentials in `.env`
+- `node setup-postgres-tables.js` completes successfully
+- the app loads at `http://localhost:3000`
 
 For Cloudflare tunnel issues, check:
 ```
-node check-webhook-subscription.js
+start-tunnel.bat
 ```

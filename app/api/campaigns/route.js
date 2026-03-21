@@ -1,99 +1,78 @@
 import { NextResponse } from 'next/server'
-import { MongoClient } from 'mongodb'
+import { query, queryMany } from '@/lib/postgres'
 
-// Placeholder for database connection - you'll need to configure this
-const MONGO_URL = process.env.MONGO_URL || 'mongodb://localhost:27017'
-const DB_NAME = process.env.DB_NAME || 'whatsapp-commerce'
-
-let client
-let db
-
-async function connectToDatabase() {
-  if (!client) {
-    client = new MongoClient(MONGO_URL)
-    await client.connect()
-    db = client.db(DB_NAME)
-  }
-  return { client, db }
+async function ensureCampaignSchema() {
+  await query('ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS "templateLanguage" TEXT')
+  await query('ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS "templateCategory" TEXT')
+  await query('ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS "templateHeaderImageUrl" TEXT')
+  await query('ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS "campaignType" TEXT DEFAULT \'template\'')
+  await query('ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS "productIds" JSONB DEFAULT \'[]\'::jsonb')
+  await query('ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS variables JSONB DEFAULT \'[]\'::jsonb')
 }
 
-// GET /api/campaigns - Get all campaigns
 export async function GET() {
   try {
-    // In a real implementation, you would fetch from your database
-    // const { db } = await connectToDatabase()
-    // const campaigns = await db.collection('campaigns').find({}).toArray()
-    
-    // Mock data for demonstration
-    const campaigns = [
-      {
-        id: '1',
-        name: 'Summer Sale Campaign',
-        template: 'summer_sale_2025',
-        message: '🌟 Summer Sale Alert! Get 30% off all products. Shop now!',
-        audience: 'all_customers',
-        recipients: 1250,
-        status: 'sent',
-        sentAt: new Date('2025-07-15'),
-      },
-      {
-        id: '2',
-        name: 'New Product Launch',
-        template: 'product_launch',
-        message: '🚀 Exciting news! Our new product line is now available. Check it out!',
-        audience: 'recent_buyers',
-        recipients: 842,
-        status: 'scheduled',
-        scheduledAt: new Date('2025-08-01'),
-      },
-      {
-        id: '3',
-        name: 'Customer Feedback Request',
-        template: 'feedback_request',
-        message: 'We value your opinion! Please share your feedback on your recent purchase.',
-        audience: 'recent_buyers',
-        recipients: 320,
-        status: 'draft',
-      }
-    ]
-    
+    await ensureCampaignSchema()
+    const campaigns = await queryMany(
+      `SELECT id, name, template, "templateLanguage", "templateCategory", "templateHeaderImageUrl", "campaignType", "productIds", message, variables, audience, recipients, status, results, "sentAt", "failedAt", "createdAt"
+       FROM campaigns
+       WHERE "userId" = $1
+       ORDER BY "createdAt" DESC NULLS LAST`,
+      ['default']
+    )
+
     return NextResponse.json(campaigns)
   } catch (error) {
     console.error('Error fetching campaigns:', error)
-    return NextResponse.json(
-      { error: 'Failed to fetch campaigns' },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: 'Failed to fetch campaigns' }, { status: 500 })
   }
 }
 
-// POST /api/campaigns - Create a new campaign
 export async function POST(request) {
   try {
+    await ensureCampaignSchema()
     const campaignData = await request.json()
-    
-    // In a real implementation, you would save to your database
-    // const { db } = await connectToDatabase()
-    // const result = await db.collection('campaigns').insertOne({
-    //   ...campaignData,
-    //   createdAt: new Date(),
-    //   status: campaignData.scheduledAt ? 'scheduled' : 'draft'
-    // })
-    
-    // Mock implementation for demonstration
-    const newCampaign = {
-      id: Date.now().toString(),
-      ...campaignData,
-      createdAt: new Date(),
-      status: campaignData.scheduledAt ? 'scheduled' : 'draft'
+
+    if (!campaignData.name || !campaignData.template) {
+      return NextResponse.json({ error: 'Campaign name and template are required' }, { status: 400 })
     }
-    
-    return NextResponse.json(newCampaign)
+
+    const id = crypto.randomUUID()
+    const status = campaignData.scheduledAt ? 'scheduled' : (campaignData.status || 'draft')
+
+    await query(
+      `INSERT INTO campaigns (id, "userId", name, template, "templateLanguage", "templateCategory", "templateHeaderImageUrl", "campaignType", "productIds", message, variables, audience, recipients, status, results, "sentAt", "failedAt", "createdAt")
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::jsonb, $12, $13::jsonb, $14, $15::jsonb, $16, $17, NOW())`,
+      [
+        id,
+        'default',
+        campaignData.name,
+        campaignData.template,
+        campaignData.templateLanguage || '',
+        campaignData.templateCategory || '',
+        campaignData.templateHeaderImageUrl || '',
+        campaignData.campaignType || 'template',
+        JSON.stringify(Array.isArray(campaignData.productIds) ? campaignData.productIds : []),
+        campaignData.message || '',
+        JSON.stringify(Array.isArray(campaignData.variables) ? campaignData.variables : []),
+        campaignData.audience || 'all_customers',
+        JSON.stringify(campaignData.recipients || []),
+        status,
+        JSON.stringify([]),
+        campaignData.scheduledAt ? new Date(campaignData.scheduledAt) : null,
+        null
+      ]
+    )
+
+    const [created] = await queryMany(
+      `SELECT id, name, template, "templateLanguage", "templateCategory", "templateHeaderImageUrl", "campaignType", "productIds", message, variables, audience, recipients, status, results, "sentAt", "failedAt", "createdAt"
+       FROM campaigns WHERE id = $1`,
+      [id]
+    )
+
+    return NextResponse.json(created)
   } catch (error) {
     console.error('Error creating campaign:', error)
-    return NextResponse.json(
-      { error: 'Failed to create campaign' },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: 'Failed to create campaign' }, { status: 500 })
   }
 }

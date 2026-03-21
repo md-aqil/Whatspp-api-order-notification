@@ -192,7 +192,16 @@ export default function DashboardChatPage() {
       })
       
       if (!response.ok) {
-        throw new Error('Failed to send message')
+        let errorMessage = 'Failed to send message'
+        try {
+          const errorData = await response.json()
+          errorMessage = errorData.guidance
+            ? `${errorData.error} ${errorData.guidance}`
+            : (errorData.error || errorMessage)
+        } catch {
+          // Keep the fallback message if the response body is not JSON.
+        }
+        throw new Error(errorMessage)
       }
       
       const result = await response.json()
@@ -222,8 +231,7 @@ export default function DashboardChatPage() {
       
     } catch (error) {
       console.error('Failed to send message:', error)
-      // Show error to user
-      alert('Failed to send message. Please try again.')
+      toast.error(error.message || 'Failed to send message. Please try again.')
     }
   }
 

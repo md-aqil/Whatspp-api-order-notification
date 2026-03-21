@@ -46,9 +46,9 @@ The dashboard utilizes the following API endpoints:
 - `GET /api/integrations` - Retrieve current integration status
 - `POST /api/integrations` - Save integration configuration
 
-## Database Collections
+## Database Tables
 
-The dashboard uses the following MongoDB collections:
+The dashboard uses the following PostgreSQL tables:
 
 - `chats` - Customer chat sessions
 - `messages` - Individual messages (both incoming and outgoing)

@@ -6,10 +6,10 @@ import {
   Store, 
   CreditCard, 
   Settings,
-  Menu,
   X,
   Send,
-  Megaphone
+  Megaphone,
+  Workflow
 } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
@@ -21,6 +21,7 @@ export function Sidebar({ sidebarOpen, setSidebarOpen }) {
     { name: 'Dashboard', href: '/dashboard', icon: Store },
     { name: 'Chat', href: '/dashboard/chat', icon: MessageCircle },
     { name: 'Campaigns', href: '/dashboard/campaigns', icon: Megaphone },
+    { name: 'Automations', href: '/dashboard/automations', icon: Workflow },
     { name: 'Send Catalog', href: '/dashboard/send-catalog', icon: Send },
     { name: 'Orders', href: '/dashboard/orders', icon: CreditCard },
     { name: 'Settings', href: '/dashboard/settings', icon: Settings },

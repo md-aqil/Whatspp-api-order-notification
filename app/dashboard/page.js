@@ -30,7 +30,9 @@ import {
   Package,
   Send,
   CheckCircle,
-  AlertCircle
+  AlertCircle,
+  BookOpen,
+  HelpCircle
 } from 'lucide-react'
 
 export default function DashboardPage() {
@@ -123,9 +125,8 @@ export default function DashboardPage() {
         case 'shopify':
           return [
             { key: 'shopDomain', label: 'Shop Domain', placeholder: 'your-shop.myshopify.com' },
-            { key: 'accessToken', label: 'Access Token', placeholder: 'Your Shopify Access Token', type: 'password' },
-            { key: 'apiKey', label: 'API Key', placeholder: 'Your Shopify API Key' },
-            { key: 'apiSecret', label: 'API Secret', placeholder: 'Your Shopify API Secret', type: 'password' }
+            { key: 'clientId', label: 'Client ID', placeholder: 'Shopify app client ID' },
+            { key: 'clientSecret', label: 'Client Secret', placeholder: 'Shopify app client secret', type: 'password' }
           ]
         case 'stripe':
           return [
@@ -151,6 +152,23 @@ export default function DashboardPage() {
               onChange={(e) => setFormData(prev => ({ ...prev, [field.key]: e.target.value }))}
               required
             />
+            {type === 'shopify' && field.key === 'shopDomain' && (
+              <p className="text-xs text-gray-500">
+                Find this in your Shopify Admin URL or store settings. Example:
+                <span className="ml-1 font-medium text-gray-700">your-store.myshopify.com</span>
+              </p>
+            )}
+            {type === 'shopify' && field.key === 'clientId' && (
+              <p className="text-xs text-gray-500">
+                Shopify Dev Dashboard → your app → Settings → Credentials → Client ID.
+              </p>
+            )}
+            {type === 'shopify' && field.key === 'clientSecret' && (
+              <p className="text-xs text-gray-500">
+                Shopify Dev Dashboard → your app → Settings → Credentials → Secret.
+                Do not share this or paste it into frontend code.
+              </p>
+            )}
           </div>
         ))}
         <Button type="submit" disabled={loading} className="w-full">
@@ -178,11 +196,24 @@ export default function DashboardPage() {
     <div>
       <Toaster />
       <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">WhatsApp Commerce Hub Dashboard</h1>
-          <p className="mt-1 text-sm text-gray-500">
-            Manage your integrations
-          </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">WhatsApp Commerce Hub Dashboard</h1>
+            <p className="mt-1 text-sm text-gray-500">
+              Manage your integrations
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <a
+              href="https://developers.facebook.com/docs/whatsapp"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center px-3 py-2 text-sm font-medium text-blue-700 bg-blue-50 border border-blue-300 rounded-md hover:bg-blue-100"
+            >
+              <HelpCircle className="w-4 h-4 mr-2" />
+              WhatsApp Docs
+            </a>
+          </div>
         </div>
 
         <Tabs defaultValue="integrations" className="space-y-6">
@@ -195,6 +226,64 @@ export default function DashboardPage() {
 
           {/* Integrations Tab */}
           <TabsContent value="integrations" className="space-y-6">
+            {/* Quick Instructions */}
+            <Card className="bg-blue-50 border-blue-200">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center text-blue-800">
+                  <BookOpen className="w-5 h-5 mr-2" />
+                  Getting Started - Complete Setup Guide
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-4 md:grid-cols-4 text-sm">
+                  <div className="bg-white p-3 rounded-lg border border-blue-100">
+                    <h4 className="font-semibold text-gray-700 flex items-center mb-2">
+                      <Settings className="w-4 h-4 mr-1" /> Database
+                    </h4>
+                    <ol className="text-xs text-gray-600 list-decimal list-inside space-y-1">
+                      <li>Install PostgreSQL</li>
+                      <li>Create database: <code className="bg-gray-100 px-1">whatsapp_api</code></li>
+                      <li>Update .env with credentials</li>
+                      <li>Run: <code className="bg-gray-100 px-1">node setup-postgres-tables.js</code></li>
+                    </ol>
+                  </div>
+                  <div className="bg-white p-3 rounded-lg border border-blue-100">
+                    <h4 className="font-semibold text-green-700 flex items-center mb-2">
+                      <MessageCircle className="w-4 h-4 mr-1" /> WhatsApp
+                    </h4>
+                    <ol className="text-xs text-gray-600 list-decimal list-inside space-y-1">
+                      <li>Go to <a href="https://developers.facebook.com" target="_blank" className="text-blue-600 hover:underline">developers.facebook.com</a></li>
+                      <li>Create App → WhatsApp product</li>
+                      <li>Get Phone Number ID & Business Account ID</li>
+                      <li>Generate Access Token</li>
+                    </ol>
+                  </div>
+                  <div className="bg-white p-3 rounded-lg border border-blue-100">
+                    <h4 className="font-semibold text-blue-700 flex items-center mb-2">
+                      <Store className="w-4 h-4 mr-1" /> Shopify
+                    </h4>
+                    <ol className="text-xs text-gray-600 list-decimal list-inside space-y-1">
+                      <li>Go to Shopify Admin → Settings → Apps</li>
+                      <li>Create Private App</li>
+                      <li>Configure Admin API scopes</li>
+                      <li>Copy Access Token & API Keys</li>
+                    </ol>
+                  </div>
+                  <div className="bg-white p-3 rounded-lg border border-blue-100">
+                    <h4 className="font-semibold text-purple-700 flex items-center mb-2">
+                      <CreditCard className="w-4 h-4 mr-1" /> Stripe
+                    </h4>
+                    <ol className="text-xs text-gray-600 list-decimal list-inside space-y-1">
+                      <li>Go to <a href="https://dashboard.stripe.com" target="_blank" className="text-blue-600 hover:underline">dashboard.stripe.com</a></li>
+                      <li>Get API Keys (Test mode)</li>
+                      <li>Create Webhook endpoint</li>
+                      <li>Copy Webhook Secret</li>
+                    </ol>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
             <div className="grid gap-6 md:grid-cols-3">
               <Card>
                 <CardHeader>
@@ -210,6 +299,10 @@ export default function DashboardPage() {
                   <div className="mb-4">
                     {getStatusBadge(integrations.whatsapp.connected)}
                   </div>
+                  <div className="mb-4 p-2 bg-gray-50 rounded text-xs text-gray-600">
+                    <strong>Where to get:</strong><br/>
+                    <a href="https://developers.facebook.com/apps" target="_blank" className="text-blue-600 hover:underline">Meta Developer Portal</a> → Your App → WhatsApp
+                  </div>
                   <IntegrationForm type="whatsapp" integration={integrations.whatsapp} />
                 </CardContent>
               </Card>
@@ -221,12 +314,33 @@ export default function DashboardPage() {
                     Shopify
                   </CardTitle>
                   <CardDescription>
-                    Connect your Shopify store to sync products and handle orders
+                    Connect your Shopify store using Shopify&apos;s client credentials grant flow
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
                   <div className="mb-4">
                     {getStatusBadge(integrations.shopify.connected)}
+                  </div>
+                  <div className="mb-4 p-2 bg-gray-50 rounded text-xs text-gray-600">
+                    <strong>Where to get:</strong><br/>
+                    Shopify Dev Dashboard → your app → Settings → Credentials
+                  </div>
+                  <div className="mb-4 rounded-lg border border-blue-100 bg-blue-50 p-3 text-xs text-blue-800">
+                    This app uses Shopify&apos;s client credentials flow:
+                    <br />
+                    1. Your shop domain, like <code className="bg-white px-1">your-store.myshopify.com</code>
+                    <br />
+                    2. Your app Client ID
+                    <br />
+                    3. Your app Client Secret
+                    <br />
+                    Where to find them:
+                    <br />
+                    Domain: copy the <code className="bg-white px-1">*.myshopify.com</code> part from your Shopify admin URL.
+                    <br />
+                    Client credentials: Shopify Dev Dashboard → open app → Settings → Credentials.
+                    <br />
+                    The server exchanges these credentials for a 24-hour Shopify Admin API token automatically.
                   </div>
                   <IntegrationForm type="shopify" integration={integrations.shopify} />
                 </CardContent>
@@ -246,11 +360,16 @@ export default function DashboardPage() {
                   <div className="mb-4">
                     {getStatusBadge(integrations.stripe.connected)}
                   </div>
+                  <div className="mb-4 p-2 bg-gray-50 rounded text-xs text-gray-600">
+                    <strong>Where to get:</strong><br/>
+                    <a href="https://dashboard.stripe.com/test/apikeys" target="_blank" className="text-blue-600 hover:underline">Stripe Dashboard</a> → Developers → API Keys & Webhooks
+                  </div>
                   <IntegrationForm type="stripe" integration={integrations.stripe} />
                 </CardContent>
               </Card>
             </div>
           </TabsContent>
+
         </Tabs>
       </div>
     </div>

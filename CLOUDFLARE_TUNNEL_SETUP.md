@@ -87,8 +87,4 @@ This error typically indicates an issue with the tunnel connection. To resolve:
 
 If you continue to have issues, please check:
 1. Cloudflare dashboard for tunnel status
-2. Run the diagnostic scripts:
-   ```
-   node check-webhook-logs.js
-   node check-webhook-subscription.js
-   ```
+2. Restart the app and tunnel using `start-project.bat` and `start-tunnel.bat`

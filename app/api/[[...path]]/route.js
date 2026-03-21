@@ -1,18 +1,697 @@
-import { MongoClient } from 'mongodb'
+import { Pool } from 'pg'
 import { v4 as uuidv4 } from 'uuid'
 import { NextResponse } from 'next/server'
 
-// MongoDB connection
-let client
-let db
+let pgPool
+const shopifyTokenCache = new Map()
 
-async function connectToMongo() {
-  if (!client) {
-    client = new MongoClient(process.env.MONGO_URL)
-    await client.connect()
-    db = client.db(process.env.DB_NAME)
+function getPostgresPool() {
+  if (!process.env.DB_URL) {
+    throw new Error('DB_URL is not configured')
   }
-  return db
+
+  if (!pgPool) {
+    pgPool = new Pool({
+      connectionString: process.env.DB_URL
+    })
+  }
+
+  return pgPool
+}
+
+async function queryOne(sql, params = []) {
+  const result = await getPostgresPool().query(sql, params)
+  return result.rows[0] || null
+}
+
+async function queryMany(sql, params = []) {
+  const result = await getPostgresPool().query(sql, params)
+  return result.rows
+}
+
+function getShopifyCacheKey(shopDomain, clientId) {
+  return `${shopDomain}::${clientId}`
+}
+
+function normalizeShopifyDomain(shopDomain = '') {
+  return shopDomain
+    .trim()
+    .replace(/^https?:\/\//, '')
+    .replace(/\/.*$/, '')
+    .replace(/^admin\.shopify\.com\/store\/.+$/, '')
+}
+
+async function getShopifyAccessToken(shopify) {
+  const normalizedDomain = normalizeShopifyDomain(shopify?.shopDomain)
+
+  if (!normalizedDomain || !shopify?.clientId || !shopify?.clientSecret) {
+    throw new Error('Shopify client credentials are incomplete')
+  }
+
+  if (!normalizedDomain.endsWith('.myshopify.com')) {
+    throw new Error('Use your Shopify store domain in the format your-store.myshopify.com')
+  }
+
+  const cacheKey = getShopifyCacheKey(normalizedDomain, shopify.clientId)
+  const cachedToken = shopifyTokenCache.get(cacheKey)
+
+  if (cachedToken?.accessToken && cachedToken.expiresAt > Date.now() + 60_000) {
+    return cachedToken.accessToken
+  }
+
+  const tokenResponse = await fetch(`https://${normalizedDomain}/admin/oauth/access_token`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded'
+    },
+    body: new URLSearchParams({
+      grant_type: 'client_credentials',
+      client_id: shopify.clientId,
+      client_secret: shopify.clientSecret
+    })
+  })
+
+  const rawTokenResponse = await tokenResponse.text()
+  let tokenData = null
+
+  try {
+    tokenData = rawTokenResponse ? JSON.parse(rawTokenResponse) : {}
+  } catch {
+    if (rawTokenResponse.trim().startsWith('<')) {
+      throw new Error(`Shopify returned an HTML page. Use your store domain like ${normalizedDomain || 'your-store.myshopify.com'}, not an admin.shopify.com URL.`)
+    }
+    throw new Error('Shopify returned an unreadable token response')
+  }
+
+  if (!tokenResponse.ok || !tokenData.access_token) {
+    throw new Error(tokenData.error_description || tokenData.error || 'Failed to fetch Shopify access token')
+  }
+
+  const expiresInSeconds = Number(tokenData.expires_in || 86399)
+  shopifyTokenCache.set(cacheKey, {
+    accessToken: tokenData.access_token,
+    expiresAt: Date.now() + expiresInSeconds * 1000
+  })
+
+  return tokenData.access_token
+}
+
+async function getStoredIntegrations() {
+  const result = await getPostgresPool().query(
+    'SELECT whatsapp, shopify, stripe FROM integrations WHERE "userId" = $1 ORDER BY "updatedAt" DESC NULLS LAST, id DESC LIMIT 1',
+    ['default']
+  )
+
+  return result.rows[0] || null
+}
+
+async function saveStoredIntegration(type, data) {
+  const pool = getPostgresPool()
+  const existing = await pool.query(
+    'SELECT id FROM integrations WHERE "userId" = $1 ORDER BY "updatedAt" DESC NULLS LAST, id DESC LIMIT 1',
+    ['default']
+  )
+
+  if (existing.rows[0]) {
+    await pool.query(
+      `UPDATE integrations
+       SET "${type}" = $1::jsonb, "updatedAt" = NOW()
+       WHERE id = $2`,
+      [JSON.stringify(data), existing.rows[0].id]
+    )
+    return
+  }
+
+  await pool.query(
+    `INSERT INTO integrations ("userId", "${type}", "createdAt", "updatedAt")
+     VALUES ($1, $2::jsonb, NOW(), NOW())`,
+    ['default', JSON.stringify(data)]
+  )
+}
+
+async function getStoredProducts() {
+  const row = await queryOne(
+    'SELECT products FROM products WHERE "userId" = $1 ORDER BY "updatedAt" DESC NULLS LAST, id DESC LIMIT 1',
+    ['default']
+  )
+  return row?.products || []
+}
+
+async function saveStoredProducts(products) {
+  const pool = getPostgresPool()
+  const existing = await queryOne(
+    'SELECT id FROM products WHERE "userId" = $1 ORDER BY "updatedAt" DESC NULLS LAST, id DESC LIMIT 1',
+    ['default']
+  )
+
+  if (existing) {
+    await pool.query(
+      'UPDATE products SET products = $1::jsonb, "lastSync" = NOW(), "updatedAt" = NOW() WHERE id = $2',
+      [JSON.stringify(products), existing.id]
+    )
+    return
+  }
+
+  await pool.query(
+    'INSERT INTO products ("userId", products, "lastSync", "createdAt", "updatedAt") VALUES ($1, $2::jsonb, NOW(), NOW(), NOW())',
+    ['default', JSON.stringify(products)]
+  )
+}
+
+async function getStoredOrders(limit = 100) {
+  return queryMany(
+    'SELECT id, "userId", "shopifyOrderId", "orderNumber", "customerName", "customerEmail", "customerPhone", total, currency, status, "lineItems", "createdAt", "updatedAt", "whatsappSent", "whatsappMessageId", "whatsappSentAt" FROM orders WHERE "userId" = $1 ORDER BY "createdAt" DESC NULLS LAST LIMIT $2',
+    ['default', limit]
+  )
+}
+
+async function getStoredChats() {
+  return queryMany(
+    'SELECT id, "userId", phone, name, "lastMessage", timestamp, unread, avatar FROM chats WHERE "userId" = $1 ORDER BY timestamp DESC NULLS LAST, "createdAt" DESC NULLS LAST',
+    ['default']
+  )
+}
+
+async function getStoredMessagesByPhone(phone) {
+  return queryMany(
+    'SELECT id, "userId", recipient, phone, message, "isCustomer", timestamp, "whatsappMessageId", status, "messageType", products, template FROM messages WHERE "userId" = $1 AND (recipient = $2 OR phone = $2) ORDER BY timestamp ASC NULLS LAST, "createdAt" ASC NULLS LAST',
+    ['default', phone]
+  )
+}
+
+async function getStoredChatByPhone(phone) {
+  return queryOne(
+    'SELECT id, "userId", phone, name, "lastMessage", timestamp, unread, avatar FROM chats WHERE "userId" = $1 AND phone = $2 LIMIT 1',
+    ['default', phone]
+  )
+}
+
+async function upsertStoredChat({ phone, name, lastMessage, timestamp, unread }) {
+  const pool = getPostgresPool()
+  const existing = await getStoredChatByPhone(phone)
+
+  if (existing) {
+    await pool.query(
+      'UPDATE chats SET name = $1, "lastMessage" = $2, timestamp = $3, unread = $4, avatar = $5 WHERE id = $6',
+      [
+        name ?? existing.name,
+        lastMessage ?? existing.lastMessage,
+        timestamp ?? existing.timestamp ?? new Date(),
+        unread ?? existing.unread ?? 0,
+        existing.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent((name ?? existing.name ?? 'Customer'))}&background=random`,
+        existing.id
+      ]
+    )
+    return getStoredChatByPhone(phone)
+  }
+
+  const newChat = {
+    id: uuidv4(),
+    userId: 'default',
+    phone,
+    name: name || `Customer ${phone}`,
+    lastMessage: lastMessage || 'Chat created',
+    timestamp: timestamp || new Date(),
+    unread: unread || 0,
+    avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(name || 'Customer')}&background=random`
+  }
+
+  await pool.query(
+    'INSERT INTO chats (id, "userId", phone, name, "lastMessage", timestamp, unread, avatar, "createdAt") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())',
+    [newChat.id, newChat.userId, newChat.phone, newChat.name, newChat.lastMessage, newChat.timestamp, newChat.unread, newChat.avatar]
+  )
+  return newChat
+}
+
+async function insertStoredMessage(message) {
+  await getPostgresPool().query(
+    'INSERT INTO messages (id, "userId", "campaignId", recipient, phone, message, "isCustomer", timestamp, "whatsappMessageId", status, "messageType", products, template, "orderId", "sentAt", "createdAt") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15, NOW())',
+    [
+      message.id,
+      message.userId || 'default',
+      message.campaignId || null,
+      message.recipient || null,
+      message.phone || null,
+      message.message || null,
+      message.isCustomer ?? null,
+      message.timestamp || null,
+      message.whatsappMessageId || null,
+      message.status || null,
+      message.messageType || null,
+      message.products ? JSON.stringify(message.products) : null,
+      message.template || null,
+      message.orderId || null,
+      message.sentAt || null
+    ]
+  )
+}
+
+async function saveStoredWebhooks(webhooks) {
+  const pool = getPostgresPool()
+  const existing = await queryOne(
+    'SELECT id FROM webhooks WHERE "userId" = $1 AND type = $2 ORDER BY "createdAt" DESC NULLS LAST, id DESC LIMIT 1',
+    ['default', 'shopify']
+  )
+
+  if (existing) {
+    await pool.query(
+      'UPDATE webhooks SET webhooks = $1::jsonb, "createdAt" = NOW() WHERE id = $2',
+      [JSON.stringify(webhooks), existing.id]
+    )
+    return
+  }
+
+  await pool.query(
+    'INSERT INTO webhooks ("userId", type, webhooks, "createdAt") VALUES ($1, $2, $3::jsonb, NOW())',
+    ['default', 'shopify', JSON.stringify(webhooks)]
+  )
+}
+
+async function insertWebhookLog(type, topic, payload) {
+  await getPostgresPool().query(
+    `INSERT INTO webhook_logs (id, type, topic, payload, "receivedAt", "createdAt")
+     VALUES ($1, $2, $3, $4::jsonb, NOW(), NOW())`,
+    [uuidv4(), type, topic || null, JSON.stringify(payload || {})]
+  )
+}
+
+async function getStoredShopifyCustomer(customerId) {
+  return queryOne(
+    `SELECT id, "customerId", phone
+     FROM shopify_customers
+     WHERE "customerId" = $1
+     ORDER BY "updatedAt" DESC NULLS LAST, id DESC
+     LIMIT 1`,
+    [customerId]
+  )
+}
+
+async function upsertStoredShopifyCustomer(customerId, phone) {
+  const pool = getPostgresPool()
+  const existing = await getStoredShopifyCustomer(customerId)
+  if (existing) {
+    await pool.query(
+      `UPDATE shopify_customers
+       SET phone = $1, "updatedAt" = NOW()
+       WHERE id = $2`,
+      [phone, existing.id]
+    )
+    return
+  }
+
+  await pool.query(
+    `INSERT INTO shopify_customers ("customerId", phone, "createdAt", "updatedAt")
+     VALUES ($1, $2, NOW(), NOW())`,
+    [customerId, phone]
+  )
+}
+
+async function insertStoredOrder(order) {
+  await getPostgresPool().query(
+    `INSERT INTO orders (id, "userId", "shopifyOrderId", "orderNumber", "customerName", "customerEmail", "customerPhone", total, currency, status, "lineItems", "createdAt", "updatedAt", "whatsappSent", "whatsappMessageId", "whatsappSentAt")
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14, $15, $16)`,
+    [
+      order.id,
+      order.userId || 'default',
+      order.shopifyOrderId || null,
+      order.orderNumber || null,
+      order.customerName || null,
+      order.customerEmail || null,
+      order.customerPhone || null,
+      order.total || null,
+      order.currency || null,
+      order.status || null,
+      JSON.stringify(order.lineItems || []),
+      order.createdAt || new Date(),
+      order.updatedAt || new Date(),
+      !!order.whatsappSent,
+      order.whatsappMessageId || null,
+      order.whatsappSentAt || null
+    ]
+  )
+}
+
+async function getStoredOrderByShopifyOrderId(shopifyOrderId) {
+  return queryOne(
+    `SELECT id, "userId", "shopifyOrderId", "orderNumber", "customerName", "customerEmail", "customerPhone", total, currency, status, "lineItems", "createdAt", "updatedAt", "whatsappSent", "whatsappMessageId", "whatsappSentAt"
+     FROM orders
+     WHERE "shopifyOrderId" = $1
+     LIMIT 1`,
+    [shopifyOrderId]
+  )
+}
+
+async function updateStoredOrderByShopifyOrderId(shopifyOrderId, patch) {
+  const pool = getPostgresPool()
+  const fields = []
+  const values = []
+  let index = 1
+
+  const map = {
+    status: 'status',
+    updatedAt: '"updatedAt"',
+    whatsappSent: '"whatsappSent"',
+    whatsappMessageId: '"whatsappMessageId"',
+    whatsappSentAt: '"whatsappSentAt"'
+  }
+
+  Object.entries(patch).forEach(([key, value]) => {
+    if (!(key in map)) return
+    fields.push(`${map[key]} = $${index}`)
+    values.push(value)
+    index += 1
+  })
+
+  if (fields.length === 0) return
+
+  values.push(shopifyOrderId)
+  await pool.query(
+    `UPDATE orders
+     SET ${fields.join(', ')}
+     WHERE "shopifyOrderId" = $${index}`,
+    values
+  )
+}
+
+function interpolateMessage(template, context) {
+  if (!template) return ''
+  return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, key) => {
+    const value = context[key]
+    return value === undefined || value === null ? '' : String(value)
+  })
+}
+
+function resolveAutomationVariable(value, context) {
+  const trimmed = typeof value === 'string' ? value.trim() : ''
+  if (!trimmed) return ''
+
+  const directMap = {
+    '{{customer_name}}': context.customer_name || '',
+    '{{order_number}}': context.order_number || '',
+    '{{tracking_number}}': context.tracking_number || '',
+    '{{tracking_url}}': context.tracking_url || '',
+    '{{review_link}}': context.review_link || '',
+    '{{order_total}}': context.order_total || '',
+    '{{currency}}': context.currency || '',
+    '{{financial_status}}': context.financial_status || '',
+    '{{shopify.customer.first_name}}': context.customer_name || '',
+    '{{shopify.total_price}}': context.order_total || ''
+  }
+
+  const normalized = trimmed.toLowerCase()
+  const normalizedMap = Object.fromEntries(Object.entries(directMap).map(([key, val]) => [key.toLowerCase(), val]))
+  if (normalizedMap[normalized] !== undefined) {
+    return normalizedMap[normalized]
+  }
+
+  return interpolateMessage(trimmed, context)
+}
+
+function buildAutomationTemplateComponents(templateComponents, variableMappings, context) {
+  const bodyComponent = Array.isArray(templateComponents)
+    ? templateComponents.find((component) => component.type === 'BODY')
+    : null
+
+  const placeholders = bodyComponent?.text?.match(/\{\{\d+\}\}/g) || []
+  if (placeholders.length === 0) return undefined
+
+  return [
+    {
+      type: 'body',
+      parameters: placeholders.map((_, index) => ({
+        type: 'text',
+        text: String(resolveAutomationVariable(variableMappings?.[index]?.value || '', context) || '')
+      }))
+    }
+  ]
+}
+
+function buildCatalogProductContext(products, shopify) {
+  const firstProduct = products[0] || null
+  const normalizedDomain = normalizeShopifyDomain(shopify?.shopDomain || '')
+  const baseDomain = normalizedDomain ? `https://${normalizedDomain}` : ''
+  const productLink = firstProduct?.handle && baseDomain ? `${baseDomain}/products/${firstProduct.handle}` : ''
+  const catalogLink = baseDomain ? `${baseDomain}/collections/all` : ''
+
+  return {
+    product_name: firstProduct?.title || '',
+    product_price: firstProduct?.price ? String(firstProduct.price) : '',
+    product_link: productLink,
+    product_names: products.slice(0, 3).map((product) => product.title).filter(Boolean).join(', '),
+    catalog_link: catalogLink
+  }
+}
+
+function resolveCatalogTemplateVariable(value, context) {
+  const trimmed = typeof value === 'string' ? value.trim() : ''
+  if (!trimmed) return ''
+
+  const normalized = trimmed.toLowerCase()
+  if (normalized === '{{product_name}}') return context.product_name || ''
+  if (normalized === '{{product_price}}') return context.product_price || ''
+  if (normalized === '{{product_link}}') return context.product_link || ''
+  if (normalized === '{{product_names}}') return context.product_names || ''
+  if (normalized === '{{catalog_link}}') return context.catalog_link || ''
+
+  return trimmed
+}
+
+function parseDelayToMs(step) {
+  const value = parseInt(step.delayValue || '0', 10)
+  if (!value) return 0
+  if (step.delayUnit === 'minutes') return value * 60 * 1000
+  if (step.delayUnit === 'days') return value * 24 * 60 * 60 * 1000
+  return value * 60 * 60 * 1000
+}
+
+function matchesCondition(rule, context) {
+  if (!rule) return true
+  const trimmed = rule.trim()
+  if (trimmed.includes('!=')) {
+    const [left, right] = trimmed.split('!=').map((value) => value.trim())
+    return String(context[left] ?? '') !== right
+  }
+  if (trimmed.includes('=')) {
+    const [left, right] = trimmed.split('=').map((value) => value.trim())
+    return String(context[left] ?? '') === right
+  }
+  return true
+}
+
+async function queueAutomationJob(automationId, recipient, message, template, payload, runAt) {
+  const pool = getPostgresPool()
+  if (!pool) return
+
+  await pool.query(
+    `INSERT INTO automation_jobs (id, "automationId", "userId", recipient, message, template, payload, status, "runAt", "createdAt")
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, 'pending', $8, NOW())`,
+    [uuidv4(), automationId, 'default', recipient, message, template || null, JSON.stringify(payload || {}), runAt]
+  )
+}
+
+async function incrementAutomationSentMetric(automationId) {
+  const pool = getPostgresPool()
+  if (!pool) return
+
+  await pool.query(
+    `UPDATE automations
+     SET metrics = jsonb_set(COALESCE(metrics, '{}'::jsonb), '{sent}', to_jsonb(COALESCE((metrics->>'sent')::int, 0) + 1), true),
+         "updatedAt" = NOW()
+     WHERE id = $1`,
+    [automationId]
+  )
+}
+
+function resolveAutomationRecipient(step, context) {
+  if (step?.recipientMode === 'fixed_number') {
+    const fixedRecipient = typeof step.recipientNumber === 'string' ? step.recipientNumber.replace(/\D/g, '') : ''
+    return fixedRecipient || null
+  }
+
+  const customerRecipient = typeof context.customerPhone === 'string' ? context.customerPhone.replace(/\D/g, '') : ''
+  return customerRecipient || null
+}
+
+async function executeAutomationsForEvent(eventType, context, integrations) {
+  const pool = getPostgresPool()
+  if (!pool || !integrations?.whatsapp?.phoneNumberId || !integrations?.whatsapp?.accessToken) {
+    return
+  }
+
+  const automations = await queryMany(
+    `SELECT id, name, steps, metrics
+     FROM automations
+     WHERE "userId" = $1 AND status = true`,
+    ['default']
+  )
+
+  for (const automation of automations) {
+    const trigger = (automation.steps || []).find((step) => step.type === 'trigger')
+    if (!trigger || trigger.event !== eventType) continue
+
+    let allowed = true
+    let totalDelayMs = 0
+
+    for (const step of automation.steps || []) {
+      if (step.type === 'trigger') continue
+
+      if (step.type === 'condition') {
+        allowed = matchesCondition(step.rule, context)
+        if (!allowed) break
+      }
+
+      if (step.type === 'delay') {
+        totalDelayMs += parseDelayToMs(step)
+      }
+
+      if (step.type === 'message' && allowed) {
+        const recipient = resolveAutomationRecipient(step, context)
+        if (!recipient) continue
+        const body = interpolateMessage(step.message, context)
+
+        if (totalDelayMs > 0) {
+          await queueAutomationJob(
+            automation.id,
+            recipient,
+            body,
+            step.template,
+            {
+              ...context,
+              recipientMode: step.recipientMode || 'customer',
+              recipientNumber: step.recipientNumber || '',
+              templateLanguage: step.templateLanguage || 'en_US',
+              templateComponents: step.templateComponents || [],
+              variableMappings: step.variableMappings || []
+            },
+            new Date(Date.now() + totalDelayMs)
+          )
+          continue
+        }
+
+        try {
+          const templateComponents = buildAutomationTemplateComponents(step.templateComponents, step.variableMappings, context)
+          const messageData = step.template
+            ? {
+                messaging_product: 'whatsapp',
+                to: recipient,
+                type: 'template',
+                template: {
+                  name: step.template,
+                  language: {
+                    code: step.templateLanguage || 'en_US'
+                  },
+                  ...(templateComponents ? { components: templateComponents } : {})
+                }
+              }
+            : {
+                messaging_product: 'whatsapp',
+                to: recipient,
+                type: 'text',
+                text: { body }
+              }
+
+          const result = await sendWhatsAppMessage(
+            integrations.whatsapp.phoneNumberId,
+            integrations.whatsapp.accessToken,
+            recipient,
+            messageData
+          )
+
+          await insertStoredMessage({
+            id: uuidv4(),
+            userId: 'default',
+            recipient,
+            phone: recipient,
+            message: body,
+            isCustomer: false,
+            timestamp: new Date(),
+            whatsappMessageId: result.messages?.[0]?.id,
+            status: 'sent',
+            template: step.template || null
+          })
+
+          await incrementAutomationSentMetric(automation.id)
+        } catch (error) {
+          console.error(`Automation ${automation.name} failed:`, error.message)
+        }
+      }
+    }
+  }
+}
+
+async function processDueAutomationJobs() {
+  const pool = getPostgresPool()
+  if (!pool) return
+
+  const integrations = await getStoredIntegrations()
+  if (!integrations?.whatsapp?.phoneNumberId || !integrations?.whatsapp?.accessToken) return
+
+  const jobs = await queryMany(
+    `SELECT id, "automationId", recipient, message, template, payload
+     FROM automation_jobs
+     WHERE status = 'pending' AND "runAt" <= NOW()
+     ORDER BY "runAt" ASC
+     LIMIT 10`
+  )
+
+  for (const job of jobs) {
+    try {
+      const templateComponents = buildAutomationTemplateComponents(job.payload?.templateComponents, job.payload?.variableMappings, job.payload || {})
+      const result = await sendWhatsAppMessage(
+        integrations.whatsapp.phoneNumberId,
+        integrations.whatsapp.accessToken,
+        job.recipient,
+        job.template
+          ? {
+              messaging_product: 'whatsapp',
+              to: job.recipient.replace(/\D/g, ''),
+              type: 'template',
+              template: {
+                name: job.template,
+                language: {
+                  code: job.payload?.templateLanguage || 'en_US'
+                },
+                ...(templateComponents ? { components: templateComponents } : {})
+              }
+            }
+          : {
+              messaging_product: 'whatsapp',
+              to: job.recipient.replace(/\D/g, ''),
+              type: 'text',
+              text: { body: job.message }
+            }
+      )
+
+      await insertStoredMessage({
+        id: uuidv4(),
+        userId: 'default',
+        recipient: job.recipient,
+        phone: job.recipient,
+        message: job.message,
+        isCustomer: false,
+        timestamp: new Date(),
+        whatsappMessageId: result.messages?.[0]?.id,
+        status: 'sent',
+        template: job.template || null
+      })
+
+      await query(
+        `UPDATE automation_jobs
+         SET status = 'sent', "processedAt" = NOW()
+         WHERE id = $1`,
+        [job.id]
+      )
+
+      await incrementAutomationSentMetric(job.automationId)
+    } catch (error) {
+      await query(
+        `UPDATE automation_jobs
+         SET status = 'failed', "processedAt" = NOW(), payload = jsonb_set(COALESCE(payload, '{}'::jsonb), '{error}', to_jsonb($2::text), true)
+         WHERE id = $1`,
+        [job.id, error.message]
+      )
+    }
+  }
 }
 
 // Helper function to handle CORS
@@ -61,7 +740,7 @@ async function sendWhatsAppMessage(phoneNumberId, accessToken, to, messageData) 
 }
 
 // Function to save incoming WhatsApp messages to database
-async function saveIncomingMessage(db, messageData) {
+async function saveIncomingMessage(messageData) {
   console.log('saveIncomingMessage called with:', JSON.stringify(messageData, null, 2));
   
   // Extract data based on message type
@@ -104,43 +783,23 @@ async function saveIncomingMessage(db, messageData) {
   
   console.log('Saving message to database:', JSON.stringify(message, null, 2));
   
-  // Save to database
-  await db.collection('messages').insertOne(message);
+  await insertStoredMessage(message);
   
   // Update or create chat in the chats collection
-  const chat = await db.collection('chats').findOne({ phone: from });
-  
-  if (chat) {
-    // Update existing chat
-    await db.collection('chats').updateOne(
-      { phone: from },
-      {
-        $set: {
-          lastMessage: message.message,
-          timestamp: message.timestamp,
-          unread: chat.unread + 1
-        }
-      }
-    );
-  } else {
-    // Create new chat
-    await db.collection('chats').insertOne({
-      id: uuidv4(),
-      userId: 'default',
-      phone: from,
-      name: `Customer ${from}`, // This would ideally come from customer data
-      lastMessage: message.message,
-      timestamp: message.timestamp,
-      unread: 1,
-      avatar: `https://ui-avatars.com/api/?name=Customer&background=random`
-    });
-  }
+  const chat = await getStoredChatByPhone(from);
+  await upsertStoredChat({
+    phone: from,
+    name: chat?.name || `Customer ${from}`,
+    lastMessage: message.message,
+    timestamp: message.timestamp,
+    unread: (chat?.unread || 0) + 1
+  });
   
   return message;
 }
 
 // Function to save outgoing WhatsApp messages to database
-async function saveOutgoingMessage(db, to, messageText, whatsappResponse) {
+async function saveOutgoingMessage(to, messageText, whatsappResponse) {
   const message = {
     id: uuidv4(),
     userId: 'default',
@@ -153,35 +812,17 @@ async function saveOutgoingMessage(db, to, messageText, whatsappResponse) {
     status: 'sent'
   };
   
-  await db.collection('messages').insertOne(message);
+  await insertStoredMessage(message);
   
   // Update or create chat in the chats collection
-  const chat = await db.collection('chats').findOne({ phone: to });
-  
-  if (chat) {
-    // Update existing chat
-    await db.collection('chats').updateOne(
-      { phone: to },
-      {
-        $set: {
-          lastMessage: messageText,
-          timestamp: new Date()
-        }
-      }
-    );
-  } else {
-    // Create new chat
-    await db.collection('chats').insertOne({
-      id: uuidv4(),
-      userId: 'default',
-      phone: to,
-      name: `Customer ${to}`,
-      lastMessage: messageText,
-      timestamp: new Date(),
-      unread: 0,
-      avatar: `https://ui-avatars.com/api/?name=Customer&background=random`
-    });
-  }
+  const chat = await getStoredChatByPhone(to);
+  await upsertStoredChat({
+    phone: to,
+    name: chat?.name || `Customer ${to}`,
+    lastMessage: messageText,
+    timestamp: new Date(),
+    unread: chat?.unread || 0
+  });
   
   return message;
 }
@@ -230,7 +871,9 @@ Thank you for your purchase!`
 }
 
 // Shopify API functions
-async function fetchShopifyProducts(shopDomain, accessToken) {
+async function fetchShopifyProducts(shopify) {
+  const accessToken = await getShopifyAccessToken(shopify)
+  const { shopDomain } = shopify
   const url = `https://${shopDomain}/admin/api/2023-10/products.json`
   
   const response = await fetch(url, {
@@ -255,7 +898,9 @@ async function fetchShopifyProducts(shopDomain, accessToken) {
   }))
 }
 
-async function fetchShopifyOrders(shopDomain, accessToken) {
+async function fetchShopifyOrders(shopify) {
+  const accessToken = await getShopifyAccessToken(shopify)
+  const { shopDomain } = shopify
   const url = `https://${shopDomain}/admin/api/2023-10/orders.json?status=any`
   
   const response = await fetch(url, {
@@ -288,7 +933,9 @@ async function fetchShopifyOrders(shopDomain, accessToken) {
   }))
 }
 
-async function fetchCompleteShopifyOrder(shopDomain, accessToken, orderId) {
+async function fetchCompleteShopifyOrder(shopify, orderId) {
+  const accessToken = await getShopifyAccessToken(shopify)
+  const { shopDomain } = shopify
   const url = `https://${shopDomain}/admin/api/2023-10/orders/${orderId}.json`;
   
   console.log(`Fetching complete order ${orderId} from Shopify API: ${url}`);
@@ -310,7 +957,9 @@ async function fetchCompleteShopifyOrder(shopDomain, accessToken, orderId) {
   return data.order;
 }
 
-async function createShopifyWebhook(shopDomain, accessToken, topic, webhookUrl) {
+async function createShopifyWebhook(shopify, topic, webhookUrl) {
+  const accessToken = await getShopifyAccessToken(shopify)
+  const { shopDomain } = shopify
   const url = `https://${shopDomain}/admin/api/2023-10/webhooks.json`
   
   const response = await fetch(url, {
@@ -349,95 +998,6 @@ async function createStripeCheckoutSession(lineItems, metadata) {
   }
 }
 
-// Campaign functions
-async function sendCampaignToRecipients(campaign, integrations, db) {
-  const { whatsapp } = integrations
-  let recipients = []
-  
-  // Determine recipients based on audience
-  if (campaign.audience === 'all_customers') {
-    // Get all customers from orders
-    const orders = await db.collection('orders').find({ userId: 'default' }).toArray()
-    recipients = [...new Set(orders.map(order => order.customerPhone).filter(phone => phone))]
-  } else if (campaign.audience === 'recent_buyers') {
-    // Get customers from last 30 days
-    const thirtyDaysAgo = new Date()
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
-    
-    const orders = await db.collection('orders').find({ 
-      userId: 'default',
-      createdAt: { $gte: thirtyDaysAgo }
-    }).toArray()
-    recipients = [...new Set(orders.map(order => order.customerPhone).filter(phone => phone))]
-  } else if (campaign.audience === 'custom') {
-    recipients = campaign.recipients || []
-  }
-
-  // Send messages to all recipients
-  const results = []
-  for (const recipient of recipients) {
-    try {
-      const messageData = {
-        messaging_product: "whatsapp",
-        to: recipient.replace(/\D/g, ''),
-        type: "text",
-        text: {
-          body: campaign.message
-        }
-      }
-
-      console.log(`Sending message to ${recipient}...`);
-      const result = await sendWhatsAppMessage(
-        whatsapp.phoneNumberId,
-        whatsapp.accessToken,
-        recipient,
-        messageData
-      )
-      console.log(`Message sent successfully to ${recipient}:`, result);
-
-      results.push({
-        recipient,
-        success: true,
-        messageId: result.messages?.[0]?.id
-      })
-
-      // Log the message
-      await db.collection('messages').insertOne({
-        id: uuidv4(),
-        userId: 'default',
-        campaignId: campaign.id,
-        recipient,
-        message: campaign.message,
-        whatsappMessageId: result.messages?.[0]?.id,
-        status: 'sent',
-        sentAt: new Date()
-      })
-
-    } catch (error) {
-      console.error(`Failed to send message to ${recipient}:`, error.message);
-      results.push({
-        recipient,
-        success: false,
-        error: error.message
-      })
-      
-      // Log the error
-      await db.collection('messages').insertOne({
-        id: uuidv4(),
-        userId: 'default',
-        campaignId: campaign.id,
-        recipient,
-        message: campaign.message,
-        status: 'failed',
-        error: error.message,
-        sentAt: new Date()
-      })
-    }
-  }
-
-  return results
-}
-
 // Route handler function
 async function handleRoute(request, { params }) {
   const { path = [] } = params
@@ -450,7 +1010,7 @@ async function handleRoute(request, { params }) {
   console.log(`Full params:`, params)
 
   try {
-    const db = await connectToMongo()
+    await processDueAutomationJobs()
 
     // Root endpoint
     if (route === '/' && method === 'GET') {
@@ -459,7 +1019,7 @@ async function handleRoute(request, { params }) {
 
     // Integrations endpoints
     if (route === '/integrations' && method === 'GET') {
-      const integrations = await db.collection('integrations').findOne({ userId: 'default' })
+      const integrations = await getStoredIntegrations()
       
       const defaultIntegrations = {
         whatsapp: { connected: false, data: {} },
@@ -470,7 +1030,11 @@ async function handleRoute(request, { params }) {
       if (integrations) {
         // Check if integrations are properly configured
         defaultIntegrations.whatsapp.connected = !!(integrations.whatsapp?.phoneNumberId && integrations.whatsapp?.accessToken)
-        defaultIntegrations.shopify.connected = !!(integrations.shopify?.shopDomain && integrations.shopify?.accessToken)
+        defaultIntegrations.shopify.connected = !!(
+          integrations.shopify?.shopDomain &&
+          integrations.shopify?.clientId &&
+          integrations.shopify?.clientSecret
+        )
         defaultIntegrations.stripe.connected = !!(integrations.stripe?.secretKey)
         
         // Return data without sensitive fields
@@ -482,7 +1046,7 @@ async function handleRoute(request, { params }) {
         }
         defaultIntegrations.shopify.data = {
           shopDomain: integrations.shopify?.shopDomain || '',
-          apiKey: integrations.shopify?.apiKey || ''
+          clientId: integrations.shopify?.clientId || ''
         }
         defaultIntegrations.stripe.data = {
           publishableKey: integrations.stripe?.publishableKey || ''
@@ -494,7 +1058,8 @@ async function handleRoute(request, { params }) {
 
     if (route === '/integrations' && method === 'POST') {
       const body = await request.json()
-      const { type, data } = body
+      const { type } = body
+      let { data } = body
 
       if (!type || !data) {
         return handleCORS(NextResponse.json(
@@ -516,9 +1081,9 @@ async function handleRoute(request, { params }) {
           }
         }
 
-        if (type === 'shopify' && data.shopDomain && data.accessToken) {
+        if (type === 'shopify' && data.shopDomain && data.clientId && data.clientSecret) {
           // Test Shopify connection
-          await fetchShopifyProducts(data.shopDomain, data.accessToken)
+          await fetchShopifyProducts(data)
         }
 
         if (type === 'stripe' && data.secretKey) {
@@ -543,26 +1108,25 @@ async function handleRoute(request, { params }) {
         }
       }
 
+      if (type === 'shopify') {
+        data = {
+          shopDomain: normalizeShopifyDomain(data.shopDomain || ''),
+          clientId: data.clientId || '',
+          clientSecret: data.clientSecret || ''
+        }
+      }
+
       // Save integration
-      await db.collection('integrations').updateOne(
-        { userId: 'default' },
-        { 
-          $set: { 
-            [`${type}`]: data,
-            updatedAt: new Date()
-          }
-        },
-        { upsert: true }
-      )
+      await saveStoredIntegration(type, data)
 
       return handleCORS(NextResponse.json({ success: true }))
     }
 
     // Setup webhooks endpoint
     if (route === '/setup-webhooks' && method === 'POST') {
-      const integrations = await db.collection('integrations').findOne({ userId: 'default' });
+      const integrations = await getStoredIntegrations();
       
-      if (!integrations?.shopify?.shopDomain || !integrations?.shopify?.accessToken) {
+      if (!integrations?.shopify?.shopDomain || !integrations?.shopify?.clientId || !integrations?.shopify?.clientSecret) {
         return handleCORS(NextResponse.json(
           { error: "Shopify not configured" }, 
           { status: 400 }
@@ -589,8 +1153,7 @@ async function handleRoute(request, { params }) {
         for (const webhook of webhooks) {
           try {
             const createdWebhook = await createShopifyWebhook(
-              integrations.shopify.shopDomain,
-              integrations.shopify.accessToken,
+              integrations.shopify,
               webhook.topic,
               webhook.address
             );
@@ -607,16 +1170,7 @@ async function handleRoute(request, { params }) {
         }
 
         // Save webhook info
-        await db.collection('webhooks').updateOne(
-          { userId: 'default', type: 'shopify' },
-          { 
-            $set: { 
-              webhooks: createdWebhooks,
-              createdAt: new Date()
-            }
-          },
-          { upsert: true }
-        )
+        await saveStoredWebhooks(createdWebhooks)
 
         return handleCORS(NextResponse.json({ 
           success: true, 
@@ -632,9 +1186,9 @@ async function handleRoute(request, { params }) {
 
     // Products endpoint
     if (route === '/products' && method === 'GET') {
-      const integrations = await db.collection('integrations').findOne({ userId: 'default' })
+      const integrations = await getStoredIntegrations()
       
-      if (!integrations?.shopify?.shopDomain || !integrations?.shopify?.accessToken) {
+      if (!integrations?.shopify?.shopDomain || !integrations?.shopify?.clientId || !integrations?.shopify?.clientSecret) {
         return handleCORS(NextResponse.json(
           { error: "Shopify not configured" }, 
           { status: 400 }
@@ -642,22 +1196,10 @@ async function handleRoute(request, { params }) {
       }
 
       try {
-        const products = await fetchShopifyProducts(
-          integrations.shopify.shopDomain,
-          integrations.shopify.accessToken
-        )
+        const products = await fetchShopifyProducts(integrations.shopify)
         
         // Cache products in database
-        await db.collection('products').updateOne(
-          { userId: 'default' },
-          { 
-            $set: { 
-              products,
-              lastSync: new Date()
-            }
-          },
-          { upsert: true }
-        )
+        await saveStoredProducts(products)
 
         return handleCORS(NextResponse.json(products))
       } catch (error) {
@@ -668,179 +1210,16 @@ async function handleRoute(request, { params }) {
       }
     }
 
-    // Campaigns endpoints
-    if (route === '/campaigns' && method === 'GET') {
-      try {
-        const db = await connectToMongo();
-        const campaigns = await db.collection('campaigns')
-          .find({ userId: 'default' })
-          .sort({ createdAt: -1 })
-          .limit(100)
-          .toArray()
-
-        const cleanedCampaigns = campaigns.map(({ _id, ...rest }) => rest)
-        return handleCORS(NextResponse.json(cleanedCampaigns))
-      } catch (error) {
-        console.error('Failed to fetch campaigns:', error)
-        return handleCORS(NextResponse.json(
-          { error: 'Failed to fetch campaigns' },
-          { status: 500 }
-        ))
-      }
-    }
-
-    if (route === '/campaigns' && method === 'POST') {
-      try {
-        const db = await connectToMongo();
-        const body = await request.json()
-        
-        if (!body.name || !body.message) {
-          return handleCORS(NextResponse.json(
-            { error: "Campaign name and message are required" }, 
-            { status: 400 }
-          ))
-        }
-
-        const campaign = {
-          id: uuidv4(),
-          userId: 'default',
-          name: body.name,
-          message: body.message,
-          audience: body.audience || 'all_customers',
-          recipients: body.recipients || [],
-          status: body.status || 'draft',
-          createdAt: new Date()
-        }
-
-        await db.collection('campaigns').insertOne(campaign)
-        
-        const { _id, ...cleanedCampaign } = campaign
-        return handleCORS(NextResponse.json(cleanedCampaign))
-      } catch (error) {
-        console.error('Failed to create campaign:', error)
-        return handleCORS(NextResponse.json(
-          { error: 'Failed to create campaign' },
-          { status: 500 }
-        ))
-      }
-    }
-
-    // Send campaign endpoint
-    if (route.startsWith('/campaigns/') && route.endsWith('/send') && method === 'POST') {
-      try {
-        const db = await connectToMongo();
-        const campaignId = route.split('/')[2]
-        
-        const campaign = await db.collection('campaigns').findOne({ 
-          id: campaignId, 
-          userId: 'default' 
-        })
-        
-        if (!campaign) {
-          return handleCORS(NextResponse.json(
-            { error: "Campaign not found" }, 
-            { status: 404 }
-          ))
-        }
-
-        const integrations = await db.collection('integrations').findOne({ userId: 'default' })
-        
-        if (!integrations?.whatsapp?.phoneNumberId || !integrations?.whatsapp?.accessToken) {
-          return handleCORS(NextResponse.json(
-            { error: "WhatsApp not configured" }, 
-            { status: 400 }
-          ))
-        }
-
-        try {
-          const results = await sendCampaignToRecipients(campaign, integrations, db)
-          
-          // Update campaign status
-          await db.collection('campaigns').updateOne(
-            { id: campaignId },
-            { 
-              $set: { 
-                status: 'sent',
-                sentAt: new Date(),
-                results: results
-              }
-            }
-          )
-
-          return handleCORS(NextResponse.json({ 
-            success: true, 
-            results: results 
-          }))
-
-        } catch (error) {
-          // Update campaign status to failed
-          await db.collection('campaigns').updateOne(
-            { id: campaignId },
-            { 
-              $set: { 
-                status: 'failed',
-                error: error.message,
-                failedAt: new Date()
-              }
-            }
-          )
-
-          return handleCORS(NextResponse.json(
-            { error: `Failed to send campaign: ${error.message}` }, 
-            { status: 400 }
-          ))
-        }
-      } catch (error) {
-        console.error('Failed to send campaign:', error)
-        return handleCORS(NextResponse.json(
-          { error: 'Failed to send campaign' },
-          { status: 500 }
-        ))
-      }
-    }
-
-    // Delete campaign endpoint
-    if (route.startsWith('/campaigns/') && method === 'DELETE') {
-      try {
-        const db = await connectToMongo();
-        const campaignId = route.split('/')[2]
-        
-        const result = await db.collection('campaigns').deleteOne({ 
-          id: campaignId, 
-          userId: 'default' 
-        })
-        
-        if (result.deletedCount === 0) {
-          return handleCORS(NextResponse.json(
-            { error: "Campaign not found" }, 
-            { status: 404 }
-          ))
-        }
-
-        return handleCORS(NextResponse.json({ success: true }))
-      } catch (error) {
-        console.error('Failed to delete campaign:', error)
-        return handleCORS(NextResponse.json(
-          { error: 'Failed to delete campaign' },
-          { status: 500 }
-        ))
-      }
-    }
-
     // Orders endpoint
     if (route === '/orders' && method === 'GET') {
       try {
-        const db = await connectToMongo();
         // Try to fetch orders from Shopify if integration is configured
-        const integrations = await db.collection('integrations').findOne({ userId: 'default' })
+        const integrations = await getStoredIntegrations()
         
-        if (integrations?.shopify?.shopDomain && integrations?.shopify?.accessToken) {
+        if (integrations?.shopify?.shopDomain && integrations?.shopify?.clientId && integrations?.shopify?.clientSecret) {
           try {
             // Fetch orders directly from Shopify
-            const shopifyOrders = await fetchShopifyOrders(
-              integrations.shopify.shopDomain,
-              integrations.shopify.accessToken
-            )
+            const shopifyOrders = await fetchShopifyOrders(integrations.shopify)
             
             // Return Shopify orders
             return handleCORS(NextResponse.json(shopifyOrders))
@@ -851,12 +1230,7 @@ async function handleRoute(request, { params }) {
         }
         
         // Fall back to database orders
-        const orders = await db.collection('orders')
-          .find({ userId: 'default' })
-          .sort({ createdAt: -1 })
-          .limit(100)
-          .toArray()
-
+        const orders = await getStoredOrders(100)
         const cleanedOrders = orders.map(({ _id, ...rest }) => rest)
         return handleCORS(NextResponse.json(cleanedOrders))
       } catch (error) {
@@ -871,9 +1245,8 @@ async function handleRoute(request, { params }) {
     // Update the send catalog endpoint to support template selection and multiple recipients
     if (route === '/send-catalog' && method === 'POST') {
       try {
-        const db = await connectToMongo();
         const body = await request.json();
-        const { products: productIds, recipient, recipients, templateName } = body;
+        const { products: productIds, recipient, recipients, templateName, templateLanguage, templateComponents, templateVariables } = body;
 
         if (!productIds || !Array.isArray(productIds) || productIds.length === 0) {
           return handleCORS(NextResponse.json(
@@ -897,7 +1270,7 @@ async function handleRoute(request, { params }) {
         }
 
         // Get integrations
-        const integrations = await db.collection('integrations').findOne({ userId: 'default' });
+        const integrations = await getStoredIntegrations();
         
         if (!integrations?.whatsapp?.phoneNumberId || !integrations?.whatsapp?.accessToken) {
           return handleCORS(NextResponse.json(
@@ -907,15 +1280,16 @@ async function handleRoute(request, { params }) {
         }
 
         // Get products
-        const productsData = await db.collection('products').findOne({ userId: 'default' });
-        if (!productsData) {
+        const storedProducts = await getStoredProducts();
+        if (!storedProducts || storedProducts.length === 0) {
           return handleCORS(NextResponse.json(
             { error: "No products found. Please sync products first." }, 
             { status: 400 }
           ));
         }
 
-        const selectedProducts = productsData.products.filter(p => productIds.includes(p.id));
+        const selectedProducts = storedProducts.filter(p => productIds.includes(p.id));
+        const productContext = buildCatalogProductContext(selectedProducts, integrations.shopify);
         
         if (selectedProducts.length === 0) {
           return handleCORS(NextResponse.json(
@@ -946,28 +1320,39 @@ async function handleRoute(request, { params }) {
 
             // Check if we're using a template
             if (templateName) {
+              const bodyComponent = Array.isArray(templateComponents)
+                ? templateComponents.find((component) => component.type === 'BODY')
+                : null
+              const placeholderMatches = bodyComponent?.text?.match(/\{\{\d+\}\}/g) || []
+              const templatePayload = {
+                name: templateName,
+                language: {
+                  code: templateLanguage || "en_US"
+                }
+              }
+
+              if (placeholderMatches.length > 0) {
+                const variableOrder = Array.isArray(templateVariables) && templateVariables.length > 0
+                  ? templateVariables
+                  : ['{{product_name}}', '{{product_price}}', '{{product_link}}', '{{product_names}}', '{{catalog_link}}']
+
+                templatePayload.components = [
+                  {
+                    type: "body",
+                    parameters: placeholderMatches.map((_match, index) => ({
+                      type: "text",
+                      text: resolveCatalogTemplateVariable(variableOrder[index] || '', productContext)
+                    }))
+                  }
+                ]
+              }
+
               // Send using the selected template
               const messageData = {
                 messaging_product: "whatsapp",
                 to: formattedRecipient,
                 type: "template",
-                template: {
-                  name: templateName,
-                  language: {
-                    code: "en"
-                  },
-                  components: [
-                    {
-                      type: "body",
-                      parameters: [
-                        {
-                          type: "text",
-                          text: selectedProducts.length.toString()
-                        }
-                      ]
-                    }
-                  ]
-                }
+                template: templatePayload
               };
 
               const result = await sendWhatsAppMessage(
@@ -978,10 +1363,14 @@ async function handleRoute(request, { params }) {
               );
 
               // Log the message
-              await db.collection('messages').insertOne({
+              await insertStoredMessage({
                 id: uuidv4(),
                 userId: 'default',
                 recipient: formattedRecipient,
+                phone: formattedRecipient,
+                message: `Catalog template sent: ${templateName}`,
+                isCustomer: false,
+                timestamp: new Date(),
                 products: selectedProducts,
                 template: templateName,
                 whatsappMessageId: result.messages?.[0]?.id,
@@ -1050,14 +1439,27 @@ ${productInfo}Browse our full collection and find something special just for you
               console.log('WhatsApp API response:', JSON.stringify(result, null, 2));
 
               // Log the message
-              await db.collection('messages').insertOne({
+              await insertStoredMessage({
                 id: uuidv4(),
                 userId: 'default',
                 recipient: formattedRecipient,
+                phone: formattedRecipient,
+                message: catalogMessage,
+                isCustomer: false,
+                timestamp: new Date(),
                 products: selectedProducts,
                 whatsappMessageId: result.messages?.[0]?.id,
                 status: 'sent',
                 sentAt: new Date()
+              });
+
+              const existingChat = await getStoredChatByPhone(formattedRecipient);
+              await upsertStoredChat({
+                phone: formattedRecipient,
+                name: existingChat?.name || `Customer ${formattedRecipient}`,
+                lastMessage: 'Catalog sent',
+                timestamp: new Date(),
+                unread: existingChat?.unread || 0
               });
 
               results.push({
@@ -1098,10 +1500,8 @@ ${productInfo}Browse our full collection and find something special just for you
     // New endpoint to fetch WhatsApp templates
     if (route === '/whatsapp-templates' && method === 'GET') {
       try {
-        const db = await connectToMongo();
-        
         // Get WhatsApp integration details
-        const integrations = await db.collection('integrations').findOne({ userId: 'default' });
+        const integrations = await getStoredIntegrations();
         
         if (!integrations?.whatsapp?.phoneNumberId || !integrations?.whatsapp?.accessToken) {
           return handleCORS(NextResponse.json(
@@ -1189,11 +1589,10 @@ ${productInfo}Browse our full collection and find something special just for you
     // Webhook endpoint for WhatsApp
     if (route === '/webhook/whatsapp' && method === 'GET') {
       try {
-        const db = await connectToMongo();
         const verifyToken = request.nextUrl.searchParams.get('hub.verify_token')
         const challenge = request.nextUrl.searchParams.get('hub.challenge')
         
-        const integrations = await db.collection('integrations').findOne({ userId: 'default' })
+        const integrations = await getStoredIntegrations()
         const expectedToken = integrations?.whatsapp?.webhookVerifyToken
         
         if (verifyToken === expectedToken) {
@@ -1209,16 +1608,10 @@ ${productInfo}Browse our full collection and find something special just for you
 
     if (route === '/webhook/whatsapp' && method === 'POST') {
       try {
-        const db = await connectToMongo();
         const body = await request.json()
         
         // Log webhook for debugging
-        await db.collection('webhook_logs').insertOne({
-          id: uuidv4(),
-          type: 'whatsapp',
-          payload: body,
-          receivedAt: new Date()
-        })
+        await insertWebhookLog('whatsapp', null, body)
         
         console.log('WhatsApp webhook received:', JSON.stringify(body, null, 2));
         
@@ -1237,7 +1630,7 @@ ${productInfo}Browse our full collection and find something special just for you
                     for (const message of change.value.messages) {
                       console.log('Saving incoming message:', JSON.stringify(message, null, 2));
                       // Save incoming message to database
-                      await saveIncomingMessage(db, message)
+                      await saveIncomingMessage(message)
                     }
                   }
                   
@@ -1278,18 +1671,19 @@ ${productInfo}Browse our full collection and find something special just for you
     // Fixed the route matching to properly handle webhook paths
     if (route === '/webhook/shopify' && method === 'POST') {
       try {
-        const db = await connectToMongo();
         const body = await request.json()
         const topic = request.headers.get('x-shopify-topic')
         
         // Log webhook for debugging
-        await db.collection('webhook_logs').insertOne({
-          id: uuidv4(),
-          type: 'shopify',
-          topic: topic,
-          payload: body,
-          receivedAt: new Date()
-        })
+        await insertWebhookLog('shopify', topic, body)
+
+        if ((topic === 'customers/create' || topic === 'customers/update') && body?.id) {
+          const discoveredPhone = body.phone || body.default_address?.phone || body.addresses?.find((address) => address.phone)?.phone || null
+          if (discoveredPhone) {
+            await upsertStoredShopifyCustomer(body.id.toString(), discoveredPhone)
+            await upsertStoredShopifyCustomer(`guest-${body.id.toString()}`, discoveredPhone)
+          }
+        }
 
         // Process different Shopify webhook topics
         if (topic === 'orders/create' && body.id) {
@@ -1406,9 +1800,7 @@ ${productInfo}Browse our full collection and find something special just for you
           if (!customerPhone && body.customer && body.customer.id) {
             try {
               console.log(`No phone found in webhook data for order ${body.order_number}, checking customer database for regular customer`);
-              const customerRecord = await db.collection('shopify_customers').findOne({ 
-                customerId: body.customer.id.toString() 
-              });
+              const customerRecord = await getStoredShopifyCustomer(body.customer.id.toString());
               
               if (customerRecord && customerRecord.phone) {
                 customerPhone = customerRecord.phone;
@@ -1425,9 +1817,7 @@ ${productInfo}Browse our full collection and find something special just for you
           if (!customerPhone && body.customer && body.customer.id) {
             try {
               console.log(`No phone found for regular customer, checking customer database for guest customer`);
-              const guestCustomerRecord = await db.collection('shopify_customers').findOne({ 
-                customerId: `guest-${body.customer.id.toString()}` 
-              });
+              const guestCustomerRecord = await getStoredShopifyCustomer(`guest-${body.customer.id.toString()}`);
               
               if (guestCustomerRecord && guestCustomerRecord.phone) {
                 customerPhone = guestCustomerRecord.phone;
@@ -1444,12 +1834,11 @@ ${productInfo}Browse our full collection and find something special just for you
           if (!customerPhone) {
             try {
               console.log(`No phone found in webhook data for order ${body.order_number}, fetching complete order from Shopify API`);
-              const integrations = await db.collection('integrations').findOne({ userId: 'default' });
+              const integrations = await getStoredIntegrations();
               
-              if (integrations?.shopify?.shopDomain && integrations?.shopify?.accessToken) {
+              if (integrations?.shopify?.shopDomain && integrations?.shopify?.clientId && integrations?.shopify?.clientSecret) {
                 const completeOrder = await fetchCompleteShopifyOrder(
-                  integrations.shopify.shopDomain,
-                  integrations.shopify.accessToken,
+                  integrations.shopify,
                   body.id
                 );
                 
@@ -1566,11 +1955,12 @@ ${productInfo}Browse our full collection and find something special just for you
             status: body.financial_status || 'pending',
             lineItems: body.line_items || [],
             createdAt: new Date(body.created_at),
+            updatedAt: new Date(body.created_at),
             whatsappSent: false
           }
 
           // Save order to database
-          await db.collection('orders').insertOne(order)
+          await insertStoredOrder(order)
       
           console.log(`=== ORDER PROCESSING COMPLETE ===`);
           console.log(`Order ${order.orderNumber} saved.`);
@@ -1579,7 +1969,7 @@ ${productInfo}Browse our full collection and find something special just for you
 
           // Send WhatsApp confirmation to customer if phone number exists
           if (customerPhone) {
-            const integrations = await db.collection('integrations').findOne({ userId: 'default' })
+            const integrations = await getStoredIntegrations()
             
             if (integrations?.whatsapp?.phoneNumberId && integrations?.whatsapp?.accessToken) {
               try {
@@ -1607,24 +1997,23 @@ ${productInfo}Browse our full collection and find something special just for you
                 )
 
                 // Update order to mark WhatsApp as sent
-                await db.collection('orders').updateOne(
-                  { id: order.id },
-                  { 
-                    $set: { 
-                      whatsappSent: true,
-                      whatsappMessageId: result.messages?.[0]?.id,
-                      whatsappSentAt: new Date()
-                    }
-                  }
-                )
+                await updateStoredOrderByShopifyOrderId(order.shopifyOrderId, {
+                  whatsappSent: true,
+                  whatsappMessageId: result.messages?.[0]?.id,
+                  whatsappSentAt: new Date(),
+                  updatedAt: new Date()
+                })
 
                 // Log the message
-                await db.collection('messages').insertOne({
+                await insertStoredMessage({
                   id: uuidv4(),
                   userId: 'default',
                   orderId: order.id,
                   recipient: customerPhone,
+                  phone: customerPhone,
                   message: confirmationMessage,
+                  isCustomer: false,
+                  timestamp: new Date(),
                   whatsappMessageId: result.messages?.[0]?.id,
                   status: 'sent',
                   sentAt: new Date()
@@ -1642,32 +2031,40 @@ ${productInfo}Browse our full collection and find something special just for you
           } else {
             console.log(`No phone number found for order ${order.orderNumber}, skipping WhatsApp notification`);
           }
+
+          if (body.customer?.id && customerPhone) {
+            await upsertStoredShopifyCustomer(body.customer.id.toString(), customerPhone)
+          }
+
+          const automationIntegrations = await getStoredIntegrations()
+          await executeAutomationsForEvent('shopify.order_created', {
+            customer_name: order.customerName,
+            customerPhone: customerPhone,
+            order_number: order.orderNumber,
+            financial_status: order.status,
+            order_total: order.total,
+            currency: order.currency,
+            review_link: process.env.NEXT_PUBLIC_BASE_URL || ''
+          }, automationIntegrations)
         } 
         // Handle order status updates
         else if (topic && topic.startsWith('orders/') && body.id) {
           // Get the order from our database
-          const existingOrder = await db.collection('orders').findOne({ 
-            shopifyOrderId: body.id.toString() 
-          })
+          const existingOrder = await getStoredOrderByShopifyOrderId(body.id.toString())
           
           if (existingOrder) {
             // Extract the status from the topic (orders/fulfilled -> fulfilled)
             const newStatus = topic.replace('orders/', '')
             
             // Update order in database
-            await db.collection('orders').updateOne(
-              { shopifyOrderId: body.id.toString() },
-              { 
-                $set: { 
-                  status: newStatus,
-                  updatedAt: new Date()
-                }
-              }
-            )
+            await updateStoredOrderByShopifyOrderId(body.id.toString(), {
+              status: newStatus,
+              updatedAt: new Date()
+            })
             
             // Send WhatsApp notification if customer phone exists and status has changed
             if (existingOrder.customerPhone && existingOrder.status !== newStatus) {
-              const integrations = await db.collection('integrations').findOne({ userId: 'default' })
+              const integrations = await getStoredIntegrations()
               
               if (integrations?.whatsapp?.phoneNumberId && integrations?.whatsapp?.accessToken) {
                 try {
@@ -1681,12 +2078,15 @@ ${productInfo}Browse our full collection and find something special just for you
                   )
                   
                   // Log the message
-                  await db.collection('messages').insertOne({
+                  await insertStoredMessage({
                     id: uuidv4(),
                     userId: 'default',
                     orderId: existingOrder.id,
                     recipient: existingOrder.customerPhone,
+                    phone: existingOrder.customerPhone,
                     message: `Order status update: ${newStatus}`,
+                    isCustomer: false,
+                    timestamp: new Date(),
                     whatsappMessageId: result.messages?.[0]?.id,
                     status: 'sent',
                     sentAt: new Date()
@@ -1698,6 +2098,32 @@ ${productInfo}Browse our full collection and find something special just for you
                   console.error('Failed to send WhatsApp status update:', whatsappError)
                   // Don't fail the webhook if WhatsApp fails
                 }
+              }
+
+              const trackingNumber = body.fulfillments?.[0]?.tracking_number || body.fulfillments?.[0]?.tracking_numbers?.[0] || ''
+              const trackingUrl = body.fulfillments?.[0]?.tracking_url || body.fulfillments?.[0]?.tracking_urls?.[0] || ''
+              const automationIntegrations = await getStoredIntegrations()
+              if (trackingNumber || topic === 'orders/fulfilled') {
+                await executeAutomationsForEvent('shopify.fulfillment_created', {
+                  customer_name: existingOrder.customerName,
+                  customerPhone: existingOrder.customerPhone,
+                  order_number: existingOrder.orderNumber,
+                  tracking_number: trackingNumber,
+                  tracking_url: trackingUrl,
+                  financial_status: newStatus,
+                  review_link: process.env.NEXT_PUBLIC_BASE_URL || ''
+                }, automationIntegrations)
+              }
+              if (topic === 'orders/fulfilled') {
+                await executeAutomationsForEvent('shopify.order_delivered', {
+                  customer_name: existingOrder.customerName,
+                  customerPhone: existingOrder.customerPhone,
+                  order_number: existingOrder.orderNumber,
+                  tracking_number: trackingNumber,
+                  tracking_url: trackingUrl,
+                  financial_status: newStatus,
+                  review_link: process.env.NEXT_PUBLIC_BASE_URL || ''
+                }, automationIntegrations)
               }
             }
           }
@@ -1724,7 +2150,6 @@ ${productInfo}Browse our full collection and find something special just for you
     // New endpoint to send WhatsApp messages from the dashboard
     if (route === '/send-whatsapp-message' && method === 'POST') {
       try {
-        const db = await connectToMongo();
         const body = await request.json()
         const { to, message } = body
 
@@ -1736,7 +2161,7 @@ ${productInfo}Browse our full collection and find something special just for you
         }
 
         // Get WhatsApp integration details
-        const integrations = await db.collection('integrations').findOne({ userId: 'default' })
+        const integrations = await getStoredIntegrations()
         
         if (!integrations?.whatsapp?.phoneNumberId || !integrations?.whatsapp?.accessToken) {
           return handleCORS(NextResponse.json(
@@ -1764,7 +2189,7 @@ ${productInfo}Browse our full collection and find something special just for you
         )
 
         // Save message to database
-        const savedMessage = await saveOutgoingMessage(db, to, message, result)
+        const savedMessage = await saveOutgoingMessage(to, message, result)
 
         // Return the saved message object
         const messageResponse = {
@@ -1783,9 +2208,19 @@ ${productInfo}Browse our full collection and find something special just for you
 
       } catch (error) {
         console.error('Failed to send WhatsApp message:', error)
+        const isRecipientAllowlistError =
+          error.message?.includes('Recipient phone number not in allowed list')
+
         return handleCORS(NextResponse.json(
-          { error: `Failed to send message: ${error.message}` },
-          { status: 500 }
+          {
+            error: isRecipientAllowlistError
+              ? 'This phone number is not in your WhatsApp test recipient list.'
+              : `Failed to send message: ${error.message}`,
+            guidance: isRecipientAllowlistError
+              ? 'In Meta Developer Dashboard, add this number to the WhatsApp API allowed recipients list, then try again.'
+              : undefined
+          },
+          { status: isRecipientAllowlistError ? 400 : 500 }
         ))
       }
     }
@@ -1793,11 +2228,7 @@ ${productInfo}Browse our full collection and find something special just for you
     // New endpoint to get chats for the dashboard
     if (route === '/chats' && method === 'GET') {
       try {
-        const db = await connectToMongo();
-        const chats = await db.collection('chats')
-          .find({ userId: 'default' })
-          .sort({ timestamp: -1 })
-          .toArray()
+        const chats = await getStoredChats()
 
         const cleanedChats = chats.map(({ _id, ...rest }) => rest)
         return handleCORS(NextResponse.json(cleanedChats))
@@ -1813,7 +2244,6 @@ ${productInfo}Browse our full collection and find something special just for you
     // New endpoint to get messages for a specific chat
     if (route.startsWith('/chats/') && route.endsWith('/messages') && method === 'GET') {
       try {
-        const db = await connectToMongo();
         const phone = route.split('/')[2]; // Extract phone number from route
         
         if (!phone) {
@@ -1824,16 +2254,7 @@ ${productInfo}Browse our full collection and find something special just for you
         }
 
         // Fetch all messages for this phone number (both incoming from customer and outgoing to customer)
-        const messages = await db.collection('messages')
-          .find({ 
-            userId: 'default',
-            $or: [
-              { recipient: phone },  // Messages sent to customer
-              { phone: phone }       // Messages received from customer
-            ]
-          })
-          .sort({ timestamp: 1 })
-          .toArray();
+        const messages = await getStoredMessagesByPhone(phone);
 
         // Transform messages to ensure consistent structure for the frontend
         const transformedMessages = messages.map(msg => {
@@ -1884,7 +2305,6 @@ ${productInfo}Browse our full collection and find something special just for you
     // New endpoint to create a new chat
     if (route === '/chats' && method === 'POST') {
       try {
-        const db = await connectToMongo();
         let body;
         try {
           body = await request.json();
@@ -1909,28 +2329,20 @@ ${productInfo}Browse our full collection and find something special just for you
         const formattedPhone = phone.replace(/\D/g, '');
 
         // Check if chat already exists
-        const existingChat = await db.collection('chats').findOne({ 
-          userId: 'default',
-          phone: formattedPhone 
-        });
+        const existingChat = await getStoredChatByPhone(formattedPhone);
 
         if (existingChat) {
           return handleCORS(NextResponse.json(existingChat));
         }
 
         // Create new chat
-        const newChat = {
-          id: uuidv4(),
-          userId: 'default',
+        const newChat = await upsertStoredChat({
           phone: formattedPhone,
           name: name || `Customer ${formattedPhone}`,
           lastMessage: 'Chat created',
           timestamp: new Date(),
-          unread: 0,
-          avatar: `https://ui-avatars.com/api/?name=${name || 'Customer'}&background=random`
-        };
-
-        await db.collection('chats').insertOne(newChat);
+          unread: 0
+        });
 
         const { _id, ...cleanedChat } = newChat;
         return handleCORS(NextResponse.json(cleanedChat));
