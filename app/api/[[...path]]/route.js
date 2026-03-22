@@ -387,6 +387,8 @@ function resolveAutomationVariable(value, context) {
 
   const directMap = {
     '{{customer_name}}': context.customer_name || '',
+    '{{customer_phone}}': context.customer_phone || context.customerPhone || '',
+    '{{customer_message}}': context.customer_message || '',
     '{{order_number}}': context.order_number || '',
     '{{tracking_number}}': context.tracking_number || '',
     '{{tracking_url}}': context.tracking_url || '',
@@ -464,9 +466,30 @@ function parseDelayToMs(step) {
   return value * 60 * 60 * 1000
 }
 
+function getSequentialStepId(steps, currentStepId) {
+  const index = steps.findIndex((step) => step.id === currentStepId)
+  if (index === -1) return ''
+  return steps[index + 1]?.id || ''
+}
+
+function getNextAutomationStepId(steps, step, key = 'main') {
+  const explicitTarget = step?.connections?.[key]
+  if (explicitTarget) return explicitTarget
+  if (key === 'fallback') return ''
+  return getSequentialStepId(steps, step?.id)
+}
+
 function matchesCondition(rule, context) {
   if (!rule) return true
   const trimmed = rule.trim()
+  if (trimmed.includes(' not contains ')) {
+    const [left, right] = trimmed.split(' not contains ').map((value) => value.trim())
+    return !String(context[left] ?? '').toLowerCase().includes(right.toLowerCase())
+  }
+  if (trimmed.includes(' contains ')) {
+    const [left, right] = trimmed.split(' contains ').map((value) => value.trim())
+    return String(context[left] ?? '').toLowerCase().includes(right.toLowerCase())
+  }
   if (trimmed.includes('!=')) {
     const [left, right] = trimmed.split('!=').map((value) => value.trim())
     return String(context[left] ?? '') !== right
@@ -476,6 +499,29 @@ function matchesCondition(rule, context) {
     return String(context[left] ?? '') === right
   }
   return true
+}
+
+function buildIncomingWhatsAppAutomationContext(messageData, savedMessage, contact) {
+  const textBody = messageData?.text?.body || savedMessage?.message || ''
+  const displayName =
+    contact?.profile?.name ||
+    contact?.wa_id ||
+    savedMessage?.recipient ||
+    'Customer'
+
+  return {
+    customer_name: displayName,
+    customer_phone: messageData?.from || savedMessage?.recipient || '',
+    customerPhone: messageData?.from || savedMessage?.recipient || '',
+    customer_message: textBody,
+    financial_status: '',
+    order_number: '',
+    tracking_number: '',
+    tracking_url: '',
+    review_link: process.env.NEXT_PUBLIC_BASE_URL || 'https://example.com/review',
+    order_total: '',
+    currency: 'INR'
+  }
 }
 
 async function queueAutomationJob(automationId, recipient, message, template, payload, runAt) {
@@ -526,27 +572,37 @@ async function executeAutomationsForEvent(eventType, context, integrations) {
   )
 
   for (const automation of automations) {
-    const trigger = (automation.steps || []).find((step) => step.type === 'trigger')
+    const steps = Array.isArray(automation.steps) ? automation.steps : []
+    const trigger = steps.find((step) => step.type === 'trigger')
     if (!trigger || trigger.event !== eventType) continue
 
-    let allowed = true
     let totalDelayMs = 0
+    let currentStepId = getNextAutomationStepId(steps, trigger, 'main')
+    const visited = new Set([trigger.id])
 
-    for (const step of automation.steps || []) {
-      if (step.type === 'trigger') continue
+    while (currentStepId && !visited.has(currentStepId)) {
+      visited.add(currentStepId)
+      const step = steps.find((item) => item.id === currentStepId)
+      if (!step) break
 
       if (step.type === 'condition') {
-        allowed = matchesCondition(step.rule, context)
-        if (!allowed) break
+        const passed = matchesCondition(step.rule, context)
+        currentStepId = getNextAutomationStepId(steps, step, passed ? 'main' : 'fallback')
+        continue
       }
 
       if (step.type === 'delay') {
         totalDelayMs += parseDelayToMs(step)
+        currentStepId = getNextAutomationStepId(steps, step, 'main')
+        continue
       }
 
-      if (step.type === 'message' && allowed) {
+      if (step.type === 'message') {
         const recipient = resolveAutomationRecipient(step, context)
-        if (!recipient) continue
+        if (!recipient) {
+          currentStepId = getNextAutomationStepId(steps, step, 'main')
+          continue
+        }
         const body = interpolateMessage(step.message, context)
 
         if (totalDelayMs > 0) {
@@ -565,6 +621,7 @@ async function executeAutomationsForEvent(eventType, context, integrations) {
             },
             new Date(Date.now() + totalDelayMs)
           )
+          currentStepId = getNextAutomationStepId(steps, step, 'main')
           continue
         }
 
@@ -614,7 +671,12 @@ async function executeAutomationsForEvent(eventType, context, integrations) {
         } catch (error) {
           console.error(`Automation ${automation.name} failed:`, error.message)
         }
+
+        currentStepId = getNextAutomationStepId(steps, step, 'main')
+        continue
       }
+
+      currentStepId = getNextAutomationStepId(steps, step, 'main')
     }
   }
 }
@@ -1624,13 +1686,26 @@ ${productInfo}Browse our full collection and find something special just for you
                 
                 // Handle incoming messages
                 if (change.field === 'messages') {
+                  const contactsByWaId = new Map(
+                    (change.value?.contacts || [])
+                      .filter((contact) => contact?.wa_id)
+                      .map((contact) => [contact.wa_id, contact])
+                  )
+
                   // Check for actual messages
                   if (change.value?.messages && Array.isArray(change.value.messages)) {
                     console.log('Processing incoming messages');
+                    const automationIntegrations = await getStoredIntegrations()
                     for (const message of change.value.messages) {
                       console.log('Saving incoming message:', JSON.stringify(message, null, 2));
                       // Save incoming message to database
-                      await saveIncomingMessage(message)
+                      const contact = contactsByWaId.get(message.from)
+                      const savedMessage = await saveIncomingMessage(message)
+                      await executeAutomationsForEvent(
+                        'whatsapp.message_received',
+                        buildIncomingWhatsAppAutomationContext(message, savedMessage, contact),
+                        automationIntegrations
+                      )
                     }
                   }
                   

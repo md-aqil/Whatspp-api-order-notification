@@ -15,6 +15,8 @@ function resolveAutomationVariable(value, context) {
 
   const directMap = {
     '{{customer_name}}': context.customer_name || '',
+    '{{customer_phone}}': context.customer_phone || context.customerPhone || '',
+    '{{customer_message}}': context.customer_message || '',
     '{{order_number}}': context.order_number || '',
     '{{tracking_number}}': context.tracking_number || '',
     '{{tracking_url}}': context.tracking_url || '',

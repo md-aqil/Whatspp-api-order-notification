@@ -15,6 +15,7 @@ const TRIGGERS = [
   { value:'shopify.order_created', label:'Shopify Order', icon:PackageCheck, description:'When an order is placed' },
   { value:'shopify.fulfillment_created', label:'Fulfillment Created', icon:Truck, description:'When tracking is created' },
   { value:'shopify.order_delivered', label:'Order Delivered', icon:BellRing, description:'When delivery is confirmed' },
+  { value:'whatsapp.message_received', label:'WhatsApp Message', icon:MessageSquareText, description:'When a customer sends a WhatsApp message' },
   { value:'woocommerce.order_created', label:'WooCommerce Order', icon:Zap, description:'When an order is placed' },
   { value:'custom.webhook', label:'Custom Webhook', icon:Workflow, description:'When a webhook is received' },
 ]
@@ -34,6 +35,8 @@ const COLORS = {
 }
 const AUTOMATION_VARIABLE_OPTIONS = [
   { value:'{{customer_name}}', label:'Customer name' },
+  { value:'{{customer_phone}}', label:'Customer phone' },
+  { value:'{{customer_message}}', label:'Customer message' },
   { value:'{{order_number}}', label:'Order number' },
   { value:'{{tracking_number}}', label:'Tracking number' },
   { value:'{{tracking_url}}', label:'Tracking URL' },
@@ -48,11 +51,17 @@ const AUTOMATION_VARIABLE_OPTIONS = [
 
 const uid = p => `${p}-${Math.random().toString(36).slice(2,9)}`
 const isDefault = id => defaultAutomations.some(a => a.id === id)
+const DEFAULT_FLOW_IDS_BY_EVENT = {
+  'shopify.order_created': 'default-order-confirmation',
+  'shopify.fulfillment_created': 'default-tracking-update',
+  'shopify.order_delivered': 'default-feedback-flow',
+  'whatsapp.message_received': 'default-whatsapp-reply'
+}
 const getTrig = ev => TRIGGERS.find(t => t.value === ev) || TRIGGERS[0]
 const getBlock = type => BLOCKS.find(b => b.type === type) || BLOCKS[0]
 const getTemplatePlaceholders = template => template?.components?.find(component => component.type === 'BODY')?.text?.match(/\{\{\d+\}\}/g) || []
 function getDefaultTemplateMapping(index) {
-  const defaults = ['{{customer_name}}', '{{order_number}}', '{{tracking_number}}', '{{tracking_url}}', '{{review_link}}', '{{order_total}}', '{{currency}}']
+  const defaults = ['{{customer_name}}', '{{customer_message}}', '{{order_number}}', '{{tracking_number}}', '{{tracking_url}}', '{{review_link}}', '{{order_total}}', '{{currency}}']
   const value = defaults[index] || 'text'
   return { label:`Variable ${index + 1}`, mode:value === 'text' ? 'text' : 'token', value:value === 'text' ? '' : value }
 }
@@ -62,6 +71,51 @@ function buildTemplateMappings(template, currentMappings = []) {
     if (existing?.mode && typeof existing.value === 'string') return existing
     return getDefaultTemplateMapping(index)
   })
+}
+function applyDefaultTemplateToMessageStep(step, availableTemplates = []) {
+  if (step?.type !== 'message' || step.template || availableTemplates.length === 0) return step
+  const defaultTemplate = availableTemplates[0]
+  return {
+    ...step,
+    template: defaultTemplate.name || '',
+    templateLanguage: defaultTemplate.language || '',
+    templateComponents: defaultTemplate.components || [],
+    variableMappings: buildTemplateMappings(defaultTemplate, step.variableMappings || [])
+  }
+}
+function applyDefaultTemplateToAutomation(automation, availableTemplates = []) {
+  if (!automation || availableTemplates.length === 0) return automation
+  return normalize({
+    ...automation,
+    steps: (automation.steps || []).map((step) => applyDefaultTemplateToMessageStep(step, availableTemplates))
+  })
+}
+function getDefaultTargetIdForAutomation(automation) {
+  const triggerEvent = automation?.steps?.find((step) => step.type === 'trigger')?.event
+  return triggerEvent ? (DEFAULT_FLOW_IDS_BY_EVENT[triggerEvent] || null) : null
+}
+function alignDefaultAutomationLayout(automation) {
+  if (!automation || !isDefault(automation.id)) return automation
+  const layoutMap = new Map(
+    (defaultAutomations.find((item) => item.id === automation.id)?.steps || [])
+      .filter((step) => step.position)
+      .map((step) => [step.id, step.position])
+  )
+
+  if (layoutMap.size === 0) return automation
+
+  return {
+    ...automation,
+    steps: (automation.steps || []).map((step) => (
+      layoutMap.has(step.id) && (
+        !step.position ||
+        typeof step.position.x !== 'number' ||
+        typeof step.position.y !== 'number'
+      )
+        ? { ...step, position: layoutMap.get(step.id) }
+        : step
+    ))
+  }
 }
 
 function mapStep(step, i, arr) {
@@ -138,12 +192,16 @@ export function AutomationStudio() {
 
   useEffect(()=>{
     fetch('/api/automations').then(r=>r.json()).then(d=>{
-      if(Array.isArray(d)&&d.length>0){const n=d.map(normalize);setAutomations(n);setActiveId(n[0].id);setSelId(n[0].steps?.[0]?.id||null)}
+      if(Array.isArray(d)&&d.length>0){const n=d.map(item=>normalize(alignDefaultAutomationLayout(item)));setAutomations(n);setActiveId(n[0].id);setSelId(n[0].steps?.[0]?.id||null)}
     }).catch(console.error).finally(()=>setHydrated(true))
   },[])
   useEffect(()=>{
     fetch('/api/whatsapp-templates').then(r=>r.json()).then(d=>setTemplates(Array.isArray(d)?d:[])).catch(e=>{setTemplates([]);setTplErr(e.message)})
   },[])
+  useEffect(()=>{
+    if(!templates.length)return
+    setAutomations(current=>current.map(automation=>applyDefaultTemplateToAutomation(automation, templates)))
+  },[templates])
   useEffect(()=>{ if(!hydrated)return; const t=setTimeout(()=>persist(),600); return()=>clearTimeout(t) },[automations,hydrated])
 
   async function persist(list=automations,msg=''){
@@ -153,6 +211,7 @@ export function AutomationStudio() {
 
   const active=useMemo(()=>automations.find(a=>a.id===activeId)||automations[0],[activeId,automations])
   const activeDef=!!active&&isDefault(active.id)
+  const activeDefaultTargetId = getDefaultTargetIdForAutomation(active)
   const sel=active?.steps.find(s=>s.id===selId)||active?.steps[0]
   const selLocked=false
   const msgLocked=false
@@ -163,6 +222,11 @@ export function AutomationStudio() {
   const edges=buildEdges(active?.steps||[])
   const bnd=bounds(active?.steps||[])
   const activeCount=automations.filter(a=>a.status).length
+  const activeTriggerEvent = active?.steps.find(step => step.type === 'trigger')?.event || ''
+  const defaultRecipientLabel = activeTriggerEvent === 'whatsapp.message_received' ? 'Message sender' : 'Order customer'
+  const defaultRecipientDescription = activeTriggerEvent === 'whatsapp.message_received'
+    ? 'Send the reply back to the customer who sent the WhatsApp message.'
+    : 'Send the message to the customer tied to the order event.'
   const activeTestNode = useMemo(() => {
     if (!active) return null
     return active.steps.find(step => step.id === selId && step.type === 'test') || active.steps.find(step => step.type === 'test') || null
@@ -182,7 +246,8 @@ export function AutomationStudio() {
   function addNode(blockType,pt){
     if(!active)return
     const bl=BLOCKS.find(b=>b.type===blockType); if(!bl)return
-    const ns={id:uid('step'),type:bl.type,...bl.defaults,position:pt}
+    const baseStep={id:uid('step'),type:bl.type,...bl.defaults,position:pt}
+    const ns=applyDefaultTemplateToMessageStep(baseStep, templates)
     const nxt=normalize({...active,steps:[...active.steps,ns]}).steps.at(-1)
     updAuto(active.id,a=>({...a,steps:[...a.steps,nxt]}))
     setSelId(nxt.id); setNewId(nxt.id); setTimeout(()=>setNewId(null),500)
@@ -190,6 +255,67 @@ export function AutomationStudio() {
   function delNode(id){
     if(!active||active.steps.length<=1)return
     updAuto(active.id,a=>({...a,steps:a.steps.filter(s=>s.id!==id).map(s=>({...s,connections:Object.fromEntries(Object.entries(s.connections||{}).map(([k,v])=>[k,v===id?'':v]))}))}))
+  }
+  function promoteActiveFlowToDefault(){
+    if(!active||activeDef)return
+    if(!activeDefaultTargetId){
+      toast.error('This flow does not have a supported default trigger')
+      return
+    }
+
+    const existingDefault = automations.find(item => item.id === activeDefaultTargetId)
+    const promotedFlow = normalize({
+      ...(existingDefault || {}),
+      ...active,
+      id: activeDefaultTargetId
+    })
+
+    const nextAutomations = automations
+      .filter(item => item.id !== active.id && item.id !== activeDefaultTargetId)
+      .concat(promotedFlow)
+
+    setAutomations(nextAutomations)
+    setActiveId(promotedFlow.id)
+    setSelId(promotedFlow.steps[0]?.id || null)
+    persist(nextAutomations,'Flow set as default')
+  }
+  function resetActiveFlowToDefault(){
+    if(!active)return
+
+    const targetDefaultId = activeDef ? active.id : activeDefaultTargetId
+    if(!targetDefaultId){
+      const resetFlow = {
+        ...blankFlow(active.name),
+        id: active.id,
+        status: active.status,
+        source: active.source || 'Custom'
+      }
+      const nextAutomations = automations.map(item => item.id === active.id ? resetFlow : item)
+      setAutomations(nextAutomations)
+      setSelId(resetFlow.steps[0]?.id || null)
+      persist(nextAutomations, 'Draft reset')
+      return
+    }
+
+    const defaultSeed = defaultAutomations.find(item => item.id === targetDefaultId)
+    if(!defaultSeed){
+      toast.error('Default flow definition not found')
+      return
+    }
+
+    const resetFlow = normalize({
+      ...defaultSeed,
+      id: active.id,
+      name: activeDef ? defaultSeed.name : active.name,
+      status: active.status,
+      source: activeDef ? defaultSeed.source : (active.source || defaultSeed.source || 'Custom'),
+      summary: defaultSeed.summary
+    })
+
+    const nextAutomations = automations.map(item => item.id === active.id ? resetFlow : item)
+    setAutomations(nextAutomations)
+    setSelId(resetFlow.steps[0]?.id || null)
+    persist(nextAutomations, activeDef ? 'Flow reset to default' : 'Default structure applied')
   }
   function handleCreate(){
     const name=draftName.trim()||(mode==='template'?'Flow Clone':'New Automation')
@@ -278,7 +404,7 @@ export function AutomationStudio() {
   }
   useEffect(()=>{
     function mv(e){
-      if(drag&&active){const pt=clientToCv(e.clientX,e.clientY);updAuto(active.id,a=>({...a,steps:a.steps.map(s=>s.id===drag.id?{...s,position:{x:Math.max(20,pt.x-drag.ox),y:Math.max(20,pt.y-drag.oy)}}:s)}))}
+      if(drag&&active){const pt=clientToCv(e.clientX,e.clientY);updAuto(active.id,a=>({...a,steps:a.steps.map(s=>s.id===drag.id?{...s,position:{x:Math.round(Math.max(20,pt.x-drag.ox)),y:Math.round(Math.max(20,pt.y-drag.oy))}}:s)}))}
       if(conn){const pt=clientToCv(e.clientX,e.clientY);setConn(c=>c?{...c,cx:pt.x,cy:pt.y}:null)}
       if(panning&&panOrg)setTr(t=>({...t,x:e.clientX-panOrg.x,y:e.clientY-panOrg.y}))
     }
@@ -391,6 +517,38 @@ export function AutomationStudio() {
               </span>
               {activeDef&&<span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-violet-500/12 text-violet-400">Default</span>}
             </div>
+            {!activeDef && (
+              <div className="mt-3 flex gap-2">
+                <Button
+                  size="sm"
+                  onClick={promoteActiveFlowToDefault}
+                  disabled={!activeDefaultTargetId}
+                  className="flex-1 h-7 rounded-lg bg-white/[0.06] hover:bg-white/10 text-white/80 text-[11px] font-semibold border border-white/[0.08] disabled:opacity-35 disabled:hover:bg-white/[0.06]"
+                >
+                  <Sparkles className="mr-1.5 h-3.5 w-3.5" />
+                  Set Default
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={resetActiveFlowToDefault}
+                  disabled={!activeDefaultTargetId}
+                  className="h-7 rounded-lg border border-white/[0.08] bg-white/[0.03] px-2.5 text-[11px] font-semibold text-white/65 hover:bg-white/[0.06] hover:text-white disabled:opacity-35"
+                >
+                  Reset
+                </Button>
+              </div>
+            )}
+            {activeDef && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={resetActiveFlowToDefault}
+                className="mt-3 w-full h-7 rounded-lg border border-white/[0.08] bg-white/[0.03] text-[11px] font-semibold text-white/65 hover:bg-white/[0.06] hover:text-white"
+              >
+                Reset to Default
+              </Button>
+            )}
           </div>
           <div className="px-4 pt-3 pb-2">
             <p className="text-[10px] font-bold uppercase tracking-widest text-white/25 mb-2">Node Library</p>
@@ -529,7 +687,7 @@ export function AutomationStudio() {
               const isNew=newId===step.id
               const tMeta=step.type==='trigger'?getTrig(step.event):null
               const recipientSummary = step.type === 'message'
-                ? (step.recipientMode === 'fixed_number' && step.recipientNumber ? `To: ${step.recipientNumber}` : 'To: order customer')
+                ? (step.recipientMode === 'fixed_number' && step.recipientNumber ? `To: ${step.recipientNumber}` : `To: ${defaultRecipientLabel.toLowerCase()}`)
                 : ''
               const testResult = activeLastTest?.nodeId === step.id ? activeLastTest.results?.[0] : null
               const isThisTestRunning = testing && step.id === testingNodeId
@@ -635,7 +793,7 @@ export function AutomationStudio() {
                 <>
                   {sel.type !== 'message' && (
                     <div className="rounded-xl border border-white/[0.05] bg-white/[0.02] px-3 py-2.5 text-[11px] text-white/35">
-                      Select a <span className="font-semibold text-white/60">WhatsApp</span> node to choose whether it sends to the order customer or a fixed number.
+                      Select a <span className="font-semibold text-white/60">WhatsApp</span> node to choose whether it sends to the {defaultRecipientLabel.toLowerCase()} or a fixed number.
                     </div>
                   )}
                   <div className="space-y-1.5">
@@ -721,7 +879,7 @@ export function AutomationStudio() {
                         >
                           <SelectTrigger id="recipient-mode" className={inputCls}><SelectValue /></SelectTrigger>
                           <SelectContent className="z-[260] bg-[#13151f] border-white/10">
-                            <SelectItem value="customer" className="text-white/70 text-xs focus:bg-white/8 focus:text-white">Order customer</SelectItem>
+                            <SelectItem value="customer" className="text-white/70 text-xs focus:bg-white/8 focus:text-white">{defaultRecipientLabel}</SelectItem>
                             <SelectItem value="fixed_number" className="text-white/70 text-xs focus:bg-white/8 focus:text-white">Fixed number</SelectItem>
                           </SelectContent>
                         </Select>
@@ -735,7 +893,7 @@ export function AutomationStudio() {
                           />
                         )}
                         <p className="text-[10px] text-white/35">
-                          Choose <span className="text-white/60 font-semibold">Fixed number</span> for admin or store-owner alerts.
+                          {defaultRecipientDescription} Choose <span className="text-white/60 font-semibold">Fixed number</span> for admin or store-owner alerts.
                         </p>
                       </div>
                       <div className="space-y-1.5">
@@ -864,16 +1022,7 @@ export function AutomationStudio() {
           <div className="px-4 pb-4 pt-3 border-t border-white/[0.05] space-y-2">
             <Button aria-label="Apply property changes" onClick={()=>persist(automations,'Changes applied')} className="w-full rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold h-8 transition-all active:scale-95">Apply Changes</Button>
             <Button variant="ghost" aria-label="Discard draft and reset the current flow"
-              onClick={()=>{
-                if(!active)return
-                const defaultSeed=defaultAutomations.find(a=>a.id===active.id)
-                const resetFlow=defaultSeed
-                  ? normalize(defaultSeed)
-                  : {...blankFlow(active.name),id:active.id,source:active.source||'Custom'}
-                setAutomations(c=>c.map(a=>a.id===active.id?resetFlow:a))
-                setSelId(resetFlow.steps[0]?.id||null)
-                toast.success(defaultSeed?'Default flow reset':'Draft reset')
-              }}
+              onClick={resetActiveFlowToDefault}
               className="w-full rounded-xl text-rose-400/60 hover:text-rose-400 hover:bg-rose-500/8 text-xs font-bold h-8 transition-all active:scale-95">Discard Draft</Button>
           </div>
         </aside>

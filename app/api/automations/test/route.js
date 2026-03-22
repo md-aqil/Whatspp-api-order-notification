@@ -15,6 +15,8 @@ function resolveAutomationVariable(value, context) {
 
   const directMap = {
     '{{customer_name}}': context.customer_name || '',
+    '{{customer_phone}}': context.customer_phone || context.customerPhone || '',
+    '{{customer_message}}': context.customer_message || '',
     '{{order_number}}': context.order_number || '',
     '{{tracking_number}}': context.tracking_number || '',
     '{{tracking_url}}': context.tracking_url || '',
@@ -57,6 +59,14 @@ function buildAutomationTemplateComponents(templateComponents, variableMappings,
 function matchesCondition(rule, context) {
   if (!rule) return true
   const trimmed = rule.trim()
+  if (trimmed.includes(' not contains ')) {
+    const [left, right] = trimmed.split(' not contains ').map((value) => value.trim())
+    return !String(context[left] ?? '').toLowerCase().includes(right.toLowerCase())
+  }
+  if (trimmed.includes(' contains ')) {
+    const [left, right] = trimmed.split(' contains ').map((value) => value.trim())
+    return String(context[left] ?? '').toLowerCase().includes(right.toLowerCase())
+  }
   if (trimmed.includes('!=')) {
     const [left, right] = trimmed.split('!=').map((value) => value.trim())
     return String(context[left] ?? '') !== right
@@ -129,10 +139,39 @@ async function getLatestOrderContext() {
   }
 }
 
+async function getLatestIncomingMessageContext() {
+  const message = await queryOne(
+    `SELECT recipient, message, timestamp
+     FROM messages
+     WHERE "userId" = $1 AND "isCustomer" = true
+     ORDER BY timestamp DESC NULLS LAST, "createdAt" DESC NULLS LAST
+     LIMIT 1`,
+    ['default']
+  )
+
+  if (!message) return null
+
+  return {
+    customer_name: message.recipient || 'Customer',
+    customer_phone: message.recipient || '',
+    customerPhone: message.recipient || '',
+    customer_message: message.message || 'Hi',
+    order_number: '',
+    tracking_number: '',
+    tracking_url: '',
+    financial_status: '',
+    order_total: '',
+    currency: 'INR',
+    review_link: process.env.NEXT_PUBLIC_BASE_URL || 'https://example.com/review'
+  }
+}
+
 function getDummyContext() {
   return {
     customer_name: 'Test Customer',
+    customer_phone: '',
     customerPhone: '',
+    customer_message: 'Please send me the catalog',
     order_number: 'TEST-1001',
     tracking_number: 'TRACK-TEST-001',
     tracking_url: 'https://example.com/tracking/TRACK-TEST-001',
@@ -181,11 +220,19 @@ export async function POST(request) {
     }
 
     const context = testNode.testSource === 'latest_order'
-      ? await getLatestOrderContext()
+      ? (
+          testNode.event === 'whatsapp.message_received'
+            ? await getLatestIncomingMessageContext()
+            : await getLatestOrderContext()
+        )
       : getDummyContext()
 
     if (!context) {
-      return NextResponse.json({ error: 'No saved orders found for latest-order testing' }, { status: 400 })
+      return NextResponse.json({
+        error: testNode.event === 'whatsapp.message_received'
+          ? 'No saved customer WhatsApp messages found for latest-message testing'
+          : 'No saved orders found for latest-order testing'
+      }, { status: 400 })
     }
 
     let currentStepId = testNode.connections?.main || ''

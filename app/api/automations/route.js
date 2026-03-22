@@ -4,6 +4,15 @@ import { defaultAutomations } from '@/lib/automation-defaults'
 
 const legacyDummyTemplates = new Set(['order_confirmation', 'tracking_update', 'feedback_request'])
 const legacySeededDefaultTestStepIds = new Set(['step-test-1', 'step-test-2', 'step-test-3'])
+const legacyWhatsAppReplySummary = 'Reply automatically when a customer messages you on WhatsApp.'
+const legacyWhatsAppReplySummaryV2 = 'Start a warm WhatsApp conversation with brand information when a customer messages you.'
+const legacyWhatsAppReplySummaryV3 = 'Start a warm four-step WhatsApp conversation with welcome, brand information, and guided next steps.'
+const legacyWhatsAppReplySummaryV4 = 'Start a warm WhatsApp conversation with welcome, brand information, and a simple reply menu for common customer needs.'
+const legacyWhatsAppReplySummaryV5 = 'Start with a welcome message, share quick options, then branch into the right WhatsApp reply.'
+const legacyWhatsAppReplyRule = 'customer_message contains catalog'
+const legacyWhatsAppReplyMessage = 'Hi {{customer_name}}, thanks for your message. We will share the catalog with you shortly.'
+const legacyWhatsAppReplyMessageV2 = 'Hi {{customer_name}}, welcome to Vaclav Fashion. We are a premium fashion brand and we are here to help with collections, sizing, order updates, and styling support. Tell us what you are looking for and we will guide you.'
+const legacyWhatsAppReplyMessageV3 = 'Reply with what you need, for example: catalog, sizing, order status, or support, and our team will guide you.'
 
 function sanitizeAutomation(inputAutomation) {
   if (!inputAutomation) return inputAutomation
@@ -80,9 +89,50 @@ async function syncDefaultAutomations(rows) {
       continue
     }
 
-    const filteredSteps = (existing.steps || []).filter((step) => !legacySeededDefaultTestStepIds.has(step.id))
+    let changed = false
+    const defaultStepMap = new Map((defaultAutomation.steps || []).map((step) => [step.id, step]))
+    const filteredSteps = (existing.steps || []).filter((step) => {
+      const keep = !legacySeededDefaultTestStepIds.has(step.id)
+      if (!keep) changed = true
+      return keep
+    }).map((step) => {
+      const defaultStep = defaultStepMap.get(step.id)
+      if (defaultStep?.position) {
+        const pos = step.position
+        const hasLegacyLayout =
+          !pos ||
+          typeof pos.x !== 'number' ||
+          typeof pos.y !== 'number' ||
+          !Number.isInteger(pos.x) ||
+          !Number.isInteger(pos.y)
 
-    if (filteredSteps.length === (existing.steps || []).length) continue
+        if (hasLegacyLayout) {
+          changed = true
+          step = {
+            ...step,
+            position: defaultStep.position
+          }
+        }
+      }
+
+      if (step.type !== 'message') return step
+      if (!defaultStep?.template) return step
+
+      if (!step.template) {
+        changed = true
+        return {
+          ...step,
+          template: defaultStep.template,
+          templateLanguage: defaultStep.templateLanguage || '',
+          templateComponents: step.templateComponents || [],
+          variableMappings: Array.isArray(step.variableMappings) ? step.variableMappings : []
+        }
+      }
+
+      return step
+    })
+
+    if (!changed) continue
 
     await upsertAutomationRow(sanitizeAutomation({
       ...existing,
