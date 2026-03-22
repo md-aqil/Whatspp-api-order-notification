@@ -1,6 +1,6 @@
 # Cloudflare Tunnel Configuration
-tunnel: 0df27a77-c611-40aa-aaaa-70aadc020244
-credentials-file: tunnel-config\credentials.json
+tunnel: f16a31a0-253c-4a86-a9c9-d0c19e321944
+credentials-file: tunnel-config/credentials.json
 
 ingress:
   # Main application ingress rule

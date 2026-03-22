@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { query, queryMany, queryOne } from '@/lib/postgres'
-import { defaultAutomations } from '@/lib/automation-defaults'
+import { defaultAutomations, sortAutomations } from '@/lib/automation-defaults'
 
 const legacyDummyTemplates = new Set(['order_confirmation', 'tracking_update', 'feedback_request'])
 const legacySeededDefaultTestStepIds = new Set(['step-test-1', 'step-test-2', 'step-test-3'])
@@ -13,6 +13,70 @@ const legacyWhatsAppReplyRule = 'customer_message contains catalog'
 const legacyWhatsAppReplyMessage = 'Hi {{customer_name}}, thanks for your message. We will share the catalog with you shortly.'
 const legacyWhatsAppReplyMessageV2 = 'Hi {{customer_name}}, welcome to Vaclav Fashion. We are a premium fashion brand and we are here to help with collections, sizing, order updates, and styling support. Tell us what you are looking for and we will guide you.'
 const legacyWhatsAppReplyMessageV3 = 'Reply with what you need, for example: catalog, sizing, order status, or support, and our team will guide you.'
+const legacyWhatsAppReplySummaries = new Set([
+  legacyWhatsAppReplySummary,
+  legacyWhatsAppReplySummaryV2,
+  legacyWhatsAppReplySummaryV3,
+  legacyWhatsAppReplySummaryV4,
+  legacyWhatsAppReplySummaryV5
+])
+const legacyWhatsAppReplyMessages = new Set([
+  legacyWhatsAppReplyMessageV2,
+  'Hi {{customer_name}}, thanks for messaging Vaclav Fashion.'
+])
+const legacyWhatsAppReplyMenus = new Set([
+  legacyWhatsAppReplyMessageV3,
+  'Reply with a number so we can help faster:\n1. Catalog\n2. New arrivals\n3. Order status\n4. Size guide\n5. Support'
+])
+
+function shouldReplaceLegacyWhatsAppDefaultFlow(steps = []) {
+  const trigger = steps.find((step) => step.id === 'step-trigger-4')
+  const welcome = steps.find((step) => step.id === 'step-message-4')
+  const menu = steps.find((step) => step.id === 'step-message-6')
+
+  return (
+    trigger?.connections?.main === 'step-message-4' &&
+    welcome?.connections?.main === 'step-message-6' &&
+    menu?.connections?.main === 'step-condition-4' &&
+    legacyWhatsAppReplyMessages.has(welcome?.message) &&
+    legacyWhatsAppReplyMenus.has(menu?.message)
+  )
+}
+
+function syncLegacyWhatsAppReplyStep(step, defaultStep) {
+  if (!step || !defaultStep) return step
+
+  if (step.id === 'step-message-4' && step.message === legacyWhatsAppReplyMessageV2) {
+    return {
+      ...step,
+      title: defaultStep.title,
+      message: defaultStep.message
+    }
+  }
+
+  if (step.id === 'step-message-6' && step.message === legacyWhatsAppReplyMessageV3) {
+    return {
+      ...step,
+      title: defaultStep.title,
+      message: defaultStep.message
+    }
+  }
+
+  if (
+    step.id === 'step-message-5' &&
+    step.title === 'Share brand information' &&
+    step.message === 'We are a premium fashion brand and we can help with collections, new arrivals, sizing guidance, order updates, and styling support.'
+  ) {
+    return {
+      ...step,
+      title: defaultStep.title,
+      message: defaultStep.message,
+      description: defaultStep.description || ''
+    }
+  }
+
+  return step
+}
 
 function sanitizeAutomation(inputAutomation) {
   if (!inputAutomation) return inputAutomation
@@ -91,7 +155,7 @@ async function syncDefaultAutomations(rows) {
 
     let changed = false
     const defaultStepMap = new Map((defaultAutomation.steps || []).map((step) => [step.id, step]))
-    const filteredSteps = (existing.steps || []).filter((step) => {
+    let filteredSteps = (existing.steps || []).filter((step) => {
       const keep = !legacySeededDefaultTestStepIds.has(step.id)
       if (!keep) changed = true
       return keep
@@ -115,6 +179,14 @@ async function syncDefaultAutomations(rows) {
         }
       }
 
+      if (defaultAutomation.id === 'default-whatsapp-reply') {
+        const syncedLegacyStep = syncLegacyWhatsAppReplyStep(step, defaultStep)
+        if (syncedLegacyStep !== step) {
+          changed = true
+          step = syncedLegacyStep
+        }
+      }
+
       if (step.type !== 'message') return step
       if (!defaultStep?.template) return step
 
@@ -132,10 +204,30 @@ async function syncDefaultAutomations(rows) {
       return step
     })
 
+    if (
+      defaultAutomation.id === 'default-whatsapp-reply' &&
+      shouldReplaceLegacyWhatsAppDefaultFlow(filteredSteps)
+    ) {
+      changed = true
+      filteredSteps = defaultAutomation.steps
+    }
+
+    let nextAutomation = existing
+    if (
+      defaultAutomation.id === 'default-whatsapp-reply' &&
+      (!existing.summary || legacyWhatsAppReplySummaries.has(existing.summary))
+    ) {
+      changed = true
+      nextAutomation = {
+        ...nextAutomation,
+        summary: defaultAutomation.summary
+      }
+    }
+
     if (!changed) continue
 
     await upsertAutomationRow(sanitizeAutomation({
-      ...existing,
+      ...nextAutomation,
       steps: filteredSteps
     }))
   }
@@ -163,7 +255,7 @@ export async function GET() {
       ['default']
     )
 
-    return NextResponse.json(refreshedRows)
+    return NextResponse.json(sortAutomations(refreshedRows))
   } catch (error) {
     console.error('Error fetching automations:', error)
     return NextResponse.json({ error: 'Failed to fetch automations' }, { status: 500 })

@@ -1,9 +1,18 @@
 import { Pool } from 'pg'
 import { v4 as uuidv4 } from 'uuid'
 import { NextResponse } from 'next/server'
+import { buildMetaAuthHeaders, mapMetaAccessTokenError, sanitizeMetaAccessToken } from '@/lib/meta-auth'
+import { buildAutomationTemplateComponents as buildAutomationTemplateComponentsShared } from '@/lib/automation-template'
 
 let pgPool
 const shopifyTokenCache = new Map()
+let automationConversationStateReadyPromise = null
+
+const WHATSAPP_AUTOMATION_CONVERSATION_WINDOW_MS = 30 * 60 * 1000
+const WHATSAPP_AUTOMATION_REPLY_COOLDOWN_MS = 10 * 60 * 1000
+const WHATSAPP_SUPPORT_HANDOFF_MS = 2 * 60 * 60 * 1000
+const WHATSAPP_MENU_STEP_IDS = new Set(['step-message-4', 'step-message-6'])
+const WHATSAPP_SUPPORT_STEP_IDS = new Set(['step-message-11'])
 
 function getPostgresPool() {
   if (!process.env.DB_URL) {
@@ -27,6 +36,130 @@ async function queryOne(sql, params = []) {
 async function queryMany(sql, params = []) {
   const result = await getPostgresPool().query(sql, params)
   return result.rows
+}
+
+async function ensureAutomationConversationStateTable() {
+  if (!automationConversationStateReadyPromise) {
+    automationConversationStateReadyPromise = getPostgresPool().query(`
+      CREATE TABLE IF NOT EXISTS automation_conversation_state (
+        id TEXT PRIMARY KEY,
+        "userId" TEXT NOT NULL DEFAULT 'default',
+        "automationId" TEXT NOT NULL,
+        recipient TEXT NOT NULL,
+        state TEXT,
+        "lastInboundAt" TIMESTAMP,
+        "lastMenuSentAt" TIMESTAMP,
+        "lastReplyKey" TEXT,
+        "lastReplyAt" TIMESTAMP,
+        "handoffUntil" TIMESTAMP,
+        payload JSONB DEFAULT '{}'::jsonb,
+        "createdAt" TIMESTAMP DEFAULT NOW(),
+        "updatedAt" TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS automation_conversation_state_lookup_idx
+      ON automation_conversation_state ("userId", "automationId", recipient);
+    `)
+  }
+
+  await automationConversationStateReadyPromise
+}
+
+function normalizeAutomationRecipientKey(value = '') {
+  return String(value || '').replace(/\D/g, '')
+}
+
+function getAutomationConversationStateId(automationId, recipient) {
+  return `${automationId}:${recipient}`
+}
+
+function getDateValue(value) {
+  return value ? new Date(value) : null
+}
+
+function isWithinMs(timestamp, durationMs, now = new Date()) {
+  const value = getDateValue(timestamp)
+  return !!(value && now.getTime() - value.getTime() < durationMs)
+}
+
+function isHandoffActive(state, now = new Date()) {
+  const handoffUntil = getDateValue(state?.handoffUntil)
+  return !!(handoffUntil && handoffUntil.getTime() > now.getTime())
+}
+
+function shouldSuppressWhatsAppAutomationStep(step, state, now = new Date()) {
+  if (!state) return false
+
+  if (WHATSAPP_MENU_STEP_IDS.has(step.id) && isWithinMs(state.lastMenuSentAt, WHATSAPP_AUTOMATION_CONVERSATION_WINDOW_MS, now)) {
+    return true
+  }
+
+  if (state.lastReplyKey === step.id && isWithinMs(state.lastReplyAt, WHATSAPP_AUTOMATION_REPLY_COOLDOWN_MS, now)) {
+    return true
+  }
+
+  return false
+}
+
+async function getAutomationConversationState(automationId, recipient) {
+  await ensureAutomationConversationStateTable()
+
+  return queryOne(
+    `SELECT id, "automationId", recipient, state, "lastInboundAt", "lastMenuSentAt", "lastReplyKey", "lastReplyAt", "handoffUntil", payload
+     FROM automation_conversation_state
+     WHERE "userId" = $1 AND "automationId" = $2 AND recipient = $3
+     LIMIT 1`,
+    ['default', automationId, recipient]
+  )
+}
+
+async function saveAutomationConversationState(automationId, recipient, currentState = null, patch = {}) {
+  await ensureAutomationConversationStateTable()
+
+  const nextState = {
+    id: getAutomationConversationStateId(automationId, recipient),
+    userId: 'default',
+    automationId,
+    recipient,
+    state: patch.state ?? currentState?.state ?? null,
+    lastInboundAt: patch.lastInboundAt ?? currentState?.lastInboundAt ?? null,
+    lastMenuSentAt: patch.lastMenuSentAt ?? currentState?.lastMenuSentAt ?? null,
+    lastReplyKey: patch.lastReplyKey ?? currentState?.lastReplyKey ?? null,
+    lastReplyAt: patch.lastReplyAt ?? currentState?.lastReplyAt ?? null,
+    handoffUntil: patch.handoffUntil ?? currentState?.handoffUntil ?? null,
+    payload: patch.payload ?? currentState?.payload ?? {}
+  }
+
+  await getPostgresPool().query(
+    `INSERT INTO automation_conversation_state
+      (id, "userId", "automationId", recipient, state, "lastInboundAt", "lastMenuSentAt", "lastReplyKey", "lastReplyAt", "handoffUntil", payload, "createdAt", "updatedAt")
+     VALUES
+      ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, NOW(), NOW())
+     ON CONFLICT (id)
+     DO UPDATE SET
+      state = EXCLUDED.state,
+      "lastInboundAt" = EXCLUDED."lastInboundAt",
+      "lastMenuSentAt" = EXCLUDED."lastMenuSentAt",
+      "lastReplyKey" = EXCLUDED."lastReplyKey",
+      "lastReplyAt" = EXCLUDED."lastReplyAt",
+      "handoffUntil" = EXCLUDED."handoffUntil",
+      payload = EXCLUDED.payload,
+      "updatedAt" = NOW()`,
+    [
+      nextState.id,
+      nextState.userId,
+      nextState.automationId,
+      nextState.recipient,
+      nextState.state,
+      nextState.lastInboundAt,
+      nextState.lastMenuSentAt,
+      nextState.lastReplyKey,
+      nextState.lastReplyAt,
+      nextState.handoffUntil,
+      JSON.stringify(nextState.payload || {})
+    ]
+  )
+
+  return nextState
 }
 
 function getShopifyCacheKey(shopDomain, clientId) {
@@ -158,10 +291,252 @@ async function saveStoredProducts(products) {
   )
 }
 
+function normalizeComparableValue(value = '') {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+function extractShopifyHandleFromUrl(value = '') {
+  if (!value) return ''
+
+  try {
+    const parsed = new URL(value)
+    const parts = parsed.pathname.split('/').filter(Boolean)
+    const productIndex = parts.findIndex((part) => part === 'products')
+    return productIndex >= 0 ? (parts[productIndex + 1] || '') : ''
+  } catch {
+    return ''
+  }
+}
+
+async function fetchMetaCatalogProducts(whatsapp) {
+  if (!whatsapp?.catalogId || !whatsapp?.accessToken) return []
+
+  let url = `https://graph.facebook.com/v22.0/${whatsapp.catalogId}/products?fields=id,retailer_id,name,description,image_url,url,price`
+  const products = []
+
+  while (url) {
+    const response = await fetch(url, {
+      headers: {
+        ...buildMetaAuthHeaders(whatsapp.accessToken),
+        'Content-Type': 'application/json'
+      },
+      cache: 'no-store'
+    })
+
+    const data = await response.json()
+    if (!response.ok) {
+      const metaMessage = data.error?.message || 'Meta catalog API error'
+      const isWrongCatalogNode = data.error?.code === 100 && /products/i.test(metaMessage)
+      if (isWrongCatalogNode) {
+        const looksLikeKnownNonCatalogId =
+          String(whatsapp.catalogId || '') === String(whatsapp.businessAccountId || '') ||
+          String(whatsapp.catalogId || '') === String(whatsapp.phoneNumberId || '')
+
+        throw new Error(
+          looksLikeKnownNonCatalogId
+            ? 'Saved Catalog ID is using your WhatsApp account/phone ID, not a Meta product catalog ID. Open Commerce Manager and copy the actual Catalog ID.'
+            : 'Saved Catalog ID looks like a real catalog, but this token or app cannot access its products. Make sure the same Meta business/system user has access to that catalog in Commerce Manager.'
+        )
+      }
+
+      throw new Error(metaMessage)
+    }
+
+    products.push(...(Array.isArray(data.data) ? data.data : []))
+    url = data.paging?.next || ''
+  }
+
+  return products.map((product) => ({
+    id: String(product.id || '').trim(),
+    retailer_id: String(product.retailer_id || '').trim(),
+    name: product.name || '',
+    description: product.description || '',
+    url: product.url || '',
+    image_url: product.image_url || '',
+    price: typeof product.price === 'object'
+      ? `${product.price.amount || ''}`.trim()
+      : String(product.price || '').trim()
+  }))
+}
+
+async function validateMetaCatalogAccess(whatsapp) {
+  if (!whatsapp?.catalogId || !whatsapp?.accessToken) return
+
+  const response = await fetch(
+    `https://graph.facebook.com/v22.0/${whatsapp.catalogId}/products?fields=id&limit=1`,
+    {
+      headers: {
+        ...buildMetaAuthHeaders(whatsapp.accessToken),
+        'Content-Type': 'application/json'
+      },
+      cache: 'no-store'
+    }
+  )
+
+  const data = await response.json()
+  if (response.ok) return
+
+  const metaMessage = mapMetaAccessTokenError(data.error?.message || 'Meta catalog validation failed')
+  const unsupportedGet = /unsupported get request/i.test(metaMessage)
+  const isWrongCatalogNode = data.error?.code === 100 && /products/i.test(metaMessage)
+  if (isWrongCatalogNode || unsupportedGet) {
+    const looksLikeKnownNonCatalogId =
+      String(whatsapp.catalogId || '') === String(whatsapp.businessAccountId || '') ||
+      String(whatsapp.catalogId || '') === String(whatsapp.phoneNumberId || '')
+
+    throw new Error(
+      looksLikeKnownNonCatalogId
+        ? 'Catalog ID appears to be your WhatsApp account/phone ID, not a Meta product catalog ID. Use the Catalog ID from Commerce Manager.'
+        : 'Catalog ID looks real, but this token or app cannot access it. Give the token’s Meta business/system user access to that catalog in Commerce Manager.'
+    )
+  }
+
+  throw new Error(metaMessage)
+}
+
+async function validateWhatsAppPhoneNumberAccess(phoneNumberId, accessToken, businessAccountId = '') {
+  const response = await fetch(`https://graph.facebook.com/v22.0/${phoneNumberId}`, {
+    headers: buildMetaAuthHeaders(accessToken),
+    cache: 'no-store'
+  })
+
+  const data = await response.json()
+  if (response.ok) return
+
+  const metaMessage = mapMetaAccessTokenError(data.error?.message || 'Invalid WhatsApp credentials')
+  const unsupportedGet = /unsupported get request/i.test(metaMessage)
+  if (unsupportedGet || data.error?.code === 100) {
+    const looksLikeBusinessAccountId = String(phoneNumberId || '') === String(businessAccountId || '')
+    throw new Error(
+      looksLikeBusinessAccountId
+        ? 'Phone Number ID appears to be your Business Account ID. Use the numeric Phone Number ID from WhatsApp Manager or Meta Developer App setup.'
+        : 'Phone Number ID is invalid, inaccessible for this token, or you pasted the wrong Meta ID. Use the numeric Phone Number ID from WhatsApp Manager.'
+    )
+  }
+
+  throw new Error(metaMessage)
+}
+
+function normalizeWhatsAppIntegrationData(data = {}) {
+  return {
+    ...data,
+    phoneNumberId: String(data.phoneNumberId || '').trim(),
+    accessToken: sanitizeMetaAccessToken(data.accessToken),
+    businessAccountId: String(data.businessAccountId || '').trim(),
+    catalogId: String(data.catalogId || '').trim(),
+    webhookVerifyToken: String(data.webhookVerifyToken || '').trim()
+  }
+}
+
+function mapMetaCatalogProductsToAppProducts(metaProducts = []) {
+  return metaProducts.map((product) => {
+    const retailerId = String(product.retailer_id || '').trim()
+    const metaId = String(product.id || '').trim()
+    const url = product.url || ''
+    const handle = extractShopifyHandleFromUrl(url)
+
+    return {
+      id: retailerId || metaId,
+      title: product.name || retailerId || metaId || 'Catalog Product',
+      description: product.description || '',
+      price: product.price || '',
+      image: product.image_url || '',
+      handle,
+      url,
+      retailer_id: retailerId,
+      metaCatalogProductId: metaId,
+      metaCatalogMatched: !!retailerId,
+      metaCatalogMatchedBy: 'catalog',
+      source: 'meta'
+    }
+  })
+}
+
+function mergeShopifyProductsWithMetaCatalog(shopifyProducts = [], metaProducts = []) {
+  if (!Array.isArray(shopifyProducts) || shopifyProducts.length === 0) return []
+  if (!Array.isArray(metaProducts) || metaProducts.length === 0) {
+    return shopifyProducts.map((product) => ({
+      ...product,
+      retailer_id: String(product?.retailer_id || product?.retailerId || '').trim(),
+      metaCatalogMatched: false,
+      metaCatalogMatchedBy: '',
+      metaCatalogProductId: ''
+    }))
+  }
+
+  const byRetailerId = new Map()
+  const byHandle = new Map()
+  const byUniqueTitle = new Map()
+  const titleBuckets = new Map()
+
+  for (const product of metaProducts) {
+    const retailerIdKey = normalizeComparableValue(product.retailer_id)
+    if (retailerIdKey && !byRetailerId.has(retailerIdKey)) byRetailerId.set(retailerIdKey, product)
+
+    const handleKey = normalizeComparableValue(extractShopifyHandleFromUrl(product.url))
+    if (handleKey && !byHandle.has(handleKey)) byHandle.set(handleKey, product)
+
+    const titleKey = normalizeComparableValue(product.name)
+    if (titleKey) {
+      const bucket = titleBuckets.get(titleKey) || []
+      bucket.push(product)
+      titleBuckets.set(titleKey, bucket)
+    }
+  }
+
+  for (const [titleKey, bucket] of titleBuckets.entries()) {
+    if (bucket.length === 1) byUniqueTitle.set(titleKey, bucket[0])
+  }
+
+  return shopifyProducts.map((product) => {
+    const explicitRetailerId = String(product?.retailer_id || product?.retailerId || '').trim()
+    const retailerIdCandidate = byRetailerId.get(normalizeComparableValue(explicitRetailerId))
+    const idCandidate = byRetailerId.get(normalizeComparableValue(product.id))
+    const handleCandidate = byHandle.get(normalizeComparableValue(product.handle))
+    const titleCandidate = byUniqueTitle.get(normalizeComparableValue(product.title))
+
+    const matchedProduct = retailerIdCandidate || idCandidate || handleCandidate || titleCandidate || null
+    const matchedBy = retailerIdCandidate
+      ? 'retailer_id'
+      : idCandidate
+        ? 'shopify_id'
+        : handleCandidate
+          ? 'handle'
+          : titleCandidate
+            ? 'title'
+            : ''
+
+    return {
+      ...product,
+      retailer_id: matchedProduct?.retailer_id || explicitRetailerId || '',
+      metaCatalogMatched: !!matchedProduct,
+      metaCatalogMatchedBy: matchedBy,
+      metaCatalogProductId: matchedProduct?.id || '',
+      metaCatalogUrl: matchedProduct?.url || '',
+      metaCatalogImage: matchedProduct?.image_url || '',
+      metaCatalogName: matchedProduct?.name || ''
+    }
+  })
+}
+
 async function getStoredOrders(limit = 100) {
   return queryMany(
     'SELECT id, "userId", "shopifyOrderId", "orderNumber", "customerName", "customerEmail", "customerPhone", total, currency, status, "lineItems", "createdAt", "updatedAt", "whatsappSent", "whatsappMessageId", "whatsappSentAt" FROM orders WHERE "userId" = $1 ORDER BY "createdAt" DESC NULLS LAST LIMIT $2',
     ['default', limit]
+  )
+}
+
+async function getLatestStoredOrderByPhone(phone) {
+  const normalizedPhone = String(phone || '').replace(/\D/g, '')
+  if (!normalizedPhone) return null
+
+  return queryOne(
+    `SELECT id, "userId", "shopifyOrderId", "orderNumber", "customerName", "customerEmail", "customerPhone", total, currency, status, "lineItems", "createdAt", "updatedAt", "whatsappSent", "whatsappMessageId", "whatsappSentAt"
+     FROM orders
+     WHERE "userId" = $1 AND regexp_replace(COALESCE("customerPhone", ''), '\D', '', 'g') = $2
+     ORDER BY "createdAt" DESC NULLS LAST, "updatedAt" DESC NULLS LAST
+     LIMIT 1`,
+    ['default', normalizedPhone]
   )
 }
 
@@ -275,6 +650,17 @@ async function insertWebhookLog(type, topic, payload) {
   )
 }
 
+async function getWebhookLogs(limit = 10) {
+  const result = await getPostgresPool().query(
+    `SELECT id, type, topic, payload, "receivedAt", "createdAt"
+     FROM webhook_logs
+     ORDER BY "receivedAt" DESC
+     LIMIT $1`,
+    [limit]
+  )
+  return result.rows
+}
+
 async function getStoredShopifyCustomer(customerId) {
   return queryOne(
     `SELECT id, "customerId", phone
@@ -381,66 +767,60 @@ function interpolateMessage(template, context) {
   })
 }
 
-function resolveAutomationVariable(value, context) {
-  const trimmed = typeof value === 'string' ? value.trim() : ''
-  if (!trimmed) return ''
-
-  const directMap = {
-    '{{customer_name}}': context.customer_name || '',
-    '{{customer_phone}}': context.customer_phone || context.customerPhone || '',
-    '{{customer_message}}': context.customer_message || '',
-    '{{order_number}}': context.order_number || '',
-    '{{tracking_number}}': context.tracking_number || '',
-    '{{tracking_url}}': context.tracking_url || '',
-    '{{review_link}}': context.review_link || '',
-    '{{order_total}}': context.order_total || '',
-    '{{currency}}': context.currency || '',
-    '{{financial_status}}': context.financial_status || '',
-    '{{shopify.customer.first_name}}': context.customer_name || '',
-    '{{shopify.total_price}}': context.order_total || ''
-  }
-
-  const normalized = trimmed.toLowerCase()
-  const normalizedMap = Object.fromEntries(Object.entries(directMap).map(([key, val]) => [key.toLowerCase(), val]))
-  if (normalizedMap[normalized] !== undefined) {
-    return normalizedMap[normalized]
-  }
-
-  return interpolateMessage(trimmed, context)
-}
-
 function buildAutomationTemplateComponents(templateComponents, variableMappings, context) {
-  const bodyComponent = Array.isArray(templateComponents)
-    ? templateComponents.find((component) => component.type === 'BODY')
-    : null
-
-  const placeholders = bodyComponent?.text?.match(/\{\{\d+\}\}/g) || []
-  if (placeholders.length === 0) return undefined
-
-  return [
-    {
-      type: 'body',
-      parameters: placeholders.map((_, index) => ({
-        type: 'text',
-        text: String(resolveAutomationVariable(variableMappings?.[index]?.value || '', context) || '')
-      }))
-    }
-  ]
+  return buildAutomationTemplateComponentsShared(templateComponents, variableMappings, context)
 }
 
-function buildCatalogProductContext(products, shopify) {
+function buildCatalogProductContext(products, shopify, whatsapp = null) {
   const firstProduct = products[0] || null
   const normalizedDomain = normalizeShopifyDomain(shopify?.shopDomain || '')
   const baseDomain = normalizedDomain ? `https://${normalizedDomain}` : ''
-  const productLink = firstProduct?.handle && baseDomain ? `${baseDomain}/products/${firstProduct.handle}` : ''
-  const catalogLink = baseDomain ? `${baseDomain}/collections/all` : ''
+  const whatsappCatalogLink = whatsapp?.businessAccountId || whatsapp?.phoneNumberId
+    ? `https://wa.me/c/${whatsapp.businessAccountId || whatsapp.phoneNumberId}`
+    : ''
+  const productLink = firstProduct?.url || firstProduct?.metaCatalogUrl || (firstProduct?.handle && baseDomain ? `${baseDomain}/products/${firstProduct.handle}` : '')
+  const catalogLink = baseDomain ? `${baseDomain}/collections/all` : whatsappCatalogLink
+  const explicitRetailerIds = products
+    .map((product) => String(product?.retailer_id || product?.retailerId || '').trim())
+    .filter(Boolean)
+  const retailerIds = products
+    .map((product) => String(product?.retailer_id || product?.retailerId || product?.id || '').trim())
+    .filter(Boolean)
 
   return {
-    product_name: firstProduct?.title || '',
+    product_name: firstProduct?.title || firstProduct?.name || '',
     product_price: firstProduct?.price ? String(firstProduct.price) : '',
     product_link: productLink,
-    product_names: products.slice(0, 3).map((product) => product.title).filter(Boolean).join(', '),
-    catalog_link: catalogLink
+    product_names: products.slice(0, 3).map((product) => product.title || product.name).filter(Boolean).join(', '),
+    catalog_link: catalogLink,
+    product_retailer_id: retailerIds[0] || '',
+    product_retailer_ids: retailerIds,
+    explicit_product_retailer_id: explicitRetailerIds[0] || '',
+    explicit_product_retailer_ids: explicitRetailerIds
+  }
+}
+
+function getOrderLineItemTitle(item) {
+  return String(
+    item?.title ||
+    item?.name ||
+    item?.product_title ||
+    item?.productTitle ||
+    item?.variant_title ||
+    item?.variantTitle ||
+    ''
+  ).trim()
+}
+
+function buildOrderProductContext(order = null) {
+  const lineItems = Array.isArray(order?.lineItems) ? order.lineItems : []
+  const itemNames = lineItems
+    .map((item) => getOrderLineItemTitle(item))
+    .filter(Boolean)
+
+  return {
+    order_product_name: itemNames[0] || '',
+    order_product_names: itemNames.slice(0, 3).join(', ')
   }
 }
 
@@ -449,6 +829,15 @@ function resolveCatalogTemplateVariable(value, context) {
   if (!trimmed) return ''
 
   const normalized = trimmed.toLowerCase()
+  if (normalized === '{{customer_name}}') return context.customer_name || ''
+  if (normalized === '{{customer_phone}}') return context.customer_phone || ''
+  if (normalized === '{{order_number}}') return context.order_number || ''
+  if (normalized === '{{tracking_number}}') return context.tracking_number || ''
+  if (normalized === '{{tracking_url}}') return context.tracking_url || ''
+  if (normalized === '{{order_total}}') return context.order_total || ''
+  if (normalized === '{{currency}}') return context.currency || ''
+  if (normalized === '{{order_product_name}}') return context.order_product_name || ''
+  if (normalized === '{{order_product_names}}') return context.order_product_names || ''
   if (normalized === '{{product_name}}') return context.product_name || ''
   if (normalized === '{{product_price}}') return context.product_price || ''
   if (normalized === '{{product_link}}') return context.product_link || ''
@@ -456,6 +845,301 @@ function resolveCatalogTemplateVariable(value, context) {
   if (normalized === '{{catalog_link}}') return context.catalog_link || ''
 
   return trimmed
+}
+
+function inferCatalogTemplateVariable(exampleText, index = 0, templateName = '') {
+  const sample = String(exampleText || '').trim().toLowerCase()
+  const templateLabel = String(templateName || '').trim().toLowerCase()
+  const prefersOrderProductContext = /tracking|shipment|shipping|fulfill|delivery|order/i.test(templateLabel)
+
+  if (sample.includes('customer') && sample.includes('name')) return '{{customer_name}}'
+  if (sample.includes('customer') && sample.includes('phone')) return '{{customer_phone}}'
+  if (sample.includes('order') && sample.includes('number')) return '{{order_number}}'
+  if (sample.includes('tracking') && sample.includes('number')) return '{{tracking_number}}'
+  if (sample.includes('tracking') && (sample.includes('link') || sample.includes('url'))) return '{{tracking_url}}'
+  if (sample.includes('catalog') || sample.includes('collection')) return '{{catalog_link}}'
+  if (sample.includes('product') && sample.includes('name')) {
+    return prefersOrderProductContext ? '{{order_product_name}}' : '{{product_name}}'
+  }
+  if (sample.includes('product') && sample.includes('price')) return '{{product_price}}'
+  if (sample.includes('product') && (sample.includes('link') || sample.includes('url'))) return '{{product_link}}'
+  if (sample.includes('browse') || sample.includes('link') || sample.includes('url')) return '{{product_link}}'
+
+  const fallbacks = prefersOrderProductContext
+    ? ['{{customer_name}}', '{{order_number}}', '{{order_product_name}}', '{{tracking_url}}', '{{tracking_number}}']
+    : ['{{customer_name}}', '{{catalog_link}}', '{{product_name}}', '{{product_link}}', '{{product_price}}']
+  return fallbacks[index] || '{{catalog_link}}'
+}
+
+function getTemplateSlotExamples(component, groupKey) {
+  const exampleGroup = component?.example?.[groupKey]
+  if (Array.isArray(exampleGroup) && Array.isArray(exampleGroup[0])) return exampleGroup[0]
+  return []
+}
+
+function getTemplateParameterSlots(templateComponents = []) {
+  const slots = []
+
+  for (const component of templateComponents) {
+    if (component?.type === 'HEADER' && component.format === 'TEXT') {
+      const matches = component.text?.match(/\{\{\d+\}\}/g) || []
+      const examples = getTemplateSlotExamples(component, 'header_text')
+      matches.forEach((_match, index) => {
+        slots.push({
+          componentType: 'HEADER',
+          parameterType: 'text',
+          example: examples[index] || ''
+        })
+      })
+    }
+
+    if (component?.type === 'BODY') {
+      const matches = component.text?.match(/\{\{\d+\}\}/g) || []
+      const examples = getTemplateSlotExamples(component, 'body_text')
+      matches.forEach((_match, index) => {
+        slots.push({
+          componentType: 'BODY',
+          parameterType: 'text',
+          example: examples[index] || ''
+        })
+      })
+    }
+
+    if (component?.type === 'BUTTONS' && Array.isArray(component.buttons)) {
+      component.buttons.forEach((button) => {
+        const matches = button?.url?.match(/\{\{\d+\}\}/g) || []
+        matches.forEach((_match, index) => {
+          slots.push({
+            componentType: 'BUTTON',
+            parameterType: 'text',
+            buttonType: String(button.type || '').toUpperCase(),
+            example: button?.example?.[index] || ''
+          })
+        })
+      })
+    }
+  }
+
+  return slots
+}
+
+function isProductDependentTemplateVariable(value = '') {
+  const normalized = String(value || '').trim().toLowerCase()
+  return (
+    normalized === '{{product_name}}' ||
+    normalized === '{{product_price}}' ||
+    normalized === '{{product_link}}' ||
+    normalized === '{{product_names}}'
+  )
+}
+
+function isOrderDependentTemplateVariable(value = '') {
+  const normalized = String(value || '').trim().toLowerCase()
+  return (
+    normalized === '{{order_number}}' ||
+    normalized === '{{tracking_number}}' ||
+    normalized === '{{tracking_url}}' ||
+    normalized === '{{order_total}}' ||
+    normalized === '{{currency}}' ||
+    normalized === '{{order_product_name}}' ||
+    normalized === '{{order_product_names}}'
+  )
+}
+
+function templateRequiresProductContext(templateComponents = [], templateVariables = [], templateName = '') {
+  const slots = getTemplateParameterSlots(templateComponents)
+  const resolvedVariableOrder = slots.map((slot, index) => (
+    typeof templateVariables[index] === 'string' && templateVariables[index].trim()
+      ? templateVariables[index].trim()
+      : inferCatalogTemplateVariable(slot.example, index, templateName)
+  ))
+
+  if (resolvedVariableOrder.some((value) => isProductDependentTemplateVariable(value))) {
+    return true
+  }
+
+  return templateComponents.some((component) => (
+    component?.type === 'BUTTONS' &&
+    Array.isArray(component.buttons) &&
+    component.buttons.some((button) => {
+      const buttonType = String(button?.type || '').toUpperCase()
+      return buttonType === 'MPM' || buttonType === 'CATALOG'
+    })
+  ))
+}
+
+function templateRequiresOrderContext(templateComponents = [], templateVariables = [], templateName = '') {
+  const slots = getTemplateParameterSlots(templateComponents)
+  const resolvedVariableOrder = slots.map((slot, index) => (
+    typeof templateVariables[index] === 'string' && templateVariables[index].trim()
+      ? templateVariables[index].trim()
+      : inferCatalogTemplateVariable(slot.example, index, templateName)
+  ))
+
+  return resolvedVariableOrder.some((value) => isOrderDependentTemplateVariable(value))
+}
+
+function buildCatalogTemplatePayload({ templateName, templateLanguage, templateComponents = [], templateVariables = [], templateHeaderImageUrl = '', productContext, recipientContext }) {
+  const mergedContext = { ...productContext, ...recipientContext }
+  const slots = getTemplateParameterSlots(templateComponents)
+  const resolvedVariableOrder = slots.map((slot, index) => (
+    typeof templateVariables[index] === 'string' && templateVariables[index].trim()
+      ? templateVariables[index].trim()
+      : inferCatalogTemplateVariable(slot.example, index, templateName)
+  ))
+
+  let cursor = 0
+  const components = []
+
+  for (const component of templateComponents) {
+    if (component?.type === 'HEADER') {
+      if (component.format === 'IMAGE') {
+        if (!templateHeaderImageUrl) {
+          throw new Error('Template requires an image header. Upload an image or provide a public image URL.')
+        }
+
+        const headerUrl = templateHeaderImageUrl.trim()
+        if (headerUrl.startsWith('http://localhost') || headerUrl.startsWith('http://0.0.0.0') || headerUrl.startsWith('http://127.0.0.1')) {
+          throw new Error(`Header image URL must be publicly accessible. "${headerUrl}" points to a local server.`)
+        }
+
+        components.push({
+          type: 'header',
+          parameters: [
+            {
+              type: 'image',
+              image: { link: headerUrl }
+            }
+          ]
+        })
+      } else if (component.format === 'VIDEO') {
+        if (!templateHeaderImageUrl) {
+          throw new Error('Template requires a video header but no public video URL was provided.')
+        }
+
+        components.push({
+          type: 'header',
+          parameters: [
+            {
+              type: 'video',
+              video: { link: templateHeaderImageUrl.trim() }
+            }
+          ]
+        })
+      } else if (component.format === 'TEXT') {
+        const matches = component.text?.match(/\{\{\d+\}\}/g) || []
+        if (matches.length > 0) {
+          components.push({
+            type: 'header',
+            parameters: matches.map(() => {
+              const value = resolveCatalogTemplateVariable(resolvedVariableOrder[cursor] || '', mergedContext)
+              cursor += 1
+              return { type: 'text', text: value }
+            })
+          })
+        }
+      }
+    }
+
+    if (component?.type === 'BODY') {
+      const matches = component.text?.match(/\{\{\d+\}\}/g) || []
+      if (matches.length > 0) {
+        components.push({
+          type: 'body',
+          parameters: matches.map(() => {
+            const value = resolveCatalogTemplateVariable(resolvedVariableOrder[cursor] || '', mergedContext)
+            cursor += 1
+            return { type: 'text', text: value }
+          })
+        })
+      }
+    }
+
+    if (component?.type === 'BUTTONS' && Array.isArray(component.buttons)) {
+      component.buttons.forEach((button, buttonIndex) => {
+        const buttonType = String(button?.type || '').toUpperCase()
+
+        if (buttonType === 'MPM') {
+          const retailerIds = Array.isArray(productContext.explicit_product_retailer_ids) ? productContext.explicit_product_retailer_ids : []
+          if (retailerIds.length === 0) {
+            throw new Error('This template requires Meta retailer IDs for the selected products. Sync or map your Meta catalog retailer_id values before sending MPM templates.')
+          }
+
+          components.push({
+            type: 'button',
+            sub_type: 'mpm',
+            index: String(buttonIndex),
+            parameters: [
+              {
+                type: 'action',
+                action: {
+                  thumbnail_product_retailer_id: retailerIds[0],
+                  sections: [
+                    {
+                      title: 'Products',
+                      product_items: retailerIds.slice(0, 30).map((productRetailerId) => ({
+                        product_retailer_id: productRetailerId
+                      }))
+                    }
+                  ]
+                }
+              }
+            ]
+          })
+          return
+        }
+
+        if (buttonType === 'CATALOG') {
+          const retailerId = productContext.explicit_product_retailer_id
+          if (!retailerId) {
+            throw new Error('This template requires a Meta retailer ID for the selected product. Sync or map the product retailer_id before sending catalog-button templates.')
+          }
+
+          components.push({
+            type: 'button',
+            sub_type: 'catalog',
+            index: String(buttonIndex),
+            parameters: [
+              {
+                type: 'action',
+                action: {
+                  thumbnail_product_retailer_id: retailerId
+                }
+              }
+            ]
+          })
+          return
+        }
+
+        const matches = button?.url?.match(/\{\{\d+\}\}/g) || []
+        if (matches.length > 0) {
+          components.push({
+            type: 'button',
+            sub_type: buttonType.toLowerCase(),
+            index: String(buttonIndex),
+            parameters: matches.map(() => {
+              const value = resolveCatalogTemplateVariable(resolvedVariableOrder[cursor] || '', mergedContext)
+              cursor += 1
+              return { type: 'text', text: value }
+            })
+          })
+        }
+      })
+    }
+  }
+
+  const templatePayload = {
+    name: templateName,
+    language: {
+      code: templateLanguage || 'en_US'
+    }
+  }
+
+  if (components.length > 0) {
+    templatePayload.components = components
+  }
+
+  return templatePayload
 }
 
 function parseDelayToMs(step) {
@@ -482,6 +1166,11 @@ function getNextAutomationStepId(steps, step, key = 'main') {
 function matchesCondition(rule, context) {
   if (!rule) return true
   const trimmed = rule.trim()
+  if (trimmed.includes(' contains_any ')) {
+    const [left, right] = trimmed.split(' contains_any ').map((value) => value.trim())
+    const haystack = String(context[left] ?? '').toLowerCase()
+    return right.split('|').some((token) => haystack.includes(token.trim().toLowerCase()))
+  }
   if (trimmed.includes(' not contains ')) {
     const [left, right] = trimmed.split(' not contains ').map((value) => value.trim())
     return !String(context[left] ?? '').toLowerCase().includes(right.toLowerCase())
@@ -576,6 +1265,27 @@ async function executeAutomationsForEvent(eventType, context, integrations) {
     const trigger = steps.find((step) => step.type === 'trigger')
     if (!trigger || trigger.event !== eventType) continue
 
+    const isIncomingWhatsAppAutomation = eventType === 'whatsapp.message_received'
+    const conversationRecipient = isIncomingWhatsAppAutomation
+      ? normalizeAutomationRecipientKey(resolveAutomationRecipient({ recipientMode: 'customer' }, context))
+      : ''
+    const now = new Date()
+    let conversationState = null
+
+    if (isIncomingWhatsAppAutomation && conversationRecipient) {
+      conversationState = await getAutomationConversationState(automation.id, conversationRecipient)
+      conversationState = await saveAutomationConversationState(
+        automation.id,
+        conversationRecipient,
+        conversationState,
+        { lastInboundAt: now }
+      )
+
+      if (isHandoffActive(conversationState, now)) {
+        continue
+      }
+    }
+
     let totalDelayMs = 0
     let currentStepId = getNextAutomationStepId(steps, trigger, 'main')
     const visited = new Set([trigger.id])
@@ -603,6 +1313,17 @@ async function executeAutomationsForEvent(eventType, context, integrations) {
           currentStepId = getNextAutomationStepId(steps, step, 'main')
           continue
         }
+
+        if (
+          isIncomingWhatsAppAutomation &&
+          conversationRecipient &&
+          normalizeAutomationRecipientKey(recipient) === conversationRecipient &&
+          shouldSuppressWhatsAppAutomationStep(step, conversationState, now)
+        ) {
+          currentStepId = getNextAutomationStepId(steps, step, 'main')
+          continue
+        }
+
         const body = interpolateMessage(step.message, context)
 
         if (totalDelayMs > 0) {
@@ -621,6 +1342,24 @@ async function executeAutomationsForEvent(eventType, context, integrations) {
             },
             new Date(Date.now() + totalDelayMs)
           )
+
+          if (isIncomingWhatsAppAutomation && conversationRecipient && normalizeAutomationRecipientKey(recipient) === conversationRecipient) {
+            conversationState = await saveAutomationConversationState(
+              automation.id,
+              conversationRecipient,
+              conversationState,
+              {
+                state: WHATSAPP_SUPPORT_STEP_IDS.has(step.id) ? 'handoff' : (WHATSAPP_MENU_STEP_IDS.has(step.id) ? 'awaiting_choice' : 'active'),
+                lastMenuSentAt: WHATSAPP_MENU_STEP_IDS.has(step.id) ? now : conversationState?.lastMenuSentAt,
+                lastReplyKey: step.id,
+                lastReplyAt: now,
+                handoffUntil: WHATSAPP_SUPPORT_STEP_IDS.has(step.id)
+                  ? new Date(now.getTime() + WHATSAPP_SUPPORT_HANDOFF_MS)
+                  : conversationState?.handoffUntil
+              }
+            )
+          }
+
           currentStepId = getNextAutomationStepId(steps, step, 'main')
           continue
         }
@@ -629,23 +1368,23 @@ async function executeAutomationsForEvent(eventType, context, integrations) {
           const templateComponents = buildAutomationTemplateComponents(step.templateComponents, step.variableMappings, context)
           const messageData = step.template
             ? {
-                messaging_product: 'whatsapp',
-                to: recipient,
-                type: 'template',
-                template: {
-                  name: step.template,
-                  language: {
-                    code: step.templateLanguage || 'en_US'
-                  },
-                  ...(templateComponents ? { components: templateComponents } : {})
-                }
+              messaging_product: 'whatsapp',
+              to: recipient,
+              type: 'template',
+              template: {
+                name: step.template,
+                language: {
+                  code: step.templateLanguage || 'en_US'
+                },
+                ...(templateComponents ? { components: templateComponents } : {})
               }
+            }
             : {
-                messaging_product: 'whatsapp',
-                to: recipient,
-                type: 'text',
-                text: { body }
-              }
+              messaging_product: 'whatsapp',
+              to: recipient,
+              type: 'text',
+              text: { body }
+            }
 
           const result = await sendWhatsAppMessage(
             integrations.whatsapp.phoneNumberId,
@@ -668,6 +1407,23 @@ async function executeAutomationsForEvent(eventType, context, integrations) {
           })
 
           await incrementAutomationSentMetric(automation.id)
+
+          if (isIncomingWhatsAppAutomation && conversationRecipient && normalizeAutomationRecipientKey(recipient) === conversationRecipient) {
+            conversationState = await saveAutomationConversationState(
+              automation.id,
+              conversationRecipient,
+              conversationState,
+              {
+                state: WHATSAPP_SUPPORT_STEP_IDS.has(step.id) ? 'handoff' : (WHATSAPP_MENU_STEP_IDS.has(step.id) ? 'awaiting_choice' : 'active'),
+                lastMenuSentAt: WHATSAPP_MENU_STEP_IDS.has(step.id) ? now : conversationState?.lastMenuSentAt,
+                lastReplyKey: step.id,
+                lastReplyAt: now,
+                handoffUntil: WHATSAPP_SUPPORT_STEP_IDS.has(step.id)
+                  ? new Date(now.getTime() + WHATSAPP_SUPPORT_HANDOFF_MS)
+                  : conversationState?.handoffUntil
+              }
+            )
+          }
         } catch (error) {
           console.error(`Automation ${automation.name} failed:`, error.message)
         }
@@ -705,23 +1461,23 @@ async function processDueAutomationJobs() {
         job.recipient,
         job.template
           ? {
-              messaging_product: 'whatsapp',
-              to: job.recipient.replace(/\D/g, ''),
-              type: 'template',
-              template: {
-                name: job.template,
-                language: {
-                  code: job.payload?.templateLanguage || 'en_US'
-                },
-                ...(templateComponents ? { components: templateComponents } : {})
-              }
+            messaging_product: 'whatsapp',
+            to: job.recipient.replace(/\D/g, ''),
+            type: 'template',
+            template: {
+              name: job.template,
+              language: {
+                code: job.payload?.templateLanguage || 'en_US'
+              },
+              ...(templateComponents ? { components: templateComponents } : {})
             }
+          }
           : {
-              messaging_product: 'whatsapp',
-              to: job.recipient.replace(/\D/g, ''),
-              type: 'text',
-              text: { body: job.message }
-            }
+            messaging_product: 'whatsapp',
+            to: job.recipient.replace(/\D/g, ''),
+            type: 'text',
+            text: { body: job.message }
+          }
       )
 
       await insertStoredMessage({
@@ -774,40 +1530,40 @@ export async function OPTIONS() {
 async function sendWhatsAppMessage(phoneNumberId, accessToken, to, messageData) {
   // Updated to use the same version as your working cURL command
   const url = `https://graph.facebook.com/v22.0/${phoneNumberId}/messages`
-  
+
   const response = await fetch(url, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${accessToken}`,
+      ...buildMetaAuthHeaders(accessToken),
       'Content-Type': 'application/json'
     },
     body: JSON.stringify(messageData)
   })
 
   const data = await response.json()
-  
+
   // Improved error handling to ensure we only return success when the message is actually sent
   if (!response.ok) {
     console.error('WhatsApp API Error:', data);
     throw new Error(data.error?.message || `WhatsApp API error: ${response.status} ${response.statusText}`)
   }
-  
+
   // Additional validation that the message was accepted
   if (!data.messages || !Array.isArray(data.messages) || data.messages.length === 0) {
     console.error('Unexpected WhatsApp API response:', data);
     throw new Error('WhatsApp API returned unexpected response format')
   }
-  
+
   return data
 }
 
 // Function to save incoming WhatsApp messages to database
 async function saveIncomingMessage(messageData) {
   console.log('saveIncomingMessage called with:', JSON.stringify(messageData, null, 2));
-  
+
   // Extract data based on message type
   const { from, text, timestamp, type, image, document, audio, video, location, contacts } = messageData;
-  
+
   // Create message object
   const message = {
     id: uuidv4(),
@@ -821,7 +1577,7 @@ async function saveIncomingMessage(messageData) {
     status: 'received',
     messageType: type || 'unknown'
   };
-  
+
   // Handle different message types
   if (type === 'text' && text?.body) {
     message.message = text.body;
@@ -842,11 +1598,11 @@ async function saveIncomingMessage(messageData) {
     message.message = '[Message received]';
     console.log('Unknown message type:', JSON.stringify(messageData, null, 2));
   }
-  
+
   console.log('Saving message to database:', JSON.stringify(message, null, 2));
-  
+
   await insertStoredMessage(message);
-  
+
   // Update or create chat in the chats collection
   const chat = await getStoredChatByPhone(from);
   await upsertStoredChat({
@@ -856,7 +1612,7 @@ async function saveIncomingMessage(messageData) {
     timestamp: message.timestamp,
     unread: (chat?.unread || 0) + 1
   });
-  
+
   return message;
 }
 
@@ -873,9 +1629,9 @@ async function saveOutgoingMessage(to, messageText, whatsappResponse) {
     whatsappMessageId: whatsappResponse.messages?.[0]?.id,
     status: 'sent'
   };
-  
+
   await insertStoredMessage(message);
-  
+
   // Update or create chat in the chats collection
   const chat = await getStoredChatByPhone(to);
   await upsertStoredChat({
@@ -885,7 +1641,7 @@ async function saveOutgoingMessage(to, messageText, whatsappResponse) {
     timestamp: new Date(),
     unread: chat?.unread || 0
   });
-  
+
   return message;
 }
 
@@ -893,8 +1649,8 @@ async function sendOrderStatusUpdate(phoneNumberId, accessToken, to, order, newS
   // Format the status message
   let statusMessage = '';
   let statusEmoji = '';
-  
-  switch(newStatus) {
+
+  switch (newStatus) {
     case 'fulfilled':
       statusEmoji = '✅';
       statusMessage = `Your order #${order.orderNumber} has been fulfilled and is on its way!`;
@@ -915,7 +1671,7 @@ async function sendOrderStatusUpdate(phoneNumberId, accessToken, to, order, newS
       statusEmoji = '🔄';
       statusMessage = `Your order #${order.orderNumber} status has been updated to: ${newStatus}`;
   }
-  
+
   const messageData = {
     messaging_product: "whatsapp",
     to: to.replace(/\D/g, ''),
@@ -937,7 +1693,7 @@ async function fetchShopifyProducts(shopify) {
   const accessToken = await getShopifyAccessToken(shopify)
   const { shopDomain } = shopify
   const url = `https://${shopDomain}/admin/api/2023-10/products.json`
-  
+
   const response = await fetch(url, {
     headers: {
       'X-Shopify-Access-Token': accessToken,
@@ -964,7 +1720,7 @@ async function fetchShopifyOrders(shopify) {
   const accessToken = await getShopifyAccessToken(shopify)
   const { shopDomain } = shopify
   const url = `https://${shopDomain}/admin/api/2023-10/orders.json?status=any`
-  
+
   const response = await fetch(url, {
     headers: {
       'X-Shopify-Access-Token': accessToken,
@@ -999,9 +1755,9 @@ async function fetchCompleteShopifyOrder(shopify, orderId) {
   const accessToken = await getShopifyAccessToken(shopify)
   const { shopDomain } = shopify
   const url = `https://${shopDomain}/admin/api/2023-10/orders/${orderId}.json`;
-  
+
   console.log(`Fetching complete order ${orderId} from Shopify API: ${url}`);
-  
+
   const response = await fetch(url, {
     headers: {
       'X-Shopify-Access-Token': accessToken,
@@ -1023,7 +1779,7 @@ async function createShopifyWebhook(shopify, topic, webhookUrl) {
   const accessToken = await getShopifyAccessToken(shopify)
   const { shopDomain } = shopify
   const url = `https://${shopDomain}/admin/api/2023-10/webhooks.json`
-  
+
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -1043,7 +1799,7 @@ async function createShopifyWebhook(shopify, topic, webhookUrl) {
   if (!response.ok) {
     throw new Error(data.errors || 'Shopify webhook creation error')
   }
-  
+
   return data.webhook
 }
 
@@ -1053,7 +1809,7 @@ async function createStripeCheckoutSession(lineItems, metadata) {
   // Placeholder for now
   const sessionId = uuidv4()
   const checkoutUrl = `https://checkout.stripe.com/pay/${sessionId}`
-  
+
   return {
     id: sessionId,
     url: checkoutUrl
@@ -1082,9 +1838,17 @@ async function handleRoute(request, { params }) {
     // Integrations endpoints
     if (route === '/integrations' && method === 'GET') {
       const integrations = await getStoredIntegrations()
-      
+
       const defaultIntegrations = {
-        whatsapp: { connected: false, data: {} },
+        whatsapp: {
+          connected: false,
+          data: {
+            phoneNumberId: '',
+            businessAccountId: '',
+            catalogId: '',
+            webhookVerifyToken: process.env.WHATSAPP_VERIFY_TOKEN || ''
+          }
+        },
         shopify: { connected: false, data: {} },
         stripe: { connected: false, data: {} }
       }
@@ -1098,13 +1862,14 @@ async function handleRoute(request, { params }) {
           integrations.shopify?.clientSecret
         )
         defaultIntegrations.stripe.connected = !!(integrations.stripe?.secretKey)
-        
+
         // Return data without sensitive fields
+        const normalizedWhatsApp = normalizeWhatsAppIntegrationData(integrations.whatsapp || {})
         defaultIntegrations.whatsapp.data = {
-          phoneNumberId: integrations.whatsapp?.phoneNumberId || '',
-          businessAccountId: integrations.whatsapp?.businessAccountId || '',
-          catalogId: integrations.whatsapp?.catalogId || '', // Add catalogId to the response
-          webhookVerifyToken: integrations.whatsapp?.webhookVerifyToken || ''
+          phoneNumberId: normalizedWhatsApp.phoneNumberId,
+          businessAccountId: normalizedWhatsApp.businessAccountId,
+          catalogId: normalizedWhatsApp.catalogId,
+          webhookVerifyToken: normalizedWhatsApp.webhookVerifyToken || process.env.WHATSAPP_VERIFY_TOKEN || ''
         }
         defaultIntegrations.shopify.data = {
           shopDomain: integrations.shopify?.shopDomain || '',
@@ -1122,24 +1887,40 @@ async function handleRoute(request, { params }) {
       const body = await request.json()
       const { type } = body
       let { data } = body
+      let warning = ''
 
       if (!type || !data) {
         return handleCORS(NextResponse.json(
-          { error: "Type and data are required" }, 
+          { error: "Type and data are required" },
           { status: 400 }
         ))
+      }
+
+      if (type === 'whatsapp') {
+        data = normalizeWhatsAppIntegrationData(data)
       }
 
       // Test the integration before saving
       try {
         if (type === 'whatsapp' && data.phoneNumberId && data.accessToken) {
-          // Test WhatsApp connection by getting phone number info
-          const testUrl = `https://graph.facebook.com/v22.0/${data.phoneNumberId}`
-          const testResponse = await fetch(testUrl, {
-            headers: { 'Authorization': `Bearer ${data.accessToken}` }
-          })
-          if (!testResponse.ok) {
-            throw new Error('Invalid WhatsApp credentials')
+          await validateWhatsAppPhoneNumberAccess(
+            data.phoneNumberId,
+            data.accessToken,
+            data.businessAccountId
+          )
+
+          if (data.catalogId) {
+            try {
+              await validateMetaCatalogAccess({
+                catalogId: data.catalogId,
+                accessToken: data.accessToken,
+                businessAccountId: data.businessAccountId,
+                phoneNumberId: data.phoneNumberId
+              })
+            } catch (error) {
+              warning = `Meta Catalog ID was not saved: ${error.message}`
+              delete data.catalogId
+            }
           }
         }
 
@@ -1156,13 +1937,17 @@ async function handleRoute(request, { params }) {
         }
       } catch (error) {
         return handleCORS(NextResponse.json(
-          { error: `Integration test failed: ${error.message}` }, 
+          { error: `Integration test failed: ${error.message}` },
           { status: 400 }
         ))
       }
 
       // Ensure WhatsApp configuration has the right structure
       if (type === 'whatsapp') {
+        if (!data.webhookVerifyToken) {
+          data.webhookVerifyToken = `wa_verify_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`
+        }
+
         data.connected = !!(data.phoneNumberId && data.accessToken);
         // Ensure catalogId is properly handled
         if (data.catalogId === '') {
@@ -1181,23 +1966,23 @@ async function handleRoute(request, { params }) {
       // Save integration
       await saveStoredIntegration(type, data)
 
-      return handleCORS(NextResponse.json({ success: true }))
+      return handleCORS(NextResponse.json({ success: true, ...(warning ? { warning } : {}) }))
     }
 
     // Setup webhooks endpoint
     if (route === '/setup-webhooks' && method === 'POST') {
       const integrations = await getStoredIntegrations();
-      
+
       if (!integrations?.shopify?.shopDomain || !integrations?.shopify?.clientId || !integrations?.shopify?.clientSecret) {
         return handleCORS(NextResponse.json(
-          { error: "Shopify not configured" }, 
+          { error: "Shopify not configured" },
           { status: 400 }
         ))
       }
 
       try {
         const webhookUrl = `${process.env.NEXT_PUBLIC_BASE_URL}/api/webhook/shopify`
-        
+
         // Create webhooks for order creation and status updates
         const webhooks = [
           { topic: 'orders/create', address: webhookUrl },
@@ -1209,9 +1994,9 @@ async function handleRoute(request, { params }) {
           { topic: 'customers/create', address: webhookUrl },
           { topic: 'customers/update', address: webhookUrl }
         ];
-        
+
         const createdWebhooks = [];
-        
+
         for (const webhook of webhooks) {
           try {
             const createdWebhook = await createShopifyWebhook(
@@ -1219,7 +2004,7 @@ async function handleRoute(request, { params }) {
               webhook.topic,
               webhook.address
             );
-            
+
             createdWebhooks.push({
               webhookId: createdWebhook.id,
               topic: webhook.topic,
@@ -1234,14 +2019,29 @@ async function handleRoute(request, { params }) {
         // Save webhook info
         await saveStoredWebhooks(createdWebhooks)
 
-        return handleCORS(NextResponse.json({ 
-          success: true, 
-          webhooks: createdWebhooks 
+        return handleCORS(NextResponse.json({
+          success: true,
+          webhooks: createdWebhooks
         }))
       } catch (error) {
         return handleCORS(NextResponse.json(
-          { error: `Failed to setup webhooks: ${error.message}` }, 
+          { error: `Failed to setup webhooks: ${error.message}` },
           { status: 400 }
+        ))
+      }
+    }
+
+    // Webhook logs endpoint
+    if (route === '/webhook-logs' && method === 'GET') {
+      try {
+        const webhookUrl = new URL(request.url)
+        const limit = parseInt(webhookUrl.searchParams.get('limit')) || 10
+        const logs = await getWebhookLogs(limit)
+        return handleCORS(NextResponse.json({ logs }))
+      } catch (error) {
+        return handleCORS(NextResponse.json(
+          { error: `Failed to get webhook logs: ${error.message}` },
+          { status: 500 }
         ))
       }
     }
@@ -1249,24 +2049,24 @@ async function handleRoute(request, { params }) {
     // Products endpoint
     if (route === '/products' && method === 'GET') {
       const integrations = await getStoredIntegrations()
-      
-      if (!integrations?.shopify?.shopDomain || !integrations?.shopify?.clientId || !integrations?.shopify?.clientSecret) {
-        return handleCORS(NextResponse.json(
-          { error: "Shopify not configured" }, 
-          { status: 400 }
-        ))
-      }
 
       try {
-        const products = await fetchShopifyProducts(integrations.shopify)
-        
-        // Cache products in database
-        await saveStoredProducts(products)
+        const hasMetaCatalog = !!(integrations?.whatsapp?.catalogId && integrations?.whatsapp?.accessToken)
 
-        return handleCORS(NextResponse.json(products))
+        if (!hasMetaCatalog) {
+          return handleCORS(NextResponse.json(
+            { error: "Meta catalog not configured. Connect WhatsApp catalog access to load products." },
+            { status: 400 }
+          ))
+        }
+
+        const metaCatalogProducts = await fetchMetaCatalogProducts(integrations.whatsapp)
+        const metaProducts = mapMetaCatalogProductsToAppProducts(metaCatalogProducts)
+        await saveStoredProducts(metaProducts)
+        return handleCORS(NextResponse.json(metaProducts))
       } catch (error) {
         return handleCORS(NextResponse.json(
-          { error: `Failed to fetch products: ${error.message}` }, 
+          { error: `Failed to fetch products: ${error.message}` },
           { status: 400 }
         ))
       }
@@ -1277,12 +2077,12 @@ async function handleRoute(request, { params }) {
       try {
         // Try to fetch orders from Shopify if integration is configured
         const integrations = await getStoredIntegrations()
-        
+
         if (integrations?.shopify?.shopDomain && integrations?.shopify?.clientId && integrations?.shopify?.clientSecret) {
           try {
             // Fetch orders directly from Shopify
             const shopifyOrders = await fetchShopifyOrders(integrations.shopify)
-            
+
             // Return Shopify orders
             return handleCORS(NextResponse.json(shopifyOrders))
           } catch (error) {
@@ -1290,7 +2090,7 @@ async function handleRoute(request, { params }) {
             // Fall back to database orders if Shopify fetch fails
           }
         }
-        
+
         // Fall back to database orders
         const orders = await getStoredOrders(100)
         const cleanedOrders = orders.map(({ _id, ...rest }) => rest)
@@ -1308,14 +2108,8 @@ async function handleRoute(request, { params }) {
     if (route === '/send-catalog' && method === 'POST') {
       try {
         const body = await request.json();
-        const { products: productIds, recipient, recipients, templateName, templateLanguage, templateComponents, templateVariables } = body;
-
-        if (!productIds || !Array.isArray(productIds) || productIds.length === 0) {
-          return handleCORS(NextResponse.json(
-            { error: "Products array is required" }, 
-            { status: 400 }
-          ));
-        }
+        const { products: productIds, recipient, recipients, templateName, templateLanguage, templateComponents, templateVariables, templateHeaderImageUrl } = body;
+        const normalizedProductIds = Array.isArray(productIds) ? productIds : []
 
         // Handle both single recipient and multiple recipients
         let recipientList = [];
@@ -1326,36 +2120,53 @@ async function handleRoute(request, { params }) {
           recipientList = recipient.split(',').map(r => r.trim()).filter(r => r);
         } else {
           return handleCORS(NextResponse.json(
-            { error: "Recipient phone number(s) required" }, 
+            { error: "Recipient phone number(s) required" },
             { status: 400 }
           ));
         }
 
         // Get integrations
         const integrations = await getStoredIntegrations();
-        
+
         if (!integrations?.whatsapp?.phoneNumberId || !integrations?.whatsapp?.accessToken) {
           return handleCORS(NextResponse.json(
-            { error: "WhatsApp not configured" }, 
+            { error: "WhatsApp not configured" },
             { status: 400 }
           ));
         }
 
         // Get products
         const storedProducts = await getStoredProducts();
-        if (!storedProducts || storedProducts.length === 0) {
+        if (normalizedProductIds.length > 0 && (!storedProducts || storedProducts.length === 0)) {
           return handleCORS(NextResponse.json(
-            { error: "No products found. Please sync products first." }, 
+            { error: "No products found. Please sync products first." },
             { status: 400 }
           ));
         }
 
-        const selectedProducts = storedProducts.filter(p => productIds.includes(p.id));
-        const productContext = buildCatalogProductContext(selectedProducts, integrations.shopify);
-        
-        if (selectedProducts.length === 0) {
+        const selectedProducts = Array.isArray(storedProducts)
+          ? storedProducts.filter(p => normalizedProductIds.includes(p.id))
+          : [];
+        const productContext = buildCatalogProductContext(selectedProducts, integrations.shopify, integrations.whatsapp);
+        const selectedTemplateComponents = Array.isArray(templateComponents) ? templateComponents : []
+        const selectedTemplateVariables = Array.isArray(templateVariables) ? templateVariables : []
+        const requiresProducts = templateName
+          ? templateRequiresProductContext(selectedTemplateComponents, selectedTemplateVariables, templateName)
+          : false
+        const requiresOrderContext = templateName
+          ? templateRequiresOrderContext(selectedTemplateComponents, selectedTemplateVariables, templateName)
+          : false
+
+        if (normalizedProductIds.length > 0 && selectedProducts.length === 0) {
           return handleCORS(NextResponse.json(
-            { error: "Selected products not found" }, 
+            { error: "Selected products not found" },
+            { status: 400 }
+          ));
+        }
+
+        if (requiresProducts && selectedProducts.length === 0) {
+          return handleCORS(NextResponse.json(
+            { error: "This template requires product selection. Choose at least one WhatsApp-ready product." },
             { status: 400 }
           ));
         }
@@ -1366,10 +2177,10 @@ async function handleRoute(request, { params }) {
           try {
             // Validate and format phone number
             const formattedRecipient = recipient.replace(/\D/g, '');
-            
+
             // Log the recipient number for debugging
             console.log(`Sending catalog to: ${recipient}, formatted: ${formattedRecipient}`);
-            
+
             // Check if the number seems valid
             if (formattedRecipient.length < 10) {
               results.push({
@@ -1382,32 +2193,41 @@ async function handleRoute(request, { params }) {
 
             // Check if we're using a template
             if (templateName) {
-              const bodyComponent = Array.isArray(templateComponents)
-                ? templateComponents.find((component) => component.type === 'BODY')
-                : null
-              const placeholderMatches = bodyComponent?.text?.match(/\{\{\d+\}\}/g) || []
-              const templatePayload = {
-                name: templateName,
-                language: {
-                  code: templateLanguage || "en_US"
+              const [existingChat, latestOrder] = await Promise.all([
+                getStoredChatByPhone(formattedRecipient),
+                getLatestStoredOrderByPhone(formattedRecipient)
+              ])
+
+              if (requiresOrderContext && !latestOrder) {
+                results.push({
+                  recipient,
+                  success: false,
+                  error: 'This template is mapped to order or purchased-product fields, but no recent order was found for this recipient.'
+                })
+                continue
+              }
+
+              const orderProductContext = buildOrderProductContext(latestOrder)
+              const templatePayload = buildCatalogTemplatePayload({
+                templateName,
+                templateLanguage,
+                templateComponents: selectedTemplateComponents,
+                templateVariables: selectedTemplateVariables,
+                templateHeaderImageUrl,
+                productContext: { ...productContext, ...orderProductContext },
+                recipientContext: {
+                  customer_name: existingChat?.name || latestOrder?.customerName || 'Customer',
+                  customer_phone: formattedRecipient,
+                  order_number: latestOrder?.orderNumber || '',
+                  tracking_number: '',
+                  tracking_url: '',
+                  order_total: latestOrder?.total ? String(latestOrder.total) : '',
+                  currency: latestOrder?.currency || ''
                 }
-              }
+              })
 
-              if (placeholderMatches.length > 0) {
-                const variableOrder = Array.isArray(templateVariables) && templateVariables.length > 0
-                  ? templateVariables
-                  : ['{{product_name}}', '{{product_price}}', '{{product_link}}', '{{product_names}}', '{{catalog_link}}']
-
-                templatePayload.components = [
-                  {
-                    type: "body",
-                    parameters: placeholderMatches.map((_match, index) => ({
-                      type: "text",
-                      text: resolveCatalogTemplateVariable(variableOrder[index] || '', productContext)
-                    }))
-                  }
-                ]
-              }
+              // Debug log the template payload
+              console.log('Template payload:', JSON.stringify(templatePayload, null, 2))
 
               // Send using the selected template
               const messageData = {
@@ -1448,34 +2268,37 @@ async function handleRoute(request, { params }) {
             } else {
               // Use the existing text-based approach
               const hasCatalogId = integrations.whatsapp.catalogId;
-              
+
               // Always use text-based messages to avoid template approval requirements
               // Create a catalog link
               const businessAccountId = integrations.whatsapp.businessAccountId || integrations.whatsapp.phoneNumberId;
               const catalogLink = `https://wa.me/c/${businessAccountId}`;
-              
+
               // Create a message that includes information about selected products with images
-              let productInfo = "Selected products:\n";
-              selectedProducts.slice(0, 3).forEach((product, index) => {
-                let productEntry = `${index + 1}. *${product.title}* - $${product.price}\n`;
-                if (product.image) {
-                  productEntry += `   📷 Image: ${product.image}\n`;
+              let productInfo = ''
+              if (selectedProducts.length > 0) {
+                productInfo = "Selected products:\n"
+                selectedProducts.slice(0, 3).forEach((product, index) => {
+                  let productEntry = `${index + 1}. *${product.title}* - $${product.price}\n`;
+                  if (product.image) {
+                    productEntry += `   📷 Image: ${product.image}\n`;
+                  }
+                  if (product.description) {
+                    productEntry += `   📝 ${product.description.substring(0, 100)}${product.description.length > 100 ? '...' : ''}\n`;
+                  }
+                  productInfo += productEntry + "\n";
+                });
+                if (selectedProducts.length > 3) {
+                  productInfo += `...and ${selectedProducts.length - 3} more items\n`;
                 }
-                if (product.description) {
-                  productEntry += `   📝 ${product.description.substring(0, 100)}${product.description.length > 100 ? '...' : ''}\n`;
-                }
-                productInfo += productEntry + "\n";
-              });
-              if (selectedProducts.length > 3) {
-                productInfo += `...and ${selectedProducts.length - 3} more items\n`;
               }
-              
+
               const catalogMessage = `🛍️ *Our Product Catalog*
 
 Check out our latest products:
 ${catalogLink}
 
-${productInfo}Browse our full collection and find something special just for you!
+${productInfo ? `${productInfo}` : ''}Browse our full collection and find something special just for you!
 
 🛍️ *Shop Now* - Click the link above to browse our catalog with images`;
 
@@ -1543,8 +2366,8 @@ ${productInfo}Browse our full collection and find something special just for you
         // Return results
         const successfulSends = results.filter(r => r.success).length;
         const failedSends = results.filter(r => !r.success).length;
-        
-        return handleCORS(NextResponse.json({ 
+
+        return handleCORS(NextResponse.json({
           success: successfulSends > 0,
           sentCount: successfulSends,
           failedCount: failedSends,
@@ -1564,10 +2387,10 @@ ${productInfo}Browse our full collection and find something special just for you
       try {
         // Get WhatsApp integration details
         const integrations = await getStoredIntegrations();
-        
+
         if (!integrations?.whatsapp?.phoneNumberId || !integrations?.whatsapp?.accessToken) {
           return handleCORS(NextResponse.json(
-            { 
+            {
               error: "WhatsApp not configured properly. Missing phone number ID or access token.",
               guidance: "Please check your WhatsApp integration settings in the dashboard."
             },
@@ -1577,10 +2400,10 @@ ${productInfo}Browse our full collection and find something special just for you
 
         // Use the business account ID from integration settings
         const businessAccountId = integrations.whatsapp.businessAccountId;
-        
+
         if (!businessAccountId) {
           return handleCORS(NextResponse.json(
-            { 
+            {
               error: "Business account ID not found in integration settings",
               guidance: "Please ensure your WhatsApp Business Account is properly configured."
             },
@@ -1590,23 +2413,23 @@ ${productInfo}Browse our full collection and find something special just for you
 
         // Fetch templates from WhatsApp API using the business account ID
         const url = `https://graph.facebook.com/v22.0/${businessAccountId}/message_templates`;
-        
+
         const templateResponse = await fetch(url, {
           headers: {
-            'Authorization': `Bearer ${integrations.whatsapp.accessToken}`,
+            ...buildMetaAuthHeaders(integrations.whatsapp.accessToken),
             'Content-Type': 'application/json'
           }
         });
 
         const data = await templateResponse.json();
-        
+
         if (!templateResponse.ok) {
           console.error('WhatsApp Templates API Error:', data);
-          
+
           // Provide more detailed error information
           let errorMessage = "Failed to fetch templates from WhatsApp API";
           let guidance = "";
-          
+
           if (data.error?.code === 100) {
             if (data.error?.message?.includes('message_templates')) {
               errorMessage = "Unable to access message templates";
@@ -1619,7 +2442,7 @@ ${productInfo}Browse our full collection and find something special just for you
             errorMessage = "Insufficient permissions";
             guidance = "Your access token may not have the required business_management permissions.";
           }
-          
+
           // Return an empty array with error details instead of an error to allow the UI to still function
           return handleCORS(NextResponse.json({
             data: [],
@@ -1630,7 +2453,7 @@ ${productInfo}Browse our full collection and find something special just for you
         }
 
         // Filter for approved templates only
-        const approvedTemplates = data.data?.filter(template => 
+        const approvedTemplates = data.data?.filter(template =>
           template.status === 'APPROVED'
         ) || [];
 
@@ -1638,7 +2461,7 @@ ${productInfo}Browse our full collection and find something special just for you
       } catch (error) {
         console.error('Failed to fetch WhatsApp templates:', error);
         return handleCORS(NextResponse.json(
-          { 
+          {
             error: 'Failed to fetch WhatsApp templates',
             guidance: "Please check your internet connection and WhatsApp integration settings.",
             technicalError: error.message
@@ -1653,10 +2476,22 @@ ${productInfo}Browse our full collection and find something special just for you
       try {
         const verifyToken = request.nextUrl.searchParams.get('hub.verify_token')
         const challenge = request.nextUrl.searchParams.get('hub.challenge')
-        
+
+        // If no verify token provided, return a message indicating endpoint is configured
+        if (!verifyToken) {
+          return handleCORS(NextResponse.json({
+            message: "WhatsApp webhook endpoint is configured. Provide hub.verify_token for verification.",
+            status: "ready"
+          }))
+        }
+
         const integrations = await getStoredIntegrations()
-        const expectedToken = integrations?.whatsapp?.webhookVerifyToken
-        
+        const storedToken = integrations?.whatsapp?.webhookVerifyToken
+        // Use env token if stored token is empty or is a test value like '123'
+        const expectedToken = (storedToken && storedToken.length > 10) ? storedToken : process.env.WHATSAPP_VERIFY_TOKEN
+
+        console.log('WhatsApp webhook verification:', { verifyToken, expectedToken, storedToken, envToken: process.env.WHATSAPP_VERIFY_TOKEN })
+
         if (verifyToken === expectedToken) {
           return handleCORS(new NextResponse(challenge))
         } else {
@@ -1671,19 +2506,19 @@ ${productInfo}Browse our full collection and find something special just for you
     if (route === '/webhook/whatsapp' && method === 'POST') {
       try {
         const body = await request.json()
-        
+
         // Log webhook for debugging
         await insertWebhookLog('whatsapp', null, body)
-        
+
         console.log('WhatsApp webhook received:', JSON.stringify(body, null, 2));
-        
+
         // Process incoming WhatsApp messages
         if (body.entry && Array.isArray(body.entry)) {
           for (const entry of body.entry) {
             if (entry.changes && Array.isArray(entry.changes)) {
               for (const change of entry.changes) {
                 console.log('Processing change:', JSON.stringify(change, null, 2));
-                
+
                 // Handle incoming messages
                 if (change.field === 'messages') {
                   const contactsByWaId = new Map(
@@ -1708,7 +2543,7 @@ ${productInfo}Browse our full collection and find something special just for you
                       )
                     }
                   }
-                  
+
                   // Handle message statuses (delivery/read receipts)
                   if (change.value?.statuses && Array.isArray(change.value.statuses)) {
                     console.log('Processing message statuses');
@@ -1718,7 +2553,7 @@ ${productInfo}Browse our full collection and find something special just for you
                       // For now, we'll just log them
                     }
                   }
-                  
+
                   // Handle contacts (new conversations)
                   if (change.value?.contacts && Array.isArray(change.value.contacts)) {
                     console.log('Processing contacts');
@@ -1732,7 +2567,7 @@ ${productInfo}Browse our full collection and find something special just for you
             }
           }
         }
-        
+
         return handleCORS(NextResponse.json({ success: true }))
       } catch (error) {
         console.error('WhatsApp webhook processing error:', error)
@@ -1748,7 +2583,7 @@ ${productInfo}Browse our full collection and find something special just for you
       try {
         const body = await request.json()
         const topic = request.headers.get('x-shopify-topic')
-        
+
         // Log webhook for debugging
         await insertWebhookLog('shopify', topic, body)
 
@@ -1768,16 +2603,16 @@ ${productInfo}Browse our full collection and find something special just for you
           console.log(`Order ID: ${body.id}`);
           console.log(`Customer ID: ${body.customer?.id}`);
           console.log(`Customer Email: ${body.customer?.email}`);
-          
+
           // Enhanced order creation logic to handle missing customer data
           // Look for phone number in multiple places
           let customerPhone = null;
-          
+
           // Log what data we received
           console.log(`Received customer data:`, JSON.stringify(body.customer, null, 2));
           console.log(`Received shipping address:`, JSON.stringify(body.shipping_address, null, 2));
           console.log(`Received billing address:`, JSON.stringify(body.billing_address, null, 2));
-          
+
           // Check customer object
           if (body.customer && body.customer.phone) {
             customerPhone = body.customer.phone;
@@ -1793,12 +2628,12 @@ ${productInfo}Browse our full collection and find something special just for you
             customerPhone = body.billing_address.phone;
             console.log(`Found phone in billing_address.phone: ${customerPhone}`);
           }
-          
+
           // NEW: Additional check for phone numbers in address fields
           // Sometimes Shopify doesn't send phone in dedicated phone field but in address fields
           if (!customerPhone) {
             console.log('Checking for phone numbers in name/address fields...');
-            
+
             // Check if phone is in shipping address fields
             if (body.shipping_address) {
               // Look for phone in first_name, last_name, or address fields as a fallback
@@ -1808,9 +2643,9 @@ ${productInfo}Browse our full collection and find something special just for you
                 body.shipping_address.address1,
                 body.shipping_address.address2
               ];
-              
+
               console.log('Shipping address fields to check:', shippingFields);
-              
+
               for (const field of shippingFields) {
                 if (field && typeof field === 'string') {
                   // Look for common phone number patterns
@@ -1823,7 +2658,7 @@ ${productInfo}Browse our full collection and find something special just for you
                 }
               }
             }
-            
+
             // Check if phone is in billing address fields
             if (!customerPhone && body.billing_address) {
               const billingFields = [
@@ -1832,9 +2667,9 @@ ${productInfo}Browse our full collection and find something special just for you
                 body.billing_address.address1,
                 body.billing_address.address2
               ];
-              
+
               console.log('Billing address fields to check:', billingFields);
-              
+
               for (const field of billingFields) {
                 if (field && typeof field === 'string') {
                   // Look for common phone number patterns
@@ -1847,16 +2682,16 @@ ${productInfo}Browse our full collection and find something special just for you
                 }
               }
             }
-            
+
             // Check if phone is in customer name fields
             if (!customerPhone && body.customer) {
               const customerFields = [
                 body.customer.first_name,
                 body.customer.last_name
               ];
-              
+
               console.log('Customer name fields to check:', customerFields);
-              
+
               for (const field of customerFields) {
                 if (field && typeof field === 'string') {
                   // Look for common phone number patterns
@@ -1870,13 +2705,13 @@ ${productInfo}Browse our full collection and find something special just for you
               }
             }
           }
-          
+
           // NEW: If still no phone found, check our customer database for regular customers
           if (!customerPhone && body.customer && body.customer.id) {
             try {
               console.log(`No phone found in webhook data for order ${body.order_number}, checking customer database for regular customer`);
               const customerRecord = await getStoredShopifyCustomer(body.customer.id.toString());
-              
+
               if (customerRecord && customerRecord.phone) {
                 customerPhone = customerRecord.phone;
                 console.log(`Found phone in customer database for regular customer: ${customerPhone}`);
@@ -1887,13 +2722,13 @@ ${productInfo}Browse our full collection and find something special just for you
               console.error('Error checking customer database for regular customer:', dbError.message);
             }
           }
-          
+
           // NEW: If still no phone found, check our customer database for guest customers
           if (!customerPhone && body.customer && body.customer.id) {
             try {
               console.log(`No phone found for regular customer, checking customer database for guest customer`);
               const guestCustomerRecord = await getStoredShopifyCustomer(`guest-${body.customer.id.toString()}`);
-              
+
               if (guestCustomerRecord && guestCustomerRecord.phone) {
                 customerPhone = guestCustomerRecord.phone;
                 console.log(`Found phone in customer database for guest customer: ${customerPhone}`);
@@ -1904,26 +2739,26 @@ ${productInfo}Browse our full collection and find something special just for you
               console.error('Error checking customer database for guest customer:', dbError.message);
             }
           }
-          
+
           // NEW: If still no phone found, fetch complete order from Shopify API
           if (!customerPhone) {
             try {
               console.log(`No phone found in webhook data for order ${body.order_number}, fetching complete order from Shopify API`);
               const integrations = await getStoredIntegrations();
-              
+
               if (integrations?.shopify?.shopDomain && integrations?.shopify?.clientId && integrations?.shopify?.clientSecret) {
                 const completeOrder = await fetchCompleteShopifyOrder(
                   integrations.shopify,
                   body.id
                 );
-                
+
                 console.log(`Complete order fetched for order ${body.order_number}`);
-                
+
                 // Log what data we received from the complete order
                 console.log(`Complete order customer data:`, JSON.stringify(completeOrder.customer, null, 2));
                 console.log(`Complete order shipping address:`, JSON.stringify(completeOrder.shipping_address, null, 2));
                 console.log(`Complete order billing address:`, JSON.stringify(completeOrder.billing_address, null, 2));
-                
+
                 // Try to find phone in the complete order data
                 if (completeOrder.customer && completeOrder.customer.phone) {
                   customerPhone = completeOrder.customer.phone;
@@ -1935,11 +2770,11 @@ ${productInfo}Browse our full collection and find something special just for you
                   customerPhone = completeOrder.billing_address.phone;
                   console.log(`Found phone in complete order billing address: ${customerPhone}`);
                 }
-                
+
                 // If still not found, check for phone numbers in name/address fields of complete order
                 if (!customerPhone) {
                   console.log('Checking complete order for phone numbers in name/address fields');
-                  
+
                   // Check shipping address fields
                   if (completeOrder.shipping_address) {
                     const shippingFields = [
@@ -1948,9 +2783,9 @@ ${productInfo}Browse our full collection and find something special just for you
                       completeOrder.shipping_address.address1,
                       completeOrder.shipping_address.address2
                     ];
-                    
+
                     console.log('Shipping address fields to check:', shippingFields);
-                    
+
                     for (const field of shippingFields) {
                       if (field && typeof field === 'string') {
                         const phoneMatch = field.match(/(\+?\d{10,15})|(\d{10})/);
@@ -1962,7 +2797,7 @@ ${productInfo}Browse our full collection and find something special just for you
                       }
                     }
                   }
-                  
+
                   // Check billing address fields
                   if (!customerPhone && completeOrder.billing_address) {
                     const billingFields = [
@@ -1971,9 +2806,9 @@ ${productInfo}Browse our full collection and find something special just for you
                       completeOrder.billing_address.address1,
                       completeOrder.billing_address.address2
                     ];
-                    
+
                     console.log('Billing address fields to check:', billingFields);
-                    
+
                     for (const field of billingFields) {
                       if (field && typeof field === 'string') {
                         const phoneMatch = field.match(/(\+?\d{10,15})|(\d{10})/);
@@ -1985,16 +2820,16 @@ ${productInfo}Browse our full collection and find something special just for you
                       }
                     }
                   }
-                  
+
                   // Check customer name fields
                   if (!customerPhone && completeOrder.customer) {
                     const customerFields = [
                       completeOrder.customer.first_name,
                       completeOrder.customer.last_name
                     ];
-                    
+
                     console.log('Customer name fields to check:', customerFields);
-                    
+
                     for (const field of customerFields) {
                       if (field && typeof field === 'string') {
                         const phoneMatch = field.match(/(\+?\d{10,15})|(\d{10})/);
@@ -2020,8 +2855,8 @@ ${productInfo}Browse our full collection and find something special just for you
             userId: 'default',
             shopifyOrderId: body.id.toString(),
             orderNumber: body.order_number || body.name,
-            customerName: body.customer ? 
-              `${body.customer.first_name || ''} ${body.customer.last_name || ''}`.trim() : 
+            customerName: body.customer ?
+              `${body.customer.first_name || ''} ${body.customer.last_name || ''}`.trim() :
               'Unknown Customer',
             customerEmail: body.customer ? body.customer.email : null,
             customerPhone: customerPhone,
@@ -2036,7 +2871,7 @@ ${productInfo}Browse our full collection and find something special just for you
 
           // Save order to database
           await insertStoredOrder(order)
-      
+
           console.log(`=== ORDER PROCESSING COMPLETE ===`);
           console.log(`Order ${order.orderNumber} saved.`);
           console.log(`Customer phone: ${customerPhone ? customerPhone : 'NOT FOUND'}`);
@@ -2045,7 +2880,7 @@ ${productInfo}Browse our full collection and find something special just for you
           // Send WhatsApp confirmation to customer if phone number exists
           if (customerPhone) {
             const integrations = await getStoredIntegrations()
-            
+
             if (integrations?.whatsapp?.phoneNumberId && integrations?.whatsapp?.accessToken) {
               try {
                 const confirmationMessage = `🎉 *Order Confirmation*\n\n` +
@@ -2093,7 +2928,7 @@ ${productInfo}Browse our full collection and find something special just for you
                   status: 'sent',
                   sentAt: new Date()
                 })
-                
+
                 console.log(`WhatsApp confirmation sent for order ${order.orderNumber}`);
 
               } catch (whatsappError) {
@@ -2119,28 +2954,29 @@ ${productInfo}Browse our full collection and find something special just for you
             financial_status: order.status,
             order_total: order.total,
             currency: order.currency,
-            review_link: process.env.NEXT_PUBLIC_BASE_URL || ''
+            review_link: process.env.NEXT_PUBLIC_BASE_URL || '',
+            ...buildOrderProductContext(order)
           }, automationIntegrations)
-        } 
+        }
         // Handle order status updates
         else if (topic && topic.startsWith('orders/') && body.id) {
           // Get the order from our database
           const existingOrder = await getStoredOrderByShopifyOrderId(body.id.toString())
-          
+
           if (existingOrder) {
             // Extract the status from the topic (orders/fulfilled -> fulfilled)
             const newStatus = topic.replace('orders/', '')
-            
+
             // Update order in database
             await updateStoredOrderByShopifyOrderId(body.id.toString(), {
               status: newStatus,
               updatedAt: new Date()
             })
-            
+
             // Send WhatsApp notification if customer phone exists and status has changed
             if (existingOrder.customerPhone && existingOrder.status !== newStatus) {
               const integrations = await getStoredIntegrations()
-              
+
               if (integrations?.whatsapp?.phoneNumberId && integrations?.whatsapp?.accessToken) {
                 try {
                   // Send status update notification
@@ -2151,7 +2987,7 @@ ${productInfo}Browse our full collection and find something special just for you
                     existingOrder,
                     newStatus
                   )
-                  
+
                   // Log the message
                   await insertStoredMessage({
                     id: uuidv4(),
@@ -2166,9 +3002,9 @@ ${productInfo}Browse our full collection and find something special just for you
                     status: 'sent',
                     sentAt: new Date()
                   })
-                  
+
                   console.log(`WhatsApp status update sent for order ${existingOrder.orderNumber} (${newStatus})`);
-                  
+
                 } catch (whatsappError) {
                   console.error('Failed to send WhatsApp status update:', whatsappError)
                   // Don't fail the webhook if WhatsApp fails
@@ -2186,7 +3022,8 @@ ${productInfo}Browse our full collection and find something special just for you
                   tracking_number: trackingNumber,
                   tracking_url: trackingUrl,
                   financial_status: newStatus,
-                  review_link: process.env.NEXT_PUBLIC_BASE_URL || ''
+                  review_link: process.env.NEXT_PUBLIC_BASE_URL || '',
+                  ...buildOrderProductContext(existingOrder)
                 }, automationIntegrations)
               }
               if (topic === 'orders/fulfilled') {
@@ -2197,7 +3034,8 @@ ${productInfo}Browse our full collection and find something special just for you
                   tracking_number: trackingNumber,
                   tracking_url: trackingUrl,
                   financial_status: newStatus,
-                  review_link: process.env.NEXT_PUBLIC_BASE_URL || ''
+                  review_link: process.env.NEXT_PUBLIC_BASE_URL || '',
+                  ...buildOrderProductContext(existingOrder)
                 }, automationIntegrations)
               }
             }
@@ -2215,8 +3053,8 @@ ${productInfo}Browse our full collection and find something special just for you
 
     // Add a specific handler for debugging the route
     if (route === '/webhook/shopify' && method === 'GET') {
-      return handleCORS(NextResponse.json({ 
-        message: "Shopify webhook endpoint is working", 
+      return handleCORS(NextResponse.json({
+        message: "Shopify webhook endpoint is working",
         method: "GET",
         note: "Shopify webhooks use POST method"
       }))
@@ -2237,7 +3075,7 @@ ${productInfo}Browse our full collection and find something special just for you
 
         // Get WhatsApp integration details
         const integrations = await getStoredIntegrations()
-        
+
         if (!integrations?.whatsapp?.phoneNumberId || !integrations?.whatsapp?.accessToken) {
           return handleCORS(NextResponse.json(
             { error: "WhatsApp not configured" },
@@ -2275,10 +3113,10 @@ ${productInfo}Browse our full collection and find something special just for you
           phone: savedMessage.phone
         }
 
-        return handleCORS(NextResponse.json({ 
+        return handleCORS(NextResponse.json({
           success: true,
           message: messageResponse,
-          messageId: result.messages?.[0]?.id 
+          messageId: result.messages?.[0]?.id
         }))
 
       } catch (error) {
@@ -2320,7 +3158,7 @@ ${productInfo}Browse our full collection and find something special just for you
     if (route.startsWith('/chats/') && route.endsWith('/messages') && method === 'GET') {
       try {
         const phone = route.split('/')[2]; // Extract phone number from route
-        
+
         if (!phone) {
           return handleCORS(NextResponse.json(
             { error: "Phone number is required" },
@@ -2390,7 +3228,7 @@ ${productInfo}Browse our full collection and find something special just for you
             { status: 400 }
           ));
         }
-        
+
         const { phone, name } = body;
 
         if (!phone) {
@@ -2433,14 +3271,14 @@ ${productInfo}Browse our full collection and find something special just for you
     // Route not found
     console.log(`Route not found: ${route}, method: ${method}`)
     return handleCORS(NextResponse.json(
-      { error: `Route ${route} not found` }, 
+      { error: `Route ${route} not found` },
       { status: 404 }
     ))
 
   } catch (error) {
     console.error('API Error:', error)
     return handleCORS(NextResponse.json(
-      { error: "Internal server error" }, 
+      { error: "Internal server error" },
       { status: 500 }
     ))
   }

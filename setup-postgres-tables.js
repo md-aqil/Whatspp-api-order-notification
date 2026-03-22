@@ -154,6 +154,29 @@ async function setupTables() {
     `);
     console.log('Created automation_jobs table');
 
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS automation_conversation_state (
+        id TEXT PRIMARY KEY,
+        "userId" TEXT NOT NULL DEFAULT 'default',
+        "automationId" TEXT NOT NULL,
+        recipient TEXT NOT NULL,
+        state TEXT,
+        "lastInboundAt" TIMESTAMP,
+        "lastMenuSentAt" TIMESTAMP,
+        "lastReplyKey" TEXT,
+        "lastReplyAt" TIMESTAMP,
+        "handoffUntil" TIMESTAMP,
+        payload JSONB DEFAULT '{}'::jsonb,
+        "createdAt" TIMESTAMP DEFAULT NOW(),
+        "updatedAt" TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS automation_conversation_state_lookup_idx
+      ON automation_conversation_state ("userId", "automationId", recipient)
+    `);
+    console.log('Created automation_conversation_state table');
+
     // Create products table
     await client.query(`
       CREATE TABLE IF NOT EXISTS products (

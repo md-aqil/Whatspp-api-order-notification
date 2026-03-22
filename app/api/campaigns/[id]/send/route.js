@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { buildMetaAuthHeaders, mapMetaAccessTokenError } from '@/lib/meta-auth'
 import { query, queryMany, queryOne } from '@/lib/postgres'
 
 async function ensureCampaignSchema() {
@@ -14,7 +15,7 @@ async function sendWhatsAppMessage(phoneNumberId, accessToken, to, messageData) 
   const response = await fetch(`https://graph.facebook.com/v22.0/${phoneNumberId}/messages`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${accessToken}`,
+      ...buildMetaAuthHeaders(accessToken),
       'Content-Type': 'application/json'
     },
     body: JSON.stringify(messageData)
@@ -22,7 +23,7 @@ async function sendWhatsAppMessage(phoneNumberId, accessToken, to, messageData) 
 
   const data = await response.json()
   if (!response.ok) {
-    throw new Error(data.error?.message || 'WhatsApp API request failed')
+    throw new Error(mapMetaAccessTokenError(data.error?.message || 'WhatsApp API request failed'))
   }
 
   return data
@@ -31,7 +32,7 @@ async function sendWhatsAppMessage(phoneNumberId, accessToken, to, messageData) 
 async function getApprovedTemplateDefinition(businessAccountId, accessToken, templateName) {
   const response = await fetch(`https://graph.facebook.com/v22.0/${businessAccountId}/message_templates`, {
     headers: {
-      Authorization: `Bearer ${accessToken}`,
+      ...buildMetaAuthHeaders(accessToken),
       'Content-Type': 'application/json'
     },
     cache: 'no-store'
@@ -39,7 +40,7 @@ async function getApprovedTemplateDefinition(businessAccountId, accessToken, tem
 
   const data = await response.json()
   if (!response.ok) {
-    throw new Error(data.error?.message || 'Failed to fetch WhatsApp template definition')
+    throw new Error(mapMetaAccessTokenError(data.error?.message || 'Failed to fetch WhatsApp template definition'))
   }
 
   const templates = Array.isArray(data.data) ? data.data : []
@@ -92,18 +93,31 @@ async function getSelectedProducts(productIds) {
   return products.filter((product) => productIds.includes(product.id))
 }
 
-function buildProductContext(products, shopify) {
+function buildProductContext(products, shopify, whatsapp = null) {
   const firstProduct = products[0] || null
   const baseDomain = shopify?.shopDomain ? `https://${String(shopify.shopDomain).replace(/^https?:\/\//, '')}` : ''
-  const productLink = firstProduct?.handle && baseDomain ? `${baseDomain}/products/${firstProduct.handle}` : ''
-  const catalogLink = baseDomain ? `${baseDomain}/collections/all` : ''
+  const whatsappCatalogLink = whatsapp?.businessAccountId || whatsapp?.phoneNumberId
+    ? `https://wa.me/c/${whatsapp.businessAccountId || whatsapp.phoneNumberId}`
+    : ''
+  const productLink = firstProduct?.url || firstProduct?.metaCatalogUrl || (firstProduct?.handle && baseDomain ? `${baseDomain}/products/${firstProduct.handle}` : '')
+  const catalogLink = baseDomain ? `${baseDomain}/collections/all` : whatsappCatalogLink
+  const explicitRetailerIds = products
+    .map((product) => String(product?.retailer_id || product?.retailerId || '').trim())
+    .filter(Boolean)
+  const retailerIds = products
+    .map((product) => String(product?.retailer_id || product?.retailerId || product?.id || '').trim())
+    .filter(Boolean)
 
   return {
-    product_name: firstProduct?.title || '',
+    product_name: firstProduct?.title || firstProduct?.name || '',
     product_price: firstProduct?.price ? `${firstProduct.price}` : '',
     product_link: productLink,
-    product_names: products.slice(0, 3).map((product) => product.title).join(', '),
-    catalog_link: catalogLink
+    product_names: products.slice(0, 3).map((product) => product.title || product.name).filter(Boolean).join(', '),
+    catalog_link: catalogLink,
+    product_retailer_id: retailerIds[0] || '',
+    product_retailer_ids: retailerIds,
+    explicit_product_retailer_id: explicitRetailerIds[0] || '',
+    explicit_product_retailer_ids: explicitRetailerIds
   }
 }
 
@@ -122,6 +136,249 @@ function resolveCampaignVariable(value, context) {
   if (normalized === '{{catalog_link}}') return context.catalog_link || ''
 
   return trimmed
+}
+
+function inferTemplateVariable(exampleText, index = 0) {
+  const sample = String(exampleText || '').trim().toLowerCase()
+
+  if (sample.includes('customer') && sample.includes('name')) return '{{customer_name}}'
+  if (sample.includes('customer') && sample.includes('phone')) return '{{customer_phone}}'
+  if (sample.includes('catalog') || sample.includes('collection')) return '{{catalog_link}}'
+  if (sample.includes('product') && sample.includes('name')) return '{{product_name}}'
+  if (sample.includes('product') && sample.includes('price')) return '{{product_price}}'
+  if (sample.includes('product') && (sample.includes('link') || sample.includes('url'))) return '{{product_link}}'
+  if (sample.includes('browse') || sample.includes('link') || sample.includes('url')) return '{{product_link}}'
+
+  const fallbacks = ['{{customer_name}}', '{{catalog_link}}', '{{product_name}}', '{{product_link}}', '{{product_price}}']
+  return fallbacks[index] || '{{catalog_link}}'
+}
+
+function getTemplateExamples(component, groupKey) {
+  const examples = component?.example?.[groupKey]
+  if (Array.isArray(examples) && Array.isArray(examples[0])) return examples[0]
+  return []
+}
+
+function getTemplateParameterSlots(templateComponents = []) {
+  const slots = []
+
+  for (const component of templateComponents) {
+    if (component?.type === 'HEADER' && component.format === 'TEXT') {
+      const matches = component.text?.match(/\{\{\d+\}\}/g) || []
+      const examples = getTemplateExamples(component, 'header_text')
+      matches.forEach((_match, index) => {
+        slots.push({
+          componentType: 'HEADER',
+          parameterType: 'text',
+          example: examples[index] || ''
+        })
+      })
+    }
+
+    if (component?.type === 'BODY') {
+      const matches = component.text?.match(/\{\{\d+\}\}/g) || []
+      const examples = getTemplateExamples(component, 'body_text')
+      matches.forEach((_match, index) => {
+        slots.push({
+          componentType: 'BODY',
+          parameterType: 'text',
+          example: examples[index] || ''
+        })
+      })
+    }
+
+    if (component?.type === 'BUTTONS' && Array.isArray(component.buttons)) {
+      component.buttons.forEach((button) => {
+        const matches = button?.url?.match(/\{\{\d+\}\}/g) || []
+        matches.forEach((_match, index) => {
+          slots.push({
+            componentType: 'BUTTON',
+            parameterType: 'text',
+            buttonType: String(button.type || '').toUpperCase(),
+            example: button?.example?.[index] || ''
+          })
+        })
+      })
+    }
+  }
+
+  return slots
+}
+
+function templateHasProductActions(templateComponents = []) {
+  return templateComponents.some((component) => (
+    component?.type === 'BUTTONS' &&
+    Array.isArray(component.buttons) &&
+    component.buttons.some((button) => {
+      const buttonType = String(button?.type || '').toUpperCase()
+      return buttonType === 'MPM' || buttonType === 'CATALOG'
+    })
+  ))
+}
+
+function validatePublicMediaUrl(url, typeLabel) {
+  const value = String(url || '').trim()
+  if (!value) {
+    throw new Error(`Template requires a ${typeLabel} header but no public ${typeLabel} URL was provided.`)
+  }
+
+  if (value.startsWith('http://localhost') || value.startsWith('http://0.0.0.0') || value.startsWith('http://127.0.0.1')) {
+    throw new Error(`Template ${typeLabel} URL must be publicly accessible. "${value}" points to a local server.`)
+  }
+
+  return value
+}
+
+function buildCampaignTemplatePayload({ templateDefinition, templateName, templateLanguage, templateVariables = [], templateHeaderImageUrl = '', productContext, recipientContext }) {
+  const mergedContext = { ...productContext, ...recipientContext }
+  const templateComponents = Array.isArray(templateDefinition?.components) ? templateDefinition.components : []
+  const slots = getTemplateParameterSlots(templateComponents)
+  const resolvedVariableOrder = slots.map((slot, index) => (
+    typeof templateVariables[index] === 'string' && templateVariables[index].trim()
+      ? templateVariables[index].trim()
+      : inferTemplateVariable(slot.example, index)
+  ))
+
+  let cursor = 0
+  const components = []
+
+  for (const component of templateComponents) {
+    if (component?.type === 'HEADER') {
+      if (component.format === 'IMAGE') {
+        const headerUrl = validatePublicMediaUrl(templateHeaderImageUrl, 'image')
+        components.push({
+          type: 'header',
+          parameters: [
+            {
+              type: 'image',
+              image: { link: headerUrl }
+            }
+          ]
+        })
+      } else if (component.format === 'VIDEO') {
+        const headerUrl = validatePublicMediaUrl(templateHeaderImageUrl, 'video')
+        components.push({
+          type: 'header',
+          parameters: [
+            {
+              type: 'video',
+              video: { link: headerUrl }
+            }
+          ]
+        })
+      } else if (component.format === 'TEXT') {
+        const matches = component.text?.match(/\{\{\d+\}\}/g) || []
+        if (matches.length > 0) {
+          components.push({
+            type: 'header',
+            parameters: matches.map(() => {
+              const value = resolveCampaignVariable(resolvedVariableOrder[cursor] || '', mergedContext)
+              cursor += 1
+              return { type: 'text', text: value }
+            })
+          })
+        }
+      }
+    }
+
+    if (component?.type === 'BODY') {
+      const matches = component.text?.match(/\{\{\d+\}\}/g) || []
+      if (matches.length > 0) {
+        components.push({
+          type: 'body',
+          parameters: matches.map(() => {
+            const value = resolveCampaignVariable(resolvedVariableOrder[cursor] || '', mergedContext)
+            cursor += 1
+            return { type: 'text', text: value }
+          })
+        })
+      }
+    }
+
+    if (component?.type === 'BUTTONS' && Array.isArray(component.buttons)) {
+      component.buttons.forEach((button, buttonIndex) => {
+        const buttonType = String(button?.type || '').toUpperCase()
+
+        if (buttonType === 'MPM') {
+          const retailerIds = Array.isArray(productContext.explicit_product_retailer_ids) ? productContext.explicit_product_retailer_ids : []
+          if (retailerIds.length === 0) {
+            throw new Error('This template requires Meta retailer IDs for the selected products. Sync or map your Meta catalog retailer_id values before sending MPM templates.')
+          }
+
+          components.push({
+            type: 'button',
+            sub_type: 'mpm',
+            index: String(buttonIndex),
+            parameters: [
+              {
+                type: 'action',
+                action: {
+                  thumbnail_product_retailer_id: retailerIds[0],
+                  sections: [
+                    {
+                      title: 'Products',
+                      product_items: retailerIds.slice(0, 30).map((productRetailerId) => ({
+                        product_retailer_id: productRetailerId
+                      }))
+                    }
+                  ]
+                }
+              }
+            ]
+          })
+          return
+        }
+
+        if (buttonType === 'CATALOG') {
+          if (!productContext.explicit_product_retailer_id) {
+            throw new Error('This template requires a Meta retailer ID for the selected product. Sync or map the product retailer_id before sending catalog-button templates.')
+          }
+
+          components.push({
+            type: 'button',
+            sub_type: 'catalog',
+            index: String(buttonIndex),
+            parameters: [
+              {
+                type: 'action',
+                action: {
+                  thumbnail_product_retailer_id: productContext.explicit_product_retailer_id
+                }
+              }
+            ]
+          })
+          return
+        }
+
+        const matches = button?.url?.match(/\{\{\d+\}\}/g) || []
+        if (matches.length > 0) {
+          components.push({
+            type: 'button',
+            sub_type: buttonType.toLowerCase(),
+            index: String(buttonIndex),
+            parameters: matches.map(() => {
+              const value = resolveCampaignVariable(resolvedVariableOrder[cursor] || '', mergedContext)
+              cursor += 1
+              return { type: 'text', text: value }
+            })
+          })
+        }
+      })
+    }
+  }
+
+  const payload = {
+    name: templateName,
+    language: {
+      code: templateLanguage || templateDefinition?.language || 'en_US'
+    }
+  }
+
+  if (components.length > 0) {
+    payload.components = components
+  }
+
+  return payload
 }
 
 async function getRecipients(campaign) {
@@ -165,6 +422,13 @@ export async function POST(request, { params }) {
       return NextResponse.json({ error: 'Campaign not found' }, { status: 404 })
     }
 
+    if (campaign.status === 'sent') {
+      return NextResponse.json(
+        { error: `Campaign "${campaign.name}" was already sent on this saved record. Create a new campaign to send again.` },
+        { status: 409 }
+      )
+    }
+
     const integrations = await queryOne(
       `SELECT whatsapp, shopify FROM integrations
        WHERE "userId" = $1
@@ -177,16 +441,25 @@ export async function POST(request, { params }) {
       return NextResponse.json({ error: 'WhatsApp not configured' }, { status: 400 })
     }
 
+    // Fetch the live template definition from WhatsApp API
     const templateDefinition = await getApprovedTemplateDefinition(
       integrations.whatsapp.businessAccountId,
       integrations.whatsapp.accessToken,
       campaign.template
     )
-    const bodyComponent = templateDefinition.components?.find((component) => component.type === 'BODY')
-    const hasImageHeader = templateDefinition.components?.some((component) => component.type === 'HEADER' && component.format === 'IMAGE')
-    const placeholderMatches = bodyComponent?.text?.match(/\{\{\d+\}\}/g) || []
+
+    const storedVariables = Array.isArray(campaign.variables) ? campaign.variables : []
+    const hasProductActions = templateHasProductActions(templateDefinition.components || [])
     const selectedProducts = await getSelectedProducts(campaign.productIds)
-    const productContext = buildProductContext(selectedProducts, integrations.shopify)
+
+    if (hasProductActions && selectedProducts.length === 0) {
+      return NextResponse.json(
+        { error: `Campaign template "${campaign.template}" includes a catalog product button. Campaigns without selected products cannot send this template. Use a template without MPM/catalog buttons or add campaign product selection support.` },
+        { status: 400 }
+      )
+    }
+
+    const productContext = buildProductContext(selectedProducts, integrations.shopify, integrations.whatsapp)
 
     const recipients = await getRecipients(campaign)
     if (recipients.length === 0) {
@@ -197,48 +470,15 @@ export async function POST(request, { params }) {
     for (const recipient of recipients) {
       try {
         const recipientContext = await getRecipientContext(recipient)
-        const storedVariables = Array.isArray(campaign.variables) ? campaign.variables : []
-        const mergedContext = { ...recipientContext, ...productContext }
-        const resolvedVariables = storedVariables.map((value) => resolveCampaignVariable(value, mergedContext))
-
-        if (placeholderMatches.length > resolvedVariables.length) {
-          throw new Error(`Template "${campaign.template}" expects ${placeholderMatches.length} parameters but only ${resolvedVariables.length} campaign variables were saved`)
-        }
-
-        const messageTemplate = {
-          name: campaign.template,
-          language: {
-            code: campaign.templateLanguage || templateDefinition.language || 'en_US'
-          }
-        }
-
-        if (placeholderMatches.length > 0 || (hasImageHeader && campaign.templateHeaderImageUrl)) {
-          messageTemplate.components = []
-        }
-
-        if (hasImageHeader && campaign.templateHeaderImageUrl) {
-          messageTemplate.components.push({
-            type: 'header',
-            parameters: [
-              {
-                type: 'image',
-                image: {
-                  link: campaign.templateHeaderImageUrl
-                }
-              }
-            ]
-          })
-        }
-
-        if (placeholderMatches.length > 0) {
-          messageTemplate.components.push({
-            type: 'body',
-            parameters: placeholderMatches.map((_match, index) => ({
-              type: 'text',
-              text: resolvedVariables[index] || ''
-            }))
-          })
-        }
+        const messageTemplate = buildCampaignTemplatePayload({
+          templateDefinition,
+          templateName: campaign.template,
+          templateLanguage: campaign.templateLanguage,
+          templateVariables: storedVariables,
+          templateHeaderImageUrl: campaign.templateHeaderImageUrl,
+          productContext,
+          recipientContext
+        })
 
         const result = await sendWhatsAppMessage(
           integrations.whatsapp.phoneNumberId,

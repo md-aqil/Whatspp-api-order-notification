@@ -5,18 +5,70 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { 
-  AlertCircle, 
-  CheckCircle, 
-  Copy, 
-  Eye, 
-  EyeOff,
-  Save
+import {
+  AlertCircle,
+  CheckCircle,
+  Copy,
+  RefreshCw,
+  Wifi,
+  WifiOff,
+  Clock
 } from 'lucide-react'
 import { toast } from 'sonner'
 
 export default function SettingsPage() {
   const [loading, setLoading] = useState(false)
+  const [whatsappStatus, setWhatsappStatus] = useState('unknown')
+  const [shopifyStatus, setShopifyStatus] = useState('unknown')
+  const [lastWebhook, setLastWebhook] = useState(null)
+  const [checking, setChecking] = useState(false)
+
+  const baseUrl = typeof window !== 'undefined' ? window.location.origin : ''
+
+  // Check webhook connectivity
+  const checkWebhookStatus = async () => {
+    setChecking(true)
+    try {
+      // Check WhatsApp webhook
+      const waResponse = await fetch(`${baseUrl}/api/webhook/whatsapp`, {
+        method: 'GET',
+        cache: 'no-cache'
+      })
+      setWhatsappStatus(waResponse.ok || waResponse.status === 200 ? 'connected' : 'error')
+
+      // Check Shopify webhook
+      const shResponse = await fetch(`${baseUrl}/api/webhook/shopify`, {
+        method: 'GET',
+        cache: 'no-cache'
+      })
+      setShopifyStatus(shResponse.ok || shResponse.status === 200 ? 'connected' : 'error')
+
+      // Fetch last webhook log
+      try {
+        const logsResponse = await fetch(`${baseUrl}/api/webhook-logs?limit=1`)
+        if (logsResponse.ok) {
+          const data = await logsResponse.json()
+          if (data.logs && data.logs.length > 0) {
+            setLastWebhook(data.logs[0])
+          }
+        }
+      } catch (e) {
+        console.log('No webhook logs available')
+      }
+    } catch (error) {
+      console.error('Error checking webhook status:', error)
+      setWhatsappStatus('error')
+      setShopifyStatus('error')
+    }
+    setChecking(false)
+  }
+
+  useEffect(() => {
+    checkWebhookStatus()
+    // Check every 30 seconds
+    const interval = setInterval(checkWebhookStatus, 30000)
+    return () => clearInterval(interval)
+  }, [baseUrl])
 
   if (loading) {
     return (
@@ -36,7 +88,98 @@ export default function SettingsPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-6">
-        {/* Webhook Information */}
+        {/* Webhook Status */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              Webhook Status
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={checkWebhookStatus}
+                disabled={checking}
+              >
+                <RefreshCw className={`h-4 w-4 mr-1 ${checking ? 'animate-spin' : ''}`} />
+                {checking ? 'Checking...' : 'Refresh'}
+              </Button>
+            </CardTitle>
+            <CardDescription>
+              Monitor your webhook connection status
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* WhatsApp Status */}
+            <div className="flex items-center justify-between p-4 border rounded-lg">
+              <div className="flex items-center gap-3">
+                <div className={`p-2 rounded-full ${whatsappStatus === 'connected' ? 'bg-green-100' :
+                    whatsappStatus === 'error' ? 'bg-red-100' : 'bg-gray-100'
+                  }`}>
+                  {whatsappStatus === 'connected' ? (
+                    <Wifi className="h-5 w-5 text-green-600" />
+                  ) : whatsappStatus === 'error' ? (
+                    <WifiOff className="h-5 w-5 text-red-600" />
+                  ) : (
+                    <RefreshCw className="h-5 w-5 text-gray-600" />
+                  )}
+                </div>
+                <div>
+                  <p className="font-medium">WhatsApp Webhook</p>
+                  <p className="text-sm text-gray-500">https://lcsw.dpdns.org/api/webhook/whatsapp</p>
+                </div>
+              </div>
+              <div className={`px-3 py-1 rounded-full text-sm font-medium ${whatsappStatus === 'connected' ? 'bg-green-100 text-green-800' :
+                  whatsappStatus === 'error' ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-800'
+                }`}>
+                {whatsappStatus === 'connected' ? 'Connected' :
+                  whatsappStatus === 'error' ? 'Error' : 'Checking...'}
+              </div>
+            </div>
+
+            {/* Shopify Status */}
+            <div className="flex items-center justify-between p-4 border rounded-lg">
+              <div className="flex items-center gap-3">
+                <div className={`p-2 rounded-full ${shopifyStatus === 'connected' ? 'bg-green-100' :
+                    shopifyStatus === 'error' ? 'bg-red-100' : 'bg-gray-100'
+                  }`}>
+                  {shopifyStatus === 'connected' ? (
+                    <Wifi className="h-5 w-5 text-green-600" />
+                  ) : shopifyStatus === 'error' ? (
+                    <WifiOff className="h-5 w-5 text-red-600" />
+                  ) : (
+                    <RefreshCw className="h-5 w-5 text-gray-600" />
+                  )}
+                </div>
+                <div>
+                  <p className="font-medium">Shopify Webhook</p>
+                  <p className="text-sm text-gray-500">https://lcsw.dpdns.org/api/webhook/shopify</p>
+                </div>
+              </div>
+              <div className={`px-3 py-1 rounded-full text-sm font-medium ${shopifyStatus === 'connected' ? 'bg-green-100 text-green-800' :
+                  shopifyStatus === 'error' ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-800'
+                }`}>
+                {shopifyStatus === 'connected' ? 'Connected' :
+                  shopifyStatus === 'error' ? 'Error' : 'Checking...'}
+              </div>
+            </div>
+
+            {/* Last Webhook Received */}
+            {lastWebhook && (
+              <div className="p-4 border rounded-lg bg-gray-50">
+                <div className="flex items-center gap-2 mb-2">
+                  <Clock className="h-4 w-4 text-gray-500" />
+                  <span className="text-sm font-medium text-gray-700">Last Webhook Received</span>
+                </div>
+                <div className="text-sm">
+                  <p><span className="font-medium">Type:</span> {lastWebhook.type}</p>
+                  {lastWebhook.topic && <p><span className="font-medium">Topic:</span> {lastWebhook.topic}</p>}
+                  <p><span className="font-medium">Time:</span> {new Date(lastWebhook.receivedAt).toLocaleString()}</p>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Webhook URLs */}
         <Card>
           <CardHeader>
             <CardTitle>Webhook URLs</CardTitle>
@@ -62,7 +205,7 @@ export default function SettingsPage() {
                 </Button>
               </div>
             </div>
-            
+
             <div className="space-y-2">
               <Label>Shopify Webhook URL</Label>
               <div className="flex">
@@ -80,7 +223,7 @@ export default function SettingsPage() {
                 </Button>
               </div>
             </div>
-            
+
             <div className="rounded-md bg-blue-50 p-4">
               <div className="flex">
                 <AlertCircle className="h-5 w-5 text-blue-400" />
@@ -102,7 +245,6 @@ export default function SettingsPage() {
 // Helper function to copy text to clipboard
 function copyToClipboard(text) {
   navigator.clipboard.writeText(text)
-  // Using window.alert as toast might not be available in this scope
   if (typeof window !== 'undefined') {
     window.alert('Copied to clipboard!')
   }

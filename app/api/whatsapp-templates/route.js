@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { buildMetaAuthHeaders, mapMetaAccessTokenError } from '@/lib/meta-auth'
 import { queryOne } from '@/lib/postgres'
 
 async function getStoredIntegrations() {
@@ -31,7 +32,7 @@ export async function GET() {
       `https://graph.facebook.com/v22.0/${whatsapp.businessAccountId}/message_templates`,
       {
         headers: {
-          Authorization: `Bearer ${whatsapp.accessToken}`,
+          ...buildMetaAuthHeaders(whatsapp.accessToken),
           'Content-Type': 'application/json'
         },
         cache: 'no-store'
@@ -52,7 +53,7 @@ export async function GET() {
 
       return NextResponse.json(
         {
-          error: data.error?.message || 'Failed to fetch templates from Meta.',
+          error: mapMetaAccessTokenError(data.error?.message || 'Failed to fetch templates from Meta.'),
           guidance
         },
         { status: response.status }

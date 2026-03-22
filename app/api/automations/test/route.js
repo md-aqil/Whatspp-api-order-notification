@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server'
+import { buildMetaAuthHeaders, mapMetaAccessTokenError } from '@/lib/meta-auth'
+import { buildAutomationTemplateComponents } from '@/lib/automation-template'
 import { queryOne } from '@/lib/postgres'
 
 function interpolateTemplateText(template, context) {
@@ -9,56 +11,14 @@ function interpolateTemplateText(template, context) {
   })
 }
 
-function resolveAutomationVariable(value, context) {
-  const trimmed = typeof value === 'string' ? value.trim() : ''
-  if (!trimmed) return ''
-
-  const directMap = {
-    '{{customer_name}}': context.customer_name || '',
-    '{{customer_phone}}': context.customer_phone || context.customerPhone || '',
-    '{{customer_message}}': context.customer_message || '',
-    '{{order_number}}': context.order_number || '',
-    '{{tracking_number}}': context.tracking_number || '',
-    '{{tracking_url}}': context.tracking_url || '',
-    '{{review_link}}': context.review_link || '',
-    '{{order_total}}': context.order_total || '',
-    '{{currency}}': context.currency || '',
-    '{{financial_status}}': context.financial_status || '',
-    '{{shopify.customer.first_name}}': context.customer_name || '',
-    '{{shopify.total_price}}': context.order_total || ''
-  }
-
-  const normalized = trimmed.toLowerCase()
-  const normalizedMap = Object.fromEntries(Object.entries(directMap).map(([key, val]) => [key.toLowerCase(), val]))
-  if (normalizedMap[normalized] !== undefined) {
-    return normalizedMap[normalized]
-  }
-
-  return interpolateTemplateText(trimmed, context)
-}
-
-function buildAutomationTemplateComponents(templateComponents, variableMappings, context) {
-  const bodyComponent = Array.isArray(templateComponents)
-    ? templateComponents.find((component) => component.type === 'BODY')
-    : null
-
-  const placeholders = bodyComponent?.text?.match(/\{\{\d+\}\}/g) || []
-  if (placeholders.length === 0) return undefined
-
-  return [
-    {
-      type: 'body',
-      parameters: placeholders.map((_, index) => ({
-        type: 'text',
-        text: String(resolveAutomationVariable(variableMappings?.[index]?.value || '', context) || '')
-      }))
-    }
-  ]
-}
-
 function matchesCondition(rule, context) {
   if (!rule) return true
   const trimmed = rule.trim()
+  if (trimmed.includes(' contains_any ')) {
+    const [left, right] = trimmed.split(' contains_any ').map((value) => value.trim())
+    const haystack = String(context[left] ?? '').toLowerCase()
+    return right.split('|').some((token) => haystack.includes(token.trim().toLowerCase()))
+  }
   if (trimmed.includes(' not contains ')) {
     const [left, right] = trimmed.split(' not contains ').map((value) => value.trim())
     return !String(context[left] ?? '').toLowerCase().includes(right.toLowerCase())
@@ -100,7 +60,7 @@ async function sendWhatsAppMessage(phoneNumberId, accessToken, messageData) {
   const response = await fetch(`https://graph.facebook.com/v22.0/${phoneNumberId}/messages`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${accessToken}`,
+      ...buildMetaAuthHeaders(accessToken),
       'Content-Type': 'application/json'
     },
     body: JSON.stringify(messageData)
@@ -108,7 +68,7 @@ async function sendWhatsAppMessage(phoneNumberId, accessToken, messageData) {
 
   const data = await response.json()
   if (!response.ok) {
-    throw new Error(data.error?.message || 'WhatsApp API request failed')
+    throw new Error(mapMetaAccessTokenError(data.error?.message || 'WhatsApp API request failed'))
   }
 
   return data
@@ -116,7 +76,7 @@ async function sendWhatsAppMessage(phoneNumberId, accessToken, messageData) {
 
 async function getLatestOrderContext() {
   const order = await queryOne(
-    `SELECT "orderNumber", "customerName", "customerPhone", total, currency, status
+    `SELECT "orderNumber", "customerName", "customerPhone", total, currency, status, "lineItems"
      FROM orders
      WHERE "userId" = $1
      ORDER BY "createdAt" DESC NULLS LAST
@@ -126,10 +86,17 @@ async function getLatestOrderContext() {
 
   if (!order) return null
 
+  const lineItems = Array.isArray(order.lineItems) ? order.lineItems : []
+  const orderProductNames = lineItems
+    .map((item) => String(item?.title || item?.name || item?.product_title || '').trim())
+    .filter(Boolean)
+
   return {
     customer_name: order.customerName || 'Customer',
     customerPhone: order.customerPhone || '',
     order_number: order.orderNumber || '',
+    order_product_name: orderProductNames[0] || '',
+    order_product_names: orderProductNames.slice(0, 3).join(', '),
     tracking_number: 'TRACK-TEST-001',
     tracking_url: process.env.NEXT_PUBLIC_BASE_URL ? `${process.env.NEXT_PUBLIC_BASE_URL}/tracking` : 'https://example.com/tracking',
     financial_status: order.status || 'paid',
@@ -162,7 +129,9 @@ async function getLatestIncomingMessageContext() {
     financial_status: '',
     order_total: '',
     currency: 'INR',
-    review_link: process.env.NEXT_PUBLIC_BASE_URL || 'https://example.com/review'
+    review_link: process.env.NEXT_PUBLIC_BASE_URL || 'https://example.com/review',
+    order_product_name: '',
+    order_product_names: ''
   }
 }
 
@@ -178,7 +147,9 @@ function getDummyContext() {
     financial_status: 'paid',
     order_total: '1499',
     currency: 'INR',
-    review_link: process.env.NEXT_PUBLIC_BASE_URL || 'https://example.com/review'
+    review_link: process.env.NEXT_PUBLIC_BASE_URL || 'https://example.com/review',
+    order_product_name: 'Test Product',
+    order_product_names: 'Test Product, Backup Product'
   }
 }
 

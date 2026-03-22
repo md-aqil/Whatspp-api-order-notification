@@ -1,66 +1,13 @@
 import { NextResponse } from 'next/server'
+import { buildMetaAuthHeaders, mapMetaAccessTokenError } from '@/lib/meta-auth'
+import { buildAutomationTemplateComponents } from '@/lib/automation-template'
 import { query, queryMany, queryOne } from '@/lib/postgres'
-
-function interpolateTemplateText(template, context) {
-  if (!template) return ''
-  return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, key) => {
-    const value = context[key]
-    return value === undefined || value === null ? '' : String(value)
-  })
-}
-
-function resolveAutomationVariable(value, context) {
-  const trimmed = typeof value === 'string' ? value.trim() : ''
-  if (!trimmed) return ''
-
-  const directMap = {
-    '{{customer_name}}': context.customer_name || '',
-    '{{customer_phone}}': context.customer_phone || context.customerPhone || '',
-    '{{customer_message}}': context.customer_message || '',
-    '{{order_number}}': context.order_number || '',
-    '{{tracking_number}}': context.tracking_number || '',
-    '{{tracking_url}}': context.tracking_url || '',
-    '{{review_link}}': context.review_link || '',
-    '{{order_total}}': context.order_total || '',
-    '{{currency}}': context.currency || '',
-    '{{financial_status}}': context.financial_status || '',
-    '{{shopify.customer.first_name}}': context.customer_name || '',
-    '{{shopify.total_price}}': context.order_total || ''
-  }
-
-  const normalized = trimmed.toLowerCase()
-  const normalizedMap = Object.fromEntries(Object.entries(directMap).map(([key, val]) => [key.toLowerCase(), val]))
-  if (normalizedMap[normalized] !== undefined) {
-    return normalizedMap[normalized]
-  }
-
-  return interpolateTemplateText(trimmed, context)
-}
-
-function buildAutomationTemplateComponents(templateComponents, variableMappings, context) {
-  const bodyComponent = Array.isArray(templateComponents)
-    ? templateComponents.find((component) => component.type === 'BODY')
-    : null
-
-  const placeholders = bodyComponent?.text?.match(/\{\{\d+\}\}/g) || []
-  if (placeholders.length === 0) return undefined
-
-  return [
-    {
-      type: 'body',
-      parameters: placeholders.map((_, index) => ({
-        type: 'text',
-        text: String(resolveAutomationVariable(variableMappings?.[index]?.value || '', context) || '')
-      }))
-    }
-  ]
-}
 
 async function sendWhatsAppMessage(phoneNumberId, accessToken, to, messageData) {
   const response = await fetch(`https://graph.facebook.com/v22.0/${phoneNumberId}/messages`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${accessToken}`,
+      ...buildMetaAuthHeaders(accessToken),
       'Content-Type': 'application/json'
     },
     body: JSON.stringify(messageData)
@@ -68,7 +15,7 @@ async function sendWhatsAppMessage(phoneNumberId, accessToken, to, messageData) 
 
   const data = await response.json()
   if (!response.ok) {
-    throw new Error(data.error?.message || 'WhatsApp API request failed')
+    throw new Error(mapMetaAccessTokenError(data.error?.message || 'WhatsApp API request failed'))
   }
 
   return data

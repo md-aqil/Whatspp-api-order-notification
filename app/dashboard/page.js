@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -69,17 +69,20 @@ export default function DashboardPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type, data })
       })
+      const payload = await response.json()
       
       if (response.ok) {
         await loadIntegrations()
         toast.success(`${type.charAt(0).toUpperCase() + type.slice(1)} integration saved successfully!`)
+        if (payload.warning) {
+          toast.warning(payload.warning)
+        }
         if (type === 'shopify') {
           // Setup Shopify webhooks
           setupShopifyWebhooks()
         }
       } else {
-        const error = await response.json()
-        toast.error(error.error || 'Failed to save integration')
+        toast.error(payload.error || 'Failed to save integration')
       }
     } catch (error) {
       console.error('Failed to save integration:', error)
@@ -106,6 +109,33 @@ export default function DashboardPage() {
 
   const IntegrationForm = ({ type, integration }) => {
     const [formData, setFormData] = useState(integration.data || {})
+    const [copiedField, setCopiedField] = useState('')
+
+    useEffect(() => {
+      setFormData(integration.data || {})
+    }, [integration])
+
+    const webhookUrl = useMemo(() => {
+      if (typeof window === 'undefined') return ''
+      return `${window.location.origin}/api/webhook/whatsapp`
+    }, [])
+
+    const generateVerifyToken = () => {
+      const token = `wa_verify_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`
+      setFormData((prev) => ({ ...prev, webhookVerifyToken: token }))
+    }
+
+    const copyValue = async (value, fieldKey) => {
+      if (!value) return
+      try {
+        await navigator.clipboard.writeText(value)
+        setCopiedField(fieldKey)
+        setTimeout(() => setCopiedField((current) => (current === fieldKey ? '' : current)), 1500)
+      } catch (error) {
+        console.error(`Failed to copy ${fieldKey}:`, error)
+        toast.error('Failed to copy value')
+      }
+    }
 
     const handleSubmit = (e) => {
       e.preventDefault()
@@ -117,9 +147,9 @@ export default function DashboardPage() {
         case 'whatsapp':
           return [
             { key: 'phoneNumberId', label: 'Phone Number ID', placeholder: '818391834688215' },
-            { key: 'accessToken', label: 'Access Token', placeholder: 'Your WhatsApp Access Token', type: 'password' },
+            { key: 'accessToken', label: 'Access Token', placeholder: 'Paste the raw Meta access token', type: 'password' },
             { key: 'businessAccountId', label: 'Business Account ID', placeholder: '832073532824981' },
-            { key: 'catalogId', label: 'Catalog ID (Optional)', placeholder: 'Your Facebook Catalog ID' },
+            { key: 'catalogId', label: 'Meta Catalog ID', placeholder: 'Your Commerce Manager catalog ID' },
             { key: 'webhookVerifyToken', label: 'Webhook Verify Token', placeholder: 'your_verify_token' }
           ]
         case 'shopify':
@@ -141,16 +171,59 @@ export default function DashboardPage() {
 
     return (
       <form onSubmit={handleSubmit} className="space-y-4">
+        {type === 'whatsapp' && (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-medium text-slate-900">Webhook Endpoint</div>
+                <p className="mt-1 break-all text-xs text-slate-600">{webhookUrl || 'Open this page in the browser to see the webhook URL.'}</p>
+              </div>
+              <Button type="button" variant="outline" size="sm" onClick={() => copyValue(webhookUrl, 'webhookUrl')} disabled={!webhookUrl}>
+                {copiedField === 'webhookUrl' ? 'Copied' : 'Copy'}
+              </Button>
+            </div>
+          </div>
+        )}
+
         {getFields().map(field => (
           <div key={field.key} className="space-y-2">
-            <Label htmlFor={field.key}>{field.label}</Label>
+            <div className="flex items-center justify-between gap-2">
+              <Label htmlFor={field.key}>{field.label}</Label>
+              {type === 'whatsapp' && field.key === 'webhookVerifyToken' && (
+                <div className="flex gap-2">
+                  <Button type="button" variant="outline" size="sm" onClick={generateVerifyToken}>
+                    Generate
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => copyValue(formData[field.key] || '', field.key)}
+                    disabled={!formData[field.key]}
+                  >
+                    {copiedField === field.key ? 'Copied' : 'Copy'}
+                  </Button>
+                </div>
+              )}
+              {type === 'whatsapp' && field.key === 'catalogId' && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => copyValue(formData[field.key] || '', field.key)}
+                  disabled={!formData[field.key]}
+                >
+                  {copiedField === field.key ? 'Copied' : 'Copy'}
+                </Button>
+              )}
+            </div>
             <Input
               id={field.key}
               type={field.type || 'text'}
               placeholder={field.placeholder}
               value={formData[field.key] || ''}
               onChange={(e) => setFormData(prev => ({ ...prev, [field.key]: e.target.value }))}
-              required
+              required={!(type === 'whatsapp' && (field.key === 'catalogId' || field.key === 'webhookVerifyToken'))}
             />
             {type === 'shopify' && field.key === 'shopDomain' && (
               <p className="text-xs text-gray-500">
@@ -167,6 +240,21 @@ export default function DashboardPage() {
               <p className="text-xs text-gray-500">
                 Shopify Dev Dashboard → your app → Settings → Credentials → Secret.
                 Do not share this or paste it into frontend code.
+              </p>
+            )}
+            {type === 'whatsapp' && field.key === 'catalogId' && (
+              <p className="text-xs text-gray-500">
+                Use the actual product Catalog ID from Commerce Manager. Do not paste your Phone Number ID or Business Account ID here.
+              </p>
+            )}
+            {type === 'whatsapp' && field.key === 'accessToken' && (
+              <p className="text-xs text-gray-500">
+                Paste only the raw Meta access token. Do not include the <span className="font-medium text-gray-700">Bearer</span> prefix or surrounding quotes.
+              </p>
+            )}
+            {type === 'whatsapp' && field.key === 'webhookVerifyToken' && (
+              <p className="text-xs text-gray-500">
+                This is your own verification secret for Meta webhook setup. Generate one here, save it, then paste the same value into Meta webhook configuration. If a token already exists in your environment, it is shown here automatically.
               </p>
             )}
           </div>

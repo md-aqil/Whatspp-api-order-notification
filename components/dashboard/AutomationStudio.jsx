@@ -9,7 +9,8 @@ import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import { defaultAutomations } from '@/lib/automation-defaults'
+import { defaultAutomations, sortAutomations } from '@/lib/automation-defaults'
+import { buildAutomationTemplateMappings, getAutomationTemplateBodyText, getAutomationTemplateParameterSlots, getAutomationVariableOptions, renderAutomationTemplateBodyPreview } from '@/lib/automation-template'
 
 const TRIGGERS = [
   { value:'shopify.order_created', label:'Shopify Order', icon:PackageCheck, description:'When an order is placed' },
@@ -33,22 +34,6 @@ const COLORS = {
   message:   { border:'border-emerald-500/40', bg:'bg-[#0f1a16]', hdr:'bg-emerald-600/15', icon:'bg-emerald-600/25 text-emerald-300',lbl:'text-emerald-300', dot:'bg-emerald-500' },
   condition: { border:'border-amber-500/40',   bg:'bg-[#1a1508]', hdr:'bg-amber-600/15',   icon:'bg-amber-600/25 text-amber-300',   lbl:'text-amber-300',   dot:'bg-amber-500'   },
 }
-const AUTOMATION_VARIABLE_OPTIONS = [
-  { value:'{{customer_name}}', label:'Customer name' },
-  { value:'{{customer_phone}}', label:'Customer phone' },
-  { value:'{{customer_message}}', label:'Customer message' },
-  { value:'{{order_number}}', label:'Order number' },
-  { value:'{{tracking_number}}', label:'Tracking number' },
-  { value:'{{tracking_url}}', label:'Tracking URL' },
-  { value:'{{review_link}}', label:'Review link' },
-  { value:'{{order_total}}', label:'Order total' },
-  { value:'{{currency}}', label:'Currency' },
-  { value:'{{financial_status}}', label:'Financial status' },
-  { value:'{{shopify.customer.first_name}}', label:'Customer first name (legacy)' },
-  { value:'{{shopify.total_price}}', label:'Order total (legacy)' },
-  { value:'text', label:'Custom text' },
-]
-
 const uid = p => `${p}-${Math.random().toString(36).slice(2,9)}`
 const isDefault = id => defaultAutomations.some(a => a.id === id)
 const DEFAULT_FLOW_IDS_BY_EVENT = {
@@ -59,36 +44,38 @@ const DEFAULT_FLOW_IDS_BY_EVENT = {
 }
 const getTrig = ev => TRIGGERS.find(t => t.value === ev) || TRIGGERS[0]
 const getBlock = type => BLOCKS.find(b => b.type === type) || BLOCKS[0]
-const getTemplatePlaceholders = template => template?.components?.find(component => component.type === 'BODY')?.text?.match(/\{\{\d+\}\}/g) || []
-function getDefaultTemplateMapping(index) {
-  const defaults = ['{{customer_name}}', '{{customer_message}}', '{{order_number}}', '{{tracking_number}}', '{{tracking_url}}', '{{review_link}}', '{{order_total}}', '{{currency}}']
-  const value = defaults[index] || 'text'
-  return { label:`Variable ${index + 1}`, mode:value === 'text' ? 'text' : 'token', value:value === 'text' ? '' : value }
-}
-function buildTemplateMappings(template, currentMappings = []) {
-  return getTemplatePlaceholders(template).map((_, index) => {
-    const existing = currentMappings[index]
-    if (existing?.mode && typeof existing.value === 'string') return existing
-    return getDefaultTemplateMapping(index)
-  })
-}
-function applyDefaultTemplateToMessageStep(step, availableTemplates = []) {
-  if (step?.type !== 'message' || step.template || availableTemplates.length === 0) return step
-  const defaultTemplate = availableTemplates[0]
+function applyDefaultTemplateToMessageStep(step, availableTemplates = [], triggerEvent = '') {
+  if (step?.type !== 'message' || !step.template || availableTemplates.length === 0) return step
+  const defaultTemplate = availableTemplates.find((template) => template.name === step.template)
+  if (!defaultTemplate) return step
+
   return {
     ...step,
-    template: defaultTemplate.name || '',
-    templateLanguage: defaultTemplate.language || '',
-    templateComponents: defaultTemplate.components || [],
-    variableMappings: buildTemplateMappings(defaultTemplate, step.variableMappings || [])
+    templateLanguage: step.templateLanguage || defaultTemplate.language || '',
+    templateComponents: step.templateComponents?.length ? step.templateComponents : (defaultTemplate.components || []),
+    variableMappings: buildAutomationTemplateMappings(defaultTemplate, step.variableMappings || [], triggerEvent)
   }
 }
 function applyDefaultTemplateToAutomation(automation, availableTemplates = []) {
   if (!automation || availableTemplates.length === 0) return automation
+  const triggerEvent = automation?.steps?.find((step) => step.type === 'trigger')?.event || ''
   return normalize({
     ...automation,
-    steps: (automation.steps || []).map((step) => applyDefaultTemplateToMessageStep(step, availableTemplates))
+    steps: (automation.steps || []).map((step) => applyDefaultTemplateToMessageStep(step, availableTemplates, triggerEvent))
   })
+}
+function remapTemplateStepsForTrigger(automation, availableTemplates = [], triggerEvent = '') {
+  return {
+    ...automation,
+    steps: (automation.steps || []).map((step) => {
+      if (step.type !== 'message' || !step.template) return step
+      const template = availableTemplates.find((entry) => entry.name === step.template) || { components: step.templateComponents || [] }
+      return {
+        ...step,
+        variableMappings: buildAutomationTemplateMappings(template, step.variableMappings || [], triggerEvent)
+      }
+    })
+  }
 }
 function getDefaultTargetIdForAutomation(automation) {
   const triggerEvent = automation?.steps?.find((step) => step.type === 'trigger')?.event
@@ -125,7 +112,7 @@ function mapStep(step, i, arr) {
     testSource: step.type === 'test' ? (step.testSource || 'latest_order') : step.testSource,
     recipientMode: step.type === 'message' ? (step.recipientMode || 'customer') : step.recipientMode,
     recipientNumber: step.type === 'message' ? (step.recipientNumber || '') : step.recipientNumber,
-    variableMappings: Array.isArray(step.variableMappings)?step.variableMappings:(step.type==='message'?[{label:'Customer Name',value:'{{shopify.customer.first_name}}'},{label:'Order Amount',value:'{{shopify.total_price}}'}]:[]),
+    variableMappings: Array.isArray(step.variableMappings)?step.variableMappings:[],
     connections: step.type==='condition' ? {main:ex.main??nxt?.id??'',fallback:ex.fallback??''} : {main:ex.main??nxt?.id??''} }
 }
 const normalize = a => ({ ...a, metrics:a?.metrics||{sent:0,openRate:0,conversions:0}, steps:(Array.isArray(a?.steps)?a.steps:[]).map((s,i,arr)=>mapStep(s,i,arr)) })
@@ -192,7 +179,7 @@ export function AutomationStudio() {
 
   useEffect(()=>{
     fetch('/api/automations').then(r=>r.json()).then(d=>{
-      if(Array.isArray(d)&&d.length>0){const n=d.map(item=>normalize(alignDefaultAutomationLayout(item)));setAutomations(n);setActiveId(n[0].id);setSelId(n[0].steps?.[0]?.id||null)}
+      if(Array.isArray(d)&&d.length>0){const n=sortAutomations(d.map(item=>normalize(alignDefaultAutomationLayout(item))));setAutomations(n);setActiveId(n[0].id);setSelId(n[0].steps?.[0]?.id||null)}
     }).catch(console.error).finally(()=>setHydrated(true))
   },[])
   useEffect(()=>{
@@ -200,7 +187,7 @@ export function AutomationStudio() {
   },[])
   useEffect(()=>{
     if(!templates.length)return
-    setAutomations(current=>current.map(automation=>applyDefaultTemplateToAutomation(automation, templates)))
+    setAutomations(current=>sortAutomations(current.map(automation=>applyDefaultTemplateToAutomation(automation, templates))))
   },[templates])
   useEffect(()=>{ if(!hydrated)return; const t=setTimeout(()=>persist(),600); return()=>clearTimeout(t) },[automations,hydrated])
 
@@ -223,6 +210,10 @@ export function AutomationStudio() {
   const bnd=bounds(active?.steps||[])
   const activeCount=automations.filter(a=>a.status).length
   const activeTriggerEvent = active?.steps.find(step => step.type === 'trigger')?.event || ''
+  const activeVariableOptions = getAutomationVariableOptions(activeTriggerEvent)
+  const selectedTemplateSlots = selTpl
+    ? getAutomationTemplateParameterSlots(selTpl)
+    : getAutomationTemplateParameterSlots({ components: sel?.templateComponents || [] })
   const defaultRecipientLabel = activeTriggerEvent === 'whatsapp.message_received' ? 'Message sender' : 'Order customer'
   const defaultRecipientDescription = activeTriggerEvent === 'whatsapp.message_received'
     ? 'Send the reply back to the customer who sent the WhatsApp message.'
@@ -235,7 +226,7 @@ export function AutomationStudio() {
   useEffect(()=>{ if(active&&!active.steps.some(s=>s.id===selId)) setSelId(active.steps[0]?.id||null) },[active,selId])
   useEffect(()=>{ if(sel?.type==='message') setPropTab('settings') },[sel?.id,sel?.type])
 
-  const updAuto=(id,fn)=>setAutomations(cur=>cur.map(a=>a.id===id?normalize(fn(a)):a))
+  const updAuto=(id,fn)=>setAutomations(cur=>sortAutomations(cur.map(a=>a.id===id?normalize(fn(a)):a)))
   function updStep(patch){
     if(!active||!sel||selLocked)return
     updAuto(active.id,a=>({...a,steps:a.steps.map(s=>{
@@ -247,7 +238,7 @@ export function AutomationStudio() {
     if(!active)return
     const bl=BLOCKS.find(b=>b.type===blockType); if(!bl)return
     const baseStep={id:uid('step'),type:bl.type,...bl.defaults,position:pt}
-    const ns=applyDefaultTemplateToMessageStep(baseStep, templates)
+    const ns=applyDefaultTemplateToMessageStep(baseStep, templates, activeTriggerEvent)
     const nxt=normalize({...active,steps:[...active.steps,ns]}).steps.at(-1)
     updAuto(active.id,a=>({...a,steps:[...a.steps,nxt]}))
     setSelId(nxt.id); setNewId(nxt.id); setTimeout(()=>setNewId(null),500)
@@ -274,7 +265,7 @@ export function AutomationStudio() {
       .filter(item => item.id !== active.id && item.id !== activeDefaultTargetId)
       .concat(promotedFlow)
 
-    setAutomations(nextAutomations)
+    setAutomations(sortAutomations(nextAutomations))
     setActiveId(promotedFlow.id)
     setSelId(promotedFlow.steps[0]?.id || null)
     persist(nextAutomations,'Flow set as default')
@@ -291,7 +282,7 @@ export function AutomationStudio() {
         source: active.source || 'Custom'
       }
       const nextAutomations = automations.map(item => item.id === active.id ? resetFlow : item)
-      setAutomations(nextAutomations)
+      setAutomations(sortAutomations(nextAutomations))
       setSelId(resetFlow.steps[0]?.id || null)
       persist(nextAutomations, 'Draft reset')
       return
@@ -313,17 +304,17 @@ export function AutomationStudio() {
     })
 
     const nextAutomations = automations.map(item => item.id === active.id ? resetFlow : item)
-    setAutomations(nextAutomations)
+    setAutomations(sortAutomations(nextAutomations))
     setSelId(resetFlow.steps[0]?.id || null)
     persist(nextAutomations, activeDef ? 'Flow reset to default' : 'Default structure applied')
   }
   function handleCreate(){
     const name=draftName.trim()||(mode==='template'?'Flow Clone':'New Automation')
     const nxt=mode==='template'?cloneFlow(defaultAutomations[0],name):blankFlow(name)
-    setAutomations(cur=>[nxt,...cur]); setActiveId(nxt.id); setSelId(nxt.steps[0]?.id||null)
+    setAutomations(cur=>sortAutomations([nxt,...cur])); setActiveId(nxt.id); setSelId(nxt.steps[0]?.id||null)
     setDraftName(''); setMode('blank'); setDlgOpen(false); toast.success(`"${name}" created`)
   }
-  function setStatus(id,s,msg=''){const n=automations.map(a=>a.id===id?{...a,status:s}:a);setAutomations(n);persist(n,msg)}
+  function setStatus(id,s,msg=''){const n=sortAutomations(automations.map(a=>a.id===id?{...a,status:s}:a));setAutomations(n);persist(n,msg)}
   async function runFlowTest(nodeId = activeTestNode?.id) {
     if (!active?.id) return
     if (!nodeId) {
@@ -382,7 +373,7 @@ export function AutomationStudio() {
   function deleteFlow(id){
     if(isDefault(id)||automations.length<=1)return
     const next=automations.filter(a=>a.id!==id)
-    setAutomations(next)
+    setAutomations(sortAutomations(next))
     if(activeId===id){setActiveId(next[0].id);setSelId(next[0].steps[0]?.id||null)}
     persist(next,'Flow deleted')
   }
@@ -803,7 +794,14 @@ export function AutomationStudio() {
                   {sel.type==='trigger'&&(
                     <div className="space-y-1.5">
                       <Label htmlFor="trigger-event" className="text-[10px] font-bold uppercase tracking-widest text-white/25">Trigger Event</Label>
-                      <Select value={sel.event||'shopify.order_created'} onValueChange={v=>{if(selLocked)return;const o=TRIGGERS.find(t=>t.value===v);updStep({event:v,title:o?.label||sel.title,description:o?.description||sel.description})}} disabled={selLocked}>
+                      <Select value={sel.event||'shopify.order_created'} onValueChange={v=>{
+                        if(selLocked||!active)return
+                        const o=TRIGGERS.find(t=>t.value===v)
+                        updAuto(active.id,a=>normalize(remapTemplateStepsForTrigger({
+                          ...a,
+                          steps:a.steps.map(s=>s.id===sel.id?{...s,event:v,title:o?.label||sel.title,description:o?.description||sel.description}:s)
+                        }, templates, v)))
+                      }} disabled={selLocked}>
                         <SelectTrigger id="trigger-event" className={inputCls}><SelectValue/></SelectTrigger>
                         <SelectContent className="z-[260] bg-[#13151f] border-white/10">{TRIGGERS.map(o=><SelectItem key={o.value} value={o.value} className="text-white/70 text-xs focus:bg-white/8 focus:text-white">{o.label}</SelectItem>)}</SelectContent>
                       </Select>
@@ -898,10 +896,10 @@ export function AutomationStudio() {
                       </div>
                       <div className="space-y-1.5">
                         <Label htmlFor="tpl-sel" className="text-[10px] font-bold uppercase tracking-widest text-white/25">Template</Label>
-                        <Select value={sel.template||'__none__'} onValueChange={v=>{
+                      <Select value={sel.template||'__none__'} onValueChange={v=>{
                           if(v==='__none__'){
                             if(msgLocked)return
-                            updStep({template:'',templateLanguage:'',templateComponents:[],variableMappings:sel.variableMappings||[]})
+                            updStep({template:'',templateLanguage:'',templateComponents:[],variableMappings:[]})
                             return
                           }
                           const t=templates.find(t=>t.name===v)
@@ -909,7 +907,7 @@ export function AutomationStudio() {
                             template:v,
                             templateLanguage:t?.language||'',
                             templateComponents:t?.components||[],
-                            variableMappings:buildTemplateMappings(t, sel.variableMappings || [])
+                            variableMappings:buildAutomationTemplateMappings(t, sel.variableMappings || [], activeTriggerEvent)
                           })
                         }}>
                           <SelectTrigger id="tpl-sel" className={inputCls}><SelectValue placeholder="Choose template"/></SelectTrigger>
@@ -937,10 +935,22 @@ export function AutomationStudio() {
               )}
               {propTab==='mapping'&&sel?.type==='message'&&(
                 <div className="space-y-2.5">
-                  <div className="flex items-center justify-between"><span className="text-[10px] font-bold uppercase tracking-widest text-white/25">Variables</span><button className="text-[11px] text-violet-400 hover:text-violet-300 font-bold">+ Add</button></div>
+                  <div className="rounded-xl border border-white/[0.05] bg-white/[0.02] px-3 py-2.5 text-[11px] text-white/35">
+                    Available variable sources are adjusted for the selected trigger event.
+                  </div>
+                  <div className="flex items-center justify-between"><span className="text-[10px] font-bold uppercase tracking-widest text-white/25">Template Slots</span><span className="text-[10px] text-white/25">{activeTriggerEvent || 'No trigger selected'}</span></div>
                   {(sel.variableMappings||[]).map((m,i)=>(
                     <div key={i} className="rounded-xl border border-white/[0.05] bg-white/[0.02] p-3">
-                      <div className="text-[10px] font-bold uppercase tracking-wider text-white/25">{m.label||`Variable ${i+1}`}</div>
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-white/25">{m.label||selectedTemplateSlots[i]?.label||`Variable ${i+1}`}</div>
+                      {selectedTemplateSlots[i]?.templateText && (
+                        <div className="mt-1.5 rounded-lg bg-white/[0.03] px-2.5 py-2 text-[10px] text-white/45">
+                          <div className="font-semibold text-white/60">Template text</div>
+                          <div className="mt-1 whitespace-pre-wrap">{selectedTemplateSlots[i].templateText}</div>
+                        </div>
+                      )}
+                      {selectedTemplateSlots[i]?.example && (
+                        <div className="mt-1 text-[10px] text-white/35">Default example: {selectedTemplateSlots[i].example}</div>
+                      )}
                       {sel.template&&!msgLocked?(
                         <div className="mt-2 space-y-2">
                           <Select
@@ -955,7 +965,7 @@ export function AutomationStudio() {
                           >
                             <SelectTrigger className={inputCls}><SelectValue placeholder="Choose source"/></SelectTrigger>
                             <SelectContent className="z-[260] bg-[#13151f] border-white/10">
-                              {AUTOMATION_VARIABLE_OPTIONS.map(option=>(
+                              {activeVariableOptions.map(option=>(
                                 <SelectItem key={option.value} value={option.value} className="text-white/70 text-xs focus:bg-white/8 focus:text-white">
                                   {option.label}
                                 </SelectItem>
@@ -969,7 +979,11 @@ export function AutomationStudio() {
                                 variableMappings:(sel.variableMappings||[]).map((entry,index)=>index===i?{...entry,mode:'text',value:e.target.value}:entry)
                               })}
                               className={inputCls}
-                              placeholder="Enter custom text"
+                              placeholder={
+                                selectedTemplateSlots[i]?.parameterType === 'media'
+                                  ? 'Enter public media URL'
+                                  : (selectedTemplateSlots[i]?.example || 'Enter custom text')
+                              }
                             />
                           )}
                         </div>
@@ -981,7 +995,11 @@ export function AutomationStudio() {
                   {selTpl&&(
                     <div className="rounded-xl border border-violet-500/20 bg-violet-600/5 p-3">
                       <div className="text-xs font-semibold text-violet-300">{selTpl.name}</div>
-                      <div className="mt-1.5 text-[11px] text-white/35">{selTpl.components?.find(c=>c.type==='BODY')?.text||'No preview'}</div>
+                      <div className="mt-1.5 text-[11px] text-white/35">{getAutomationTemplateBodyText(selTpl) || 'No preview'}</div>
+                      <div className="mt-2 rounded-lg bg-white/[0.03] px-2.5 py-2 text-[10px] text-white/45">
+                        <div className="font-semibold text-white/60">Mapped preview</div>
+                        <div className="mt-1 whitespace-pre-wrap">{renderAutomationTemplateBodyPreview(selTpl, sel.variableMappings || []) || 'No body placeholders'}</div>
+                      </div>
                     </div>
                   )}
                 </div>
