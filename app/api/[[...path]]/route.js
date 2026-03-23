@@ -642,6 +642,14 @@ async function saveStoredWebhooks(webhooks) {
   )
 }
 
+async function getStoredWebhooks(type = 'shopify') {
+  const result = await getPostgresPool().query(
+    'SELECT id, type, webhooks, "createdAt" FROM webhooks WHERE "userId" = $1 AND type = $2 ORDER BY "createdAt" DESC NULLS LAST, id DESC LIMIT 1',
+    ['default', type]
+  )
+  return result.rows[0] || null
+}
+
 async function insertWebhookLog(type, topic, payload) {
   await getPostgresPool().query(
     `INSERT INTO webhook_logs (id, type, topic, payload, "receivedAt", "createdAt")
@@ -2041,6 +2049,25 @@ async function handleRoute(request, { params }) {
       } catch (error) {
         return handleCORS(NextResponse.json(
           { error: `Failed to get webhook logs: ${error.message}` },
+          { status: 500 }
+        ))
+      }
+    }
+
+    // Webhooks endpoint - get registered webhooks
+    if (route === '/webhooks' && method === 'GET') {
+      try {
+        const webhookUrl = new URL(request.url)
+        const type = webhookUrl.searchParams.get('type') || 'shopify'
+        const webhooks = await getStoredWebhooks(type)
+        return handleCORS(NextResponse.json({
+          type,
+          webhooks: webhooks?.webhooks || [],
+          createdAt: webhooks?.createdAt
+        }))
+      } catch (error) {
+        return handleCORS(NextResponse.json(
+          { error: `Failed to get webhooks: ${error.message}` },
           { status: 500 }
         ))
       }
