@@ -65,6 +65,8 @@ export default function SettingsPage() {
   const [loadingWordPressConnections, setLoadingWordPressConnections] = useState(false)
   const [addWordPressOpen, setAddWordPressOpen] = useState(false)
   const [selectedWordPressConnectionId, setSelectedWordPressConnectionId] = useState(null)
+  const [connectLinks, setConnectLinks] = useState({})
+  const [refreshingConnectionId, setRefreshingConnectionId] = useState(null)
   const [newWordPressConnection, setNewWordPressConnection] = useState({
     site_name: '',
     site_url: '',
@@ -256,6 +258,82 @@ export default function SettingsPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleGenerateConnectLink = async (connectionId) => {
+    try {
+      setLoading(true)
+      const response = await fetch('/api/wordpress-connections/connect-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connection_id: connectionId })
+      })
+
+      const payload = await response.json()
+
+      if (!response.ok) {
+        toast.error(payload.error || 'Failed to generate connect link')
+        return
+      }
+
+      setConnectLinks((current) => ({
+        ...current,
+        [connectionId]: payload
+      }))
+      toast.success('Connect link generated')
+    } catch (error) {
+      console.error('Failed to generate connect link:', error)
+      toast.error('Failed to generate connect link')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleRefreshConnectionConfig = async (connectionId) => {
+    try {
+      setRefreshingConnectionId(connectionId)
+      const response = await fetch(`/api/wa-config?connectionId=${encodeURIComponent(connectionId)}&_=${Date.now()}`, {
+        cache: 'no-store'
+      })
+      const payload = await response.json()
+
+      if (!response.ok) {
+        toast.error(payload.error || 'Failed to refresh plugin config')
+        return
+      }
+
+      if (selectedWordPressConnectionId === connectionId) {
+        setWoocommerceTriggers(payload.woocommerce?.triggers || [])
+        setCustomTables(payload.custom_tables?.tables || [])
+      }
+
+      await loadWordPressConnections()
+      toast.success('Plugin config refreshed')
+    } catch (error) {
+      console.error('Failed to refresh plugin config:', error)
+      toast.error('Failed to refresh plugin config')
+    } finally {
+      setRefreshingConnectionId(null)
+    }
+  }
+
+  const getHealthBadgeClass = (tone) => {
+    switch (tone) {
+      case 'success':
+        return 'bg-green-100 text-green-700'
+      case 'warning':
+        return 'bg-amber-100 text-amber-700'
+      case 'info':
+        return 'bg-blue-100 text-blue-700'
+      default:
+        return 'bg-[#eff4ff] text-[#005cc0]'
+    }
+  }
+
+  const formatTimestamp = (value) => {
+    if (!value) return 'Not yet'
+    const date = new Date(value)
+    return Number.isNaN(date.getTime()) ? 'Not yet' : date.toLocaleString()
   }
 
   // Load registered webhooks on mount
@@ -748,10 +826,15 @@ export default function SettingsPage() {
                             Selected
                           </span>
                         )}
-                        <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${connection.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-[#eff4ff] text-[#005cc0]'}`}>
-                          {connection.status}
+                        <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${getHealthBadgeClass(connection.health?.tone)}`}>
+                          {connection.health?.label || connection.status}
                         </span>
                       </div>
+                      {connection.health?.reason && (
+                        <div className="rounded-lg border border-[#e5eeff] bg-white px-3 py-2 text-[11px] text-[#3d618c]">
+                          {connection.health.reason}
+                        </div>
+                      )}
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
                         <div className="bg-white rounded-lg px-3 py-2 border border-[#e5eeff]">
                           <div className="text-[10px] font-bold uppercase text-[#3d618c] mb-1">Site URL</div>
@@ -775,6 +858,34 @@ export default function SettingsPage() {
                             </Button>
                           </div>
                         </div>
+                        <div className="bg-white rounded-lg px-3 py-2 border border-[#e5eeff]">
+                          <div className="text-[10px] font-bold uppercase text-[#3d618c] mb-1">Last Handshake</div>
+                          <div className="text-[#05345c]">{formatTimestamp(connection.health?.last_handshake_at)}</div>
+                        </div>
+                        <div className="bg-white rounded-lg px-3 py-2 border border-[#e5eeff]">
+                          <div className="text-[10px] font-bold uppercase text-[#3d618c] mb-1">Last Webhook</div>
+                          <div className="text-[#05345c]">{formatTimestamp(connection.health?.last_webhook_at)}</div>
+                        </div>
+                        <div className="bg-white rounded-lg px-3 py-2 border border-[#e5eeff]">
+                          <div className="text-[10px] font-bold uppercase text-[#3d618c] mb-1">Plugin Version</div>
+                          <div className="text-[#05345c]">{connection.plugin_version || 'Unknown'}</div>
+                        </div>
+                        <div className="bg-white rounded-lg px-3 py-2 border border-[#e5eeff]">
+                          <div className="text-[10px] font-bold uppercase text-[#3d618c] mb-1">Config Cache</div>
+                          <div className="text-[#05345c]">{formatTimestamp(connection.health?.cached_plugin_config_at)}</div>
+                        </div>
+                        {connection.health?.last_webhook_topic && (
+                          <div className="bg-white rounded-lg px-3 py-2 border border-[#e5eeff] md:col-span-2">
+                            <div className="text-[10px] font-bold uppercase text-[#3d618c] mb-1">Last Webhook Topic</div>
+                            <code className="text-[#05345c] break-all">{connection.health.last_webhook_topic}</code>
+                          </div>
+                        )}
+                        {connection.health?.connect_token_expires_at && (
+                          <div className="bg-white rounded-lg px-3 py-2 border border-[#e5eeff] md:col-span-2">
+                            <div className="text-[10px] font-bold uppercase text-[#3d618c] mb-1">Connect Link Expires</div>
+                            <div className="text-[#05345c]">{formatTimestamp(connection.health.connect_token_expires_at)}</div>
+                          </div>
+                        )}
                       </div>
                       <div className="flex flex-wrap gap-2">
                         <Button
@@ -785,7 +896,39 @@ export default function SettingsPage() {
                         >
                           {selectedWordPressConnectionId === connection.id ? 'Using for Plugin Config' : 'Use for Plugin Config'}
                         </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleGenerateConnectLink(connection.id)}
+                          disabled={loading}
+                        >
+                          Generate Connect Link
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleRefreshConnectionConfig(connection.id)}
+                          disabled={refreshingConnectionId === connection.id}
+                        >
+                          {refreshingConnectionId === connection.id ? 'Refreshing...' : 'Refresh Plugin Config'}
+                        </Button>
                       </div>
+                      {connectLinks[connection.id]?.connect_url && (
+                        <div className="rounded-lg border border-[#e5eeff] bg-white px-3 py-3 space-y-2">
+                          <div className="text-[10px] font-bold uppercase text-[#3d618c]">WordPress Plugin Connect Link</div>
+                          <div className="flex items-center gap-2">
+                            <Input readOnly value={connectLinks[connection.id].connect_url} className="bg-[#f8f9ff] border-[#e5eeff]" />
+                            <Button variant="outline" size="sm" onClick={() => copyToClipboard(connectLinks[connection.id].connect_url)}>
+                              <Copy className="h-4 w-4 mr-2" />
+                              Copy
+                            </Button>
+                          </div>
+                          <p className="text-[11px] text-[#3d618c]">
+                            Paste this into the WordPress plugin Connection URL field, then click "Connect to Platform". Expires at{' '}
+                            {new Date(connectLinks[connection.id].expires_at).toLocaleString()}.
+                          </p>
+                        </div>
+                      )}
                     </div>
                     <button
                       onClick={() => handleDeleteWordPressConnection(connection.id)}

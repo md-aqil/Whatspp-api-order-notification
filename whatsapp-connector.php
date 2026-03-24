@@ -18,13 +18,21 @@ function wa_connector_settings() {
     register_setting('wa_connector_group', 'wa_connector_webhook_url', [
         'sanitize_callback' => 'wa_connector_sanitize_webhook_url',
     ]);
+    register_setting('wa_connector_group', 'wa_connector_connection_url', [
+        'sanitize_callback' => 'wa_connector_sanitize_connection_url',
+    ]);
     register_setting('wa_connector_group', 'wa_connector_site_id');
+    register_setting('wa_connector_group', 'wa_connector_webhook_secret');
     register_setting('wa_connector_group', 'wa_connector_tables');
 }
 add_action('admin_init', 'wa_connector_settings');
 
 function wa_connector_sanitize_webhook_url($url) {
     return wa_connector_normalize_webhook_url($url);
+}
+
+function wa_connector_sanitize_connection_url($url) {
+    return wa_connector_normalize_connection_url($url);
 }
 
 function wa_connector_normalize_webhook_url($url) {
@@ -72,8 +80,22 @@ function wa_connector_normalize_webhook_url($url) {
     return esc_url_raw($url);
 }
 
+function wa_connector_normalize_connection_url($url) {
+    $url = trim((string) $url);
+
+    if ($url === '') {
+        return '';
+    }
+
+    return esc_url_raw($url);
+}
+
 function wa_connector_get_webhook_url() {
     return wa_connector_normalize_webhook_url(get_option('wa_connector_webhook_url'));
+}
+
+function wa_connector_get_connection_url() {
+    return wa_connector_normalize_connection_url(get_option('wa_connector_connection_url'));
 }
 
 function wa_connector_page() {
@@ -103,8 +125,22 @@ function wa_connector_page() {
                 </td>
             </tr>
             <tr valign="top">
+                <th scope="row">Connection URL</th>
+                <td>
+                    <input type="text" name="wa_connector_connection_url" value="<?php echo esc_attr(get_option('wa_connector_connection_url')); ?>" class="regular-text" placeholder="Paste the connect link generated in your dashboard" />
+                    <p class="description">Paste the WordPress plugin connect link from your dashboard, then use "Connect to Platform" below. This will auto-fill the webhook URL, site ID, and secret.</p>
+                </td>
+            </tr>
+            <tr valign="top">
                 <th scope="row">Site ID (for multi-site identification)</th>
                 <td><input type="text" name="wa_connector_site_id" value="<?php echo esc_attr(get_option('wa_connector_site_id')); ?>" class="regular-text" placeholder="e.g., my-shop-1" /></td>
+            </tr>
+            <tr valign="top">
+                <th scope="row">Webhook Secret</th>
+                <td>
+                    <input type="text" readonly value="<?php echo esc_attr(get_option('wa_connector_webhook_secret')); ?>" class="regular-text" />
+                    <p class="description">Assigned automatically after a successful connection handshake.</p>
+                </td>
             </tr>
         </table>
         
@@ -135,6 +171,18 @@ function wa_connector_page() {
     </form>
 
     <hr>
+    <h2>Connect This Site</h2>
+    <p>Use the connect link from your dashboard to configure this plugin automatically.</p>
+    <form method="post" action="">
+        <?php wp_nonce_field('wa_connect_platform', 'wa_connect_nonce'); ?>
+        <p>
+            <label for="wa-connect-connection-url"><strong>Connection URL</strong></label><br>
+            <input id="wa-connect-connection-url" type="text" name="wa_connect_connection_url" value="<?php echo esc_attr(get_option('wa_connector_connection_url')); ?>" class="regular-text" placeholder="Paste the connect link generated in your dashboard" />
+        </p>
+        <input type="submit" name="wa_connect_site" class="button button-primary" value="Connect to Platform">
+    </form>
+
+    <hr>
     <h2>Test Connection</h2>
     <p>Send a test notification to your dashboard to verify the webhook connection.</p>
     <form method="post" action="">
@@ -162,6 +210,15 @@ function wa_connector_page() {
             echo '<div class="updated"><p>✅ Test webhook sent! Check your dashboard activity log.</p></div>';
         } else {
             echo '<div class="error"><p>❌ Failed to send. Check if your Webhook URL is correct and the plugin is enabled.</p></div>';
+        }
+    }
+
+    if (isset($_POST['wa_connect_site']) && check_admin_referer('wa_connect_platform', 'wa_connect_nonce')) {
+        $connect_result = wa_connector_connect_platform(isset($_POST['wa_connect_connection_url']) ? wp_unslash($_POST['wa_connect_connection_url']) : '');
+        if (is_wp_error($connect_result)) {
+            echo '<div class="error"><p>❌ ' . esc_html($connect_result->get_error_message()) . '</p></div>';
+        } else {
+            echo '<div class="updated"><p>✅ Connected successfully. Webhook URL, site ID, and secret were synced from the platform.</p></div>';
         }
     }
     ?>
@@ -457,10 +514,19 @@ function wa_connector_send_webhook($data) {
     }
     
     $payload = json_encode($data);
+    $webhook_secret = (string) get_option('wa_connector_webhook_secret', '');
+    $headers = ['Content-Type' => 'application/json'];
+
+    if (!empty($webhook_secret)) {
+        $headers['X-WordPress-Webhook-Signature'] = hash_hmac('sha256', $payload, $webhook_secret);
+    }
+    if (!empty($data['site_id'])) {
+        $headers['X-WordPress-Site-Id'] = $data['site_id'];
+    }
     
     $response = wp_remote_post($url, [
         'body' => $payload,
-        'headers' => ['Content-Type' => 'application/json'],
+        'headers' => $headers,
         'timeout' => 30,
         'sslverify' => (strpos($url, 'localhost') !== false) ? false : true
     ]);
@@ -480,4 +546,66 @@ function wa_connector_send_webhook($data) {
     error_log('WhatsApp Connector: Webhook delivered successfully to ' . $url . ' with status ' . $status_code);
     
     return true;
+}
+
+function wa_connector_connect_platform($override_connect_url = '') {
+    $connect_url = wa_connector_normalize_connection_url($override_connect_url);
+    if (empty($connect_url)) {
+        $connect_url = wa_connector_get_connection_url();
+    }
+
+    if (!$connect_url) {
+        return new WP_Error('missing_connection_url', 'Connection URL is empty. Generate a connect link in your dashboard first.');
+    }
+
+    $saved_tables = get_option('wa_connector_tables', '[]');
+    $tables_array = json_decode($saved_tables, true);
+    if (!is_array($tables_array)) {
+        $tables_array = [];
+    }
+
+    $payload = [
+        'site_name' => get_bloginfo('name'),
+        'site_url' => get_site_url(),
+        'site_id' => get_option('wa_connector_site_id', ''),
+        'plugin_version' => '2.3',
+        'capabilities' => [
+            'woocommerce' => class_exists('WooCommerce'),
+            'custom_tables' => count($tables_array),
+        ],
+    ];
+
+    $response = wp_remote_post($connect_url, [
+        'body' => wp_json_encode($payload),
+        'headers' => ['Content-Type' => 'application/json'],
+        'timeout' => 30,
+        'sslverify' => (strpos($connect_url, 'localhost') !== false) ? false : true
+    ]);
+
+    if (is_wp_error($response)) {
+        return $response;
+    }
+
+    $status_code = wp_remote_retrieve_response_code($response);
+    $response_body = wp_remote_retrieve_body($response);
+    $data = json_decode($response_body, true);
+
+    if ($status_code < 200 || $status_code >= 300 || !is_array($data)) {
+        return new WP_Error('platform_connect_failed', 'Platform connection failed. Response: ' . $response_body);
+    }
+
+    update_option('wa_connector_connection_url', $connect_url);
+    if (!empty($data['webhook_url'])) {
+        update_option('wa_connector_webhook_url', wa_connector_normalize_webhook_url($data['webhook_url']));
+    }
+    if (!empty($data['site_id'])) {
+        update_option('wa_connector_site_id', sanitize_text_field($data['site_id']));
+    }
+    if (!empty($data['webhook_secret'])) {
+        update_option('wa_connector_webhook_secret', sanitize_text_field($data['webhook_secret']));
+    }
+
+    update_option('wa_connector_enabled', 'yes');
+
+    return $data;
 }

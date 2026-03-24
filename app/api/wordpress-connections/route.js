@@ -35,13 +35,82 @@ function normalizeJsonObject(value, fallback = {}) {
   return value
 }
 
+function parseDateValue(value) {
+  if (!value) return null
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+function buildConnectionHealth(row, metadata) {
+  const now = Date.now()
+  const lastSeenAt = parseDateValue(metadata.last_webhook_at || row.lastSeenAt)
+  const lastHandshakeAt = parseDateValue(metadata.last_handshake_at || metadata.connected_at)
+  const connectTokenExpiresAt = parseDateValue(metadata.connect_token_expires_at)
+  const cachedPluginConfigAt = parseDateValue(metadata.cached_plugin_config_at)
+  const hasSecret = Boolean(row.webhook_secret)
+  const hasHandshake = Boolean(lastHandshakeAt)
+
+  let state = 'saved'
+  let label = 'Saved'
+  let tone = 'neutral'
+  let reason = 'Site is saved in the platform but the plugin handshake has not completed yet.'
+
+  if (connectTokenExpiresAt && connectTokenExpiresAt.getTime() < now && !hasHandshake) {
+    state = 'needs_reconnect'
+    label = 'Needs Reconnect'
+    tone = 'warning'
+    reason = 'The previous connect link expired before the plugin completed the handshake.'
+  } else if (row.status === 'active' && hasHandshake && hasSecret && lastSeenAt) {
+    const daysSinceLastWebhook = (now - lastSeenAt.getTime()) / (1000 * 60 * 60 * 24)
+
+    if (daysSinceLastWebhook > 14) {
+      state = 'inactive'
+      label = 'Inactive'
+      tone = 'warning'
+      reason = 'The site connected earlier, but no webhook has been received in the last 14 days.'
+    } else {
+      state = 'verified'
+      label = 'Verified'
+      tone = 'success'
+      reason = 'The plugin handshake completed and signed webhooks have been received recently.'
+    }
+  } else if (row.status === 'active' && hasHandshake) {
+    state = 'connected'
+    label = 'Connected'
+    tone = 'info'
+    reason = 'The plugin handshake completed. Waiting for a recent webhook to verify live delivery.'
+  } else if (connectTokenExpiresAt && connectTokenExpiresAt.getTime() >= now) {
+    state = 'pending_handshake'
+    label = 'Awaiting Plugin'
+    tone = 'info'
+    reason = 'A connect link has been generated. Complete the handshake in the WordPress plugin.'
+  }
+
+  return {
+    state,
+    label,
+    tone,
+    reason,
+    has_secret: hasSecret,
+    last_handshake_at: lastHandshakeAt?.toISOString() || null,
+    last_webhook_at: lastSeenAt?.toISOString() || null,
+    last_webhook_topic: metadata.last_webhook_topic || null,
+    cached_plugin_config_at: cachedPluginConfigAt?.toISOString() || null,
+    connect_token_expires_at: connectTokenExpiresAt?.toISOString() || null
+  }
+}
+
 function mapConnection(row) {
   if (!row) return null
 
+  const capabilities = normalizeJsonObject(row.capabilities)
+  const metadata = normalizeJsonObject(row.metadata)
+
   return {
     ...row,
-    capabilities: normalizeJsonObject(row.capabilities),
-    metadata: normalizeJsonObject(row.metadata),
+    capabilities,
+    metadata,
+    health: buildConnectionHealth(row, metadata),
   }
 }
 

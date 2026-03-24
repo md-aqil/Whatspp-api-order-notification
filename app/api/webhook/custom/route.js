@@ -1,3 +1,4 @@
+import crypto from 'crypto'
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/postgres'
 import { Pool } from 'pg'
@@ -138,7 +139,39 @@ export async function POST(request) {
     try {
         await ensureSettingsTables()
 
-        const body = await request.json()
+        const rawBody = await request.text()
+        const body = rawBody ? JSON.parse(rawBody) : {}
+
+        const requestSiteId = body.site_id || request.headers.get('x-wordpress-site-id') || null
+        const requestSignature = request.headers.get('x-wordpress-webhook-signature')
+        let signatureVerified = false
+
+        if (requestSiteId && requestSignature) {
+            const connection = await query(
+                `SELECT webhook_secret FROM wordpress_connections
+                 WHERE site_id = $1 AND "userId" = $2
+                 ORDER BY "updatedAt" DESC NULLS LAST, "createdAt" DESC
+                 LIMIT 1`,
+                [requestSiteId, 'default']
+            )
+
+            const webhookSecret = connection?.rows?.[0]?.webhook_secret
+            if (webhookSecret) {
+                const expectedSignature = crypto
+                    .createHmac('sha256', webhookSecret)
+                    .update(rawBody)
+                    .digest('hex')
+
+                if (expectedSignature !== requestSignature) {
+                    return NextResponse.json(
+                        { error: 'Invalid webhook signature' },
+                        { status: 401 }
+                    )
+                }
+
+                signatureVerified = true
+            }
+        }
 
         // Check if this is a query-based request (WordPress database lookup)
         const { source_table, source_id, source_mode, field_mapping, event, event_type, ...inlineData } = body
@@ -204,6 +237,28 @@ export async function POST(request) {
                 ]
             )
             console.log('Webhook logged with site info:', { siteId, siteName, siteUrl })
+
+            if (requestSiteId) {
+                await query(
+                    `UPDATE wordpress_connections
+                     SET "lastSeenAt" = NOW(),
+                         status = CASE WHEN $2 THEN 'active' ELSE status END,
+                         "updatedAt" = NOW(),
+                         metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb
+                     WHERE site_id = $3 AND "userId" = $4`,
+                    [
+                        JSON.stringify({
+                            last_webhook_at: new Date().toISOString(),
+                            last_webhook_topic: eventType,
+                            last_webhook_signature_verified: signatureVerified,
+                            last_webhook_payload_source: 'custom-webhook'
+                        }),
+                        signatureVerified,
+                        requestSiteId,
+                        'default'
+                    ]
+                )
+            }
         } catch (logError) {
             console.error('Failed to log webhook:', logError)
         }
