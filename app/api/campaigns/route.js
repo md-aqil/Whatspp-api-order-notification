@@ -1,64 +1,78 @@
 import { NextResponse } from 'next/server'
-import { MongoClient } from 'mongodb'
+import { query, queryMany } from '@/lib/postgres'
 
-// Database connection
-let client
-let db
-
-async function connectToMongo() {
-  if (!client) {
-    client = new MongoClient(process.env.MONGO_URL)
-    await client.connect()
-    db = client.db(process.env.DB_NAME)
-  }
-  return db
+async function ensureCampaignSchema() {
+  await query('ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS "templateLanguage" TEXT')
+  await query('ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS "templateCategory" TEXT')
+  await query('ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS "templateHeaderImageUrl" TEXT')
+  await query('ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS "campaignType" TEXT DEFAULT \'template\'')
+  await query('ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS "productIds" JSONB DEFAULT \'[]\'::jsonb')
+  await query('ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS variables JSONB DEFAULT \'[]\'::jsonb')
 }
 
-// GET /api/campaigns - Get all campaigns
 export async function GET() {
   try {
-    const db = await connectToMongo()
-    const campaigns = await db.collection('campaigns').find({ userId: 'default' }).sort({ createdAt: -1 }).toArray()
-    
-    // Remove MongoDB _id field
-    const cleanedCampaigns = campaigns.map(({ _id, ...rest }) => rest)
-    
-    return NextResponse.json(cleanedCampaigns)
+    await ensureCampaignSchema()
+    const campaigns = await queryMany(
+      `SELECT id, name, template, "templateLanguage", "templateCategory", "templateHeaderImageUrl", "campaignType", "productIds", message, variables, audience, recipients, status, results, "sentAt", "failedAt", "createdAt"
+       FROM campaigns
+       WHERE "userId" = $1
+       ORDER BY "createdAt" DESC NULLS LAST`,
+      ['default']
+    )
+
+    return NextResponse.json(campaigns)
   } catch (error) {
     console.error('Error fetching campaigns:', error)
-    return NextResponse.json(
-      { error: 'Failed to fetch campaigns' },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: 'Failed to fetch campaigns' }, { status: 500 })
   }
 }
 
-// POST /api/campaigns - Create a new campaign
 export async function POST(request) {
   try {
+    await ensureCampaignSchema()
     const campaignData = await request.json()
-    const db = await connectToMongo()
-    
-    const newCampaign = {
-      ...campaignData,
-      id: Date.now().toString(),
-      userId: 'default',
-      createdAt: new Date(),
-      status: campaignData.scheduledAt ? 'scheduled' : 'draft',
-      sentAt: null
+
+    if (!campaignData.name || !campaignData.template) {
+      return NextResponse.json({ error: 'Campaign name and template are required' }, { status: 400 })
     }
-    
-    await db.collection('campaigns').insertOne(newCampaign)
-    
-    // Remove MongoDB _id field
-    const { _id, ...cleanedCampaign } = newCampaign
-    
-    return NextResponse.json(cleanedCampaign)
+
+    const id = crypto.randomUUID()
+    const status = campaignData.scheduledAt ? 'scheduled' : (campaignData.status || 'draft')
+
+    await query(
+      `INSERT INTO campaigns (id, "userId", name, template, "templateLanguage", "templateCategory", "templateHeaderImageUrl", "campaignType", "productIds", message, variables, audience, recipients, status, results, "sentAt", "failedAt", "createdAt")
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::jsonb, $12, $13::jsonb, $14, $15::jsonb, $16, $17, NOW())`,
+      [
+        id,
+        'default',
+        campaignData.name,
+        campaignData.template,
+        campaignData.templateLanguage || '',
+        campaignData.templateCategory || '',
+        campaignData.templateHeaderImageUrl || '',
+        campaignData.campaignType || 'template',
+        JSON.stringify(Array.isArray(campaignData.productIds) ? campaignData.productIds : []),
+        campaignData.message || '',
+        JSON.stringify(Array.isArray(campaignData.variables) ? campaignData.variables : []),
+        campaignData.audience || 'all_customers',
+        JSON.stringify(campaignData.recipients || []),
+        status,
+        JSON.stringify([]),
+        campaignData.scheduledAt ? new Date(campaignData.scheduledAt) : null,
+        null
+      ]
+    )
+
+    const [created] = await queryMany(
+      `SELECT id, name, template, "templateLanguage", "templateCategory", "templateHeaderImageUrl", "campaignType", "productIds", message, variables, audience, recipients, status, results, "sentAt", "failedAt", "createdAt"
+       FROM campaigns WHERE id = $1`,
+      [id]
+    )
+
+    return NextResponse.json(created)
   } catch (error) {
     console.error('Error creating campaign:', error)
-    return NextResponse.json(
-      { error: 'Failed to create campaign' },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: 'Failed to create campaign' }, { status: 500 })
   }
 }

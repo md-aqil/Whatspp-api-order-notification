@@ -127,9 +127,9 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
   }
 
   return (
-    <div className="flex flex-col h-full bg-white">
+    <div className="flex h-full flex-col rounded-[1.5rem] border border-slate-200/70 bg-white/90 shadow-[0_24px_50px_-36px_rgba(5,52,92,0.45)] dark:border-white/[0.06] dark:bg-[#0d0f17] dark:shadow-none">
       {/* Chat Header - Fixed to top */}
-      <div className="border-b p-4 sticky top-0 bg-gray-50 z-10">
+      <div className="sticky top-0 z-10 border-b border-slate-200/70 bg-slate-50/85 p-4 backdrop-blur-xl dark:border-white/[0.06] dark:bg-white/[0.03]">
         <div className="flex items-center">
           <img
             src={chat.avatar}
@@ -137,8 +137,8 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
             className="w-10 h-10 rounded-full object-cover mr-3"
           />
           <div>
-            <h3 className="font-semibold text-gray-900">{chat.name}</h3>
-            <p className="text-xs text-gray-500">{chat.phone}</p>
+            <h3 className="font-semibold text-slate-900 dark:text-white">{chat.name}</h3>
+            <p className="text-xs text-slate-500 dark:text-white/35">{chat.phone}</p>
           </div>
         </div>
       </div>
@@ -146,7 +146,7 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
       {/* Messages Container */}
       <div 
         ref={messagesContainerRef}
-        className="flex-1 overflow-y-auto overflow-x-hidden p-4 bg-gray-100"
+        className="flex-1 overflow-y-auto overflow-x-hidden bg-slate-100/80 p-4 dark:bg-[#11131d]"
       >
         <div className="space-y-2">
           {messages.map((message) => (
@@ -157,14 +157,14 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
               <div
                 className={`max-w-xs md:max-w-md px-3 py-2 rounded-lg ${
                   message.isCustomer
-                    ? 'bg-white text-gray-800 rounded-tl-none'
-                    : 'bg-green-100 text-gray-800 rounded-tr-none'
+                    ? 'rounded-tl-none bg-white text-slate-800 shadow-sm dark:bg-white/[0.06] dark:text-white'
+                    : 'rounded-tr-none bg-emerald-100 text-slate-800 shadow-sm dark:bg-emerald-500/15 dark:text-emerald-50'
                 }`}
               >
                 <p className="text-sm whitespace-pre-wrap break-words">{message.text}</p>
                 <p
                   className={`text-xs mt-1 ${
-                    message.isCustomer ? 'text-gray-500' : 'text-gray-600'
+                    message.isCustomer ? 'text-slate-500 dark:text-white/35' : 'text-slate-600 dark:text-emerald-100/70'
                   } text-right`}
                 >
                   {formatTime(message.timestamp)}
@@ -177,21 +177,21 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
       </div>
 
       {/* Input Area */}
-      <div className="border-t p-3 bg-white">
+      <div className="border-t border-slate-200/70 bg-white/95 p-3 dark:border-white/[0.06] dark:bg-[#0d0f17]">
         <div className="flex items-end space-x-2">
           <Textarea
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             onKeyPress={handleKeyPress}
             placeholder="Type a message"
-            className="flex-1 resize-none border rounded-full py-2 px-4"
+            className="flex-1 resize-none rounded-full border border-slate-200/80 bg-white px-4 py-2 text-slate-900 shadow-sm dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-white dark:placeholder:text-white/25"
             rows="1"
           />
           <Button
             onClick={handleSendMessage}
             disabled={inputValue.trim() === ''}
             size="icon"
-            className="rounded-full bg-green-500 hover:bg-green-600"
+            className="rounded-full bg-gradient-to-br from-emerald-500 to-teal-500 text-white hover:brightness-110"
           >
             <Send className="w-4 h-4 text-white" />
           </Button>

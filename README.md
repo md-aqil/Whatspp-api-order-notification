@@ -12,7 +12,7 @@ A comprehensive solution for integrating WhatsApp with Shopify for order notific
 ## Prerequisites
 
 - Node.js (v18+)
-- MongoDB
+- PostgreSQL
 - Facebook/WhatsApp Business Account
 - Shopify Store
 - Cloudflare Account with Argo Tunnel
@@ -28,9 +28,13 @@ yarn install
 ### 2. Configure Environment
 
 Update the `.env` file with your configuration:
-```
-MONGO_URL=mongodb://localhost:27017
-DB_NAME=WhatsApp_api
+```env
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=whatsapp_api
+DB_USER=mdaqil
+DB_PASSWORD=
+DB_URL=postgresql://mdaqil@localhost:5432/whatsapp_api
 NEXT_PUBLIC_BASE_URL=https://lcsw.dpdns.org
 CORS_ORIGINS=*
 ```
@@ -38,7 +42,7 @@ CORS_ORIGINS=*
 ### 3. Initialize Database
 
 ```bash
-node scripts/init-db.js
+node setup-postgres-tables.js
 ```
 
 ### 4. Cloudflare Tunnel Setup
@@ -70,14 +74,3 @@ start-tunnel.bat
 - [Setup Instructions](instructions.md)
 - [Cloudflare Tunnel Setup](CLOUDFLARE_TUNNEL_SETUP.md)
 - [Dashboard Usage](DASHBOARD.md)
-- [WhatsApp Integration Guide](WHATSAPP_CATALOG_INTEGRATION_GUIDE.md)
-
-## Testing
-
-Run the provided test scripts to verify your setup:
-
-```bash
-node test-db.js              # Test database connection
-node test-webhook-access.js  # Test webhook accessibility
-node check-webhook-logs.js   # Check recent webhook logs
-```

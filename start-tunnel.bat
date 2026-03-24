@@ -1,78 +1,76 @@
 @echo off
-title WhatsApp Commerce Hub - Cloudflare Tunnel
+title WhatsApp Commerce Hub - Starting App & Tunnel
 
 echo ==========================================
-echo   WhatsApp Commerce Hub - Cloudflare Tunnel
+echo   WhatsApp Commerce Hub - Starting Everything
 echo ==========================================
 echo.
 
-echo Starting Cloudflare Tunnel for WhatsApp Commerce Hub...
-echo.
+REM Check if npm/node is installed
+where npm >nul 2>nul
+if %errorlevel% neq 0 (
+    echo ERROR: npm is not installed
+    echo Please install Node.js from https://nodejs.org/
+    echo.
+    pause
+    exit /b 1
+)
 
 REM Check if cloudflared is installed
 where cloudflared >nul 2>nul
 if %errorlevel% neq 0 (
-    echo ERROR: cloudflared is not installed or not in PATH
+    echo ERROR: cloudflared is not installed
     echo.
-    echo Please install cloudflared from:
-    echo https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/
+    echo Please install cloudflared:
+    echo   macOS: brew install cloudflared
+    echo   Windows: Download from https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/
     echo.
-    echo Press any key to exit...
-    pause >nul
+    pause
     exit /b 1
 )
 
-echo ✅ cloudflared is installed
+echo ✅ npm and cloudflared are installed
 echo.
 
 REM Check if config file exists
 if not exist "tunnel-config\config.yaml" (
-    echo ERROR: config.yaml not found in tunnel-config directory
+    echo ERROR: config.yaml not found
+    echo Please run setup-cloudflare-tunnel.bat first
     echo.
-    echo Press any key to exit...
-    pause >nul
+    pause
     exit /b 1
 )
-
-echo ✅ config.yaml found
-echo.
 
 REM Check if credentials file exists
 if not exist "tunnel-config\credentials.json" (
-    echo ERROR: credentials.json not found in tunnel-config directory
+    echo ERROR: credentials.json not found
+    echo Please run setup-cloudflare-tunnel.bat first
     echo.
-    echo Please run fix-tunnel-error-1033.bat to fix this issue
-    echo.
-    echo Press any key to exit...
-    pause >nul
+    pause
     exit /b 1
 )
 
-echo ✅ credentials.json found
+echo ✅ Configuration files found
 echo.
 
-echo Starting Cloudflare Tunnel with configuration...
+echo ==========================================
+echo Starting Next.js app and Cloudflare Tunnel
+echo ==========================================
+echo.
+echo Next.js will start on http://localhost:3000
 echo Tunnel URL: https://lcsw.dpdns.org
 echo.
-
-REM Run the Cloudflare tunnel with verbose logging
-echo Starting tunnel... (Press Ctrl+C to stop)
+echo Press Ctrl+C to stop everything
 echo.
-cloudflared tunnel --config tunnel-config\config.yaml --loglevel debug run
 
-if %errorlevel% neq 0 (
-    echo.
-    echo ERROR: Cloudflare tunnel failed to start (exit code: %errorlevel%)
-    echo.
-    echo Please check:
-    echo 1. Your internet connection
-    echo 2. That the tunnel ID in config.yaml matches credentials.json
-    echo 3. That your Cloudflare account is active
-    echo.
-) else (
-    echo.
-    echo Cloudflare Tunnel has stopped.
-)
+REM Start both Next.js and tunnel
+REM Using start /B to run both in background
+start "Next.js" cmd /k "npm run dev"
+timeout /t 10 /nobreak >nul
+start "Cloudflare Tunnel" cmd /k "cloudflared tunnel --config tunnel-config\config.yaml run"
 
-echo Press any key to exit...
-pause >nul
+echo.
+echo Both services should be starting...
+echo.
+echo If the tunnel doesn't connect, make sure Next.js is running first
+echo.

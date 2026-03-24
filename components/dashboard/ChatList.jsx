@@ -64,12 +64,15 @@ export function ChatList({ chats, activeChatId, onSelectChat }) {
   }
 
   return (
-    <div className="flex flex-col h-full bg-white">
-      <div className="p-3 border-b flex justify-between items-center bg-gray-50">
-        <h2 className="text-lg font-semibold">Chats</h2>
+    <div className="flex h-full flex-col rounded-[1.5rem] border border-slate-200/70 bg-white/90 shadow-[0_24px_50px_-36px_rgba(5,52,92,0.45)] dark:border-white/[0.06] dark:bg-[#0d0f17] dark:shadow-none">
+      <div className="flex items-center justify-between border-b border-slate-200/70 bg-slate-50/80 p-3 dark:border-white/[0.06] dark:bg-white/[0.03]">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-[0.28em] text-slate-400 dark:text-white/25">Inbox</p>
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Chats</h2>
+        </div>
         <Dialog open={showNewChatDialog} onOpenChange={setShowNewChatDialog}>
           <DialogTrigger asChild>
-            <Button size="sm" variant="ghost" className="rounded-full p-2" onClick={() => setShowNewChatDialog(true)}>
+            <Button size="sm" variant="ghost" className="rounded-full border border-slate-200/70 bg-white/80 p-2 text-slate-700 shadow-sm hover:bg-slate-100 dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-white/70 dark:hover:bg-white/[0.08]" onClick={() => setShowNewChatDialog(true)}>
               <Plus className="w-5 h-5" />
             </Button>
           </DialogTrigger>
@@ -79,7 +82,7 @@ export function ChatList({ chats, activeChatId, onSelectChat }) {
             </DialogHeader>
             <div className="space-y-4">
               <div>
-                <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-1">
+                <label htmlFor="name" className="mb-1 block text-sm font-medium text-slate-700 dark:text-white/70">
                   Contact Name (Optional)
                 </label>
                 <Input
@@ -92,7 +95,7 @@ export function ChatList({ chats, activeChatId, onSelectChat }) {
                 />
               </div>
               <div>
-                <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-1">
+                <label htmlFor="phone" className="mb-1 block text-sm font-medium text-slate-700 dark:text-white/70">
                   Phone Number
                 </label>
                 <Input
@@ -120,8 +123,8 @@ export function ChatList({ chats, activeChatId, onSelectChat }) {
         {chats.map((chat) => (
           <div
             key={chat.id}
-            className={`flex items-center p-3 border-b cursor-pointer hover:bg-gray-100 ${
-              activeChatId === chat.id ? 'bg-green-50' : ''
+            className={`flex cursor-pointer items-center border-b border-slate-200/60 p-3 transition-colors hover:bg-slate-50 dark:border-white/[0.06] dark:hover:bg-white/[0.04] ${
+              activeChatId === chat.id ? 'bg-[#eff4ff] dark:bg-violet-600/10' : ''
             }`}
             onClick={() => onSelectChat(chat)}
           >
@@ -132,26 +135,26 @@ export function ChatList({ chats, activeChatId, onSelectChat }) {
                 className="w-12 h-12 rounded-full object-cover"
               />
               {chat.unread > 0 && (
-                <div className="absolute -top-1 -right-1 bg-green-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
+                <div className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-xs text-white">
                   {chat.unread}
                 </div>
               )}
             </div>
             <div className="ml-3 flex-1 min-w-0">
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-medium text-gray-900 truncate">
+                <h3 className="truncate text-sm font-medium text-slate-900 dark:text-white">
                   {chat.name}
                 </h3>
-                <span className="text-xs text-gray-500">
+                <span className="text-xs text-slate-500 dark:text-white/35">
                   {formatDate(chat.timestamp)}
                 </span>
               </div>
               <div className="flex items-center justify-between mt-1">
-                <p className="text-sm text-gray-500 truncate">
+                <p className="truncate text-sm text-slate-500 dark:text-white/45">
                   {chat.lastMessage}
                 </p>
                 {chat.unread > 0 && (
-                  <span className="bg-green-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-xs text-white">
                     {chat.unread}
                   </span>
                 )}

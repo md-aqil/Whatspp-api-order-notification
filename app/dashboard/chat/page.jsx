@@ -192,7 +192,16 @@ export default function DashboardChatPage() {
       })
       
       if (!response.ok) {
-        throw new Error('Failed to send message')
+        let errorMessage = 'Failed to send message'
+        try {
+          const errorData = await response.json()
+          errorMessage = errorData.guidance
+            ? `${errorData.error} ${errorData.guidance}`
+            : (errorData.error || errorMessage)
+        } catch {
+          // Keep the fallback message if the response body is not JSON.
+        }
+        throw new Error(errorMessage)
       }
       
       const result = await response.json()
@@ -222,24 +231,23 @@ export default function DashboardChatPage() {
       
     } catch (error) {
       console.error('Failed to send message:', error)
-      // Show error to user
-      alert('Failed to send message. Please try again.')
+      toast.error(error.message || 'Failed to send message. Please try again.')
     }
   }
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <p>Loading chats...</p>
+      <div className="chat-scene flex h-full items-center justify-center rounded-[1.75rem] border border-slate-200/70 bg-white/80 dark:border-white/[0.06] dark:bg-[#0d0f17]">
+        <p className="text-slate-600 dark:text-white/55">Loading chats...</p>
       </div>
     )
   }
 
   return (
-    <div className="flex h-full -ml-6 -mt-6 border-t border-gray-200 bg-gray-100">
+    <div className="chat-scene flex h-full -ml-6 -mt-6 border-t border-slate-200/60 bg-slate-100/70 dark:border-white/[0.06] dark:bg-[#0b0d14]">
       <Toaster position="bottom-right" />
       {/* Left Panel - Chat List */}
-      <div className="w-1/3 border-r flex flex-col h-full bg-white">
+      <div className="flex h-full w-1/3 flex-col border-r border-slate-200/60 bg-transparent dark:border-white/[0.06]">
         <ChatList 
           chats={chats} 
           activeChatId={activeChat?.id} 
@@ -256,11 +264,11 @@ export default function DashboardChatPage() {
             onSendMessage={handleSendMessage} 
           />
         ) : (
-          <div className="flex-1 flex items-center justify-center bg-gray-100">
+          <div className="flex flex-1 items-center justify-center bg-slate-100/70 dark:bg-[#11131d]">
             <div className="text-center">
-              <div className="bg-gray-200 border-2 border-dashed rounded-xl w-16 h-16 mx-auto mb-4" />
-              <h3 className="text-xl font-semibold text-gray-800 mb-2">WhatsApp Web</h3>
-              <p className="text-gray-500 max-w-md">
+              <div className="mx-auto mb-4 h-16 w-16 rounded-xl border-2 border-dashed border-slate-300 bg-slate-200 dark:border-white/[0.08] dark:bg-white/[0.04]" />
+              <h3 className="mb-2 text-xl font-semibold text-slate-800 dark:text-white">WhatsApp Web</h3>
+              <p className="max-w-md text-slate-500 dark:text-white/45">
                 Send and receive messages without keeping your phone online.
                 Use WhatsApp on up to 4 linked devices and 1 phone at the same time.
               </p>

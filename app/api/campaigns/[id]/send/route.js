@@ -1,230 +1,537 @@
 import { NextResponse } from 'next/server'
-import { MongoClient } from 'mongodb'
+import { buildMetaAuthHeaders, mapMetaAccessTokenError } from '@/lib/meta-auth'
+import { query, queryMany, queryOne } from '@/lib/postgres'
 
-// Database connection
-let client
-let db
-
-async function connectToMongo() {
-  if (!client) {
-    client = new MongoClient(process.env.MONGO_URL)
-    await client.connect()
-    db = client.db(process.env.DB_NAME)
-  }
-  return db
+async function ensureCampaignSchema() {
+  await query('ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS "templateLanguage" TEXT')
+  await query('ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS "templateCategory" TEXT')
+  await query('ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS "templateHeaderImageUrl" TEXT')
+  await query('ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS "campaignType" TEXT DEFAULT \'template\'')
+  await query('ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS "productIds" JSONB DEFAULT \'[]\'::jsonb')
+  await query('ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS variables JSONB DEFAULT \'[]\'::jsonb')
 }
 
-// Function to send WhatsApp message
 async function sendWhatsAppMessage(phoneNumberId, accessToken, to, messageData) {
-  const url = `https://graph.facebook.com/v22.0/${phoneNumberId}/messages`
-  
-  const response = await fetch(url, {
+  const response = await fetch(`https://graph.facebook.com/v22.0/${phoneNumberId}/messages`, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${accessToken}`,
+      ...buildMetaAuthHeaders(accessToken),
       'Content-Type': 'application/json'
     },
     body: JSON.stringify(messageData)
   })
 
   const data = await response.json()
-  
   if (!response.ok) {
-    console.error('WhatsApp API Error:', data);
-    throw new Error(data.error?.message || `WhatsApp API error: ${response.status} ${response.statusText}`)
+    throw new Error(mapMetaAccessTokenError(data.error?.message || 'WhatsApp API request failed'))
   }
-  
-  if (!data.messages || !Array.isArray(data.messages) || data.messages.length === 0) {
-    console.error('Unexpected WhatsApp API response:', data);
-    throw new Error('WhatsApp API returned unexpected response format')
-  }
-  
+
   return data
 }
 
-// POST /api/campaigns/[id]/send - Send a campaign
+async function getApprovedTemplateDefinition(businessAccountId, accessToken, templateName) {
+  const response = await fetch(`https://graph.facebook.com/v22.0/${businessAccountId}/message_templates`, {
+    headers: {
+      ...buildMetaAuthHeaders(accessToken),
+      'Content-Type': 'application/json'
+    },
+    cache: 'no-store'
+  })
+
+  const data = await response.json()
+  if (!response.ok) {
+    throw new Error(mapMetaAccessTokenError(data.error?.message || 'Failed to fetch WhatsApp template definition'))
+  }
+
+  const templates = Array.isArray(data.data) ? data.data : []
+  const selectedTemplate = templates.find((template) => template.name === templateName && template.status === 'APPROVED')
+
+  if (!selectedTemplate) {
+    throw new Error(`Approved template "${templateName}" was not found in Meta`)
+  }
+
+  return selectedTemplate
+}
+
+async function getRecipientContext(recipient) {
+  const phone = recipient.replace(/\D/g, '')
+  const [chat, order] = await Promise.all([
+    queryOne(
+      `SELECT name
+       FROM chats
+       WHERE "userId" = $1 AND regexp_replace(phone, '\D', '', 'g') = $2
+       ORDER BY timestamp DESC NULLS LAST, "createdAt" DESC NULLS LAST
+       LIMIT 1`,
+      ['default', phone]
+    ),
+    queryOne(
+      `SELECT "customerName", "orderNumber"
+       FROM orders
+       WHERE "userId" = $1 AND regexp_replace("customerPhone", '\D', '', 'g') = $2
+       ORDER BY "createdAt" DESC NULLS LAST
+       LIMIT 1`,
+      ['default', phone]
+    )
+  ])
+
+  return {
+    customer_name: chat?.name || order?.customerName || 'there',
+    customer_phone: recipient,
+    order_number: order?.orderNumber || ''
+  }
+}
+
+async function getSelectedProducts(productIds) {
+  if (!Array.isArray(productIds) || productIds.length === 0) return []
+
+  const row = await queryOne(
+    'SELECT products FROM products WHERE "userId" = $1 ORDER BY "updatedAt" DESC NULLS LAST, id DESC LIMIT 1',
+    ['default']
+  )
+
+  const products = Array.isArray(row?.products) ? row.products : []
+  return products.filter((product) => productIds.includes(product.id))
+}
+
+function buildProductContext(products, shopify, whatsapp = null) {
+  const firstProduct = products[0] || null
+  const baseDomain = shopify?.shopDomain ? `https://${String(shopify.shopDomain).replace(/^https?:\/\//, '')}` : ''
+  const whatsappCatalogLink = whatsapp?.businessAccountId || whatsapp?.phoneNumberId
+    ? `https://wa.me/c/${whatsapp.businessAccountId || whatsapp.phoneNumberId}`
+    : ''
+  const productLink = firstProduct?.url || firstProduct?.metaCatalogUrl || (firstProduct?.handle && baseDomain ? `${baseDomain}/products/${firstProduct.handle}` : '')
+  const catalogLink = baseDomain ? `${baseDomain}/collections/all` : whatsappCatalogLink
+  const explicitRetailerIds = products
+    .map((product) => String(product?.retailer_id || product?.retailerId || '').trim())
+    .filter(Boolean)
+  const retailerIds = products
+    .map((product) => String(product?.retailer_id || product?.retailerId || product?.id || '').trim())
+    .filter(Boolean)
+
+  return {
+    product_name: firstProduct?.title || firstProduct?.name || '',
+    product_price: firstProduct?.price ? `${firstProduct.price}` : '',
+    product_link: productLink,
+    product_names: products.slice(0, 3).map((product) => product.title || product.name).filter(Boolean).join(', '),
+    catalog_link: catalogLink,
+    product_retailer_id: retailerIds[0] || '',
+    product_retailer_ids: retailerIds,
+    explicit_product_retailer_id: explicitRetailerIds[0] || '',
+    explicit_product_retailer_ids: explicitRetailerIds
+  }
+}
+
+function resolveCampaignVariable(value, context) {
+  const trimmed = typeof value === 'string' ? value.trim() : ''
+  if (!trimmed) return ''
+
+  const normalized = trimmed.toLowerCase()
+  if (normalized === '{{customer_name}}') return context.customer_name || 'there'
+  if (normalized === '{{customer_phone}}') return context.customer_phone || ''
+  if (normalized === '{{order_number}}') return context.order_number || ''
+  if (normalized === '{{product_name}}') return context.product_name || ''
+  if (normalized === '{{product_price}}') return context.product_price || ''
+  if (normalized === '{{product_link}}') return context.product_link || ''
+  if (normalized === '{{product_names}}') return context.product_names || ''
+  if (normalized === '{{catalog_link}}') return context.catalog_link || ''
+
+  return trimmed
+}
+
+function inferTemplateVariable(exampleText, index = 0) {
+  const sample = String(exampleText || '').trim().toLowerCase()
+
+  if (sample.includes('customer') && sample.includes('name')) return '{{customer_name}}'
+  if (sample.includes('customer') && sample.includes('phone')) return '{{customer_phone}}'
+  if (sample.includes('catalog') || sample.includes('collection')) return '{{catalog_link}}'
+  if (sample.includes('product') && sample.includes('name')) return '{{product_name}}'
+  if (sample.includes('product') && sample.includes('price')) return '{{product_price}}'
+  if (sample.includes('product') && (sample.includes('link') || sample.includes('url'))) return '{{product_link}}'
+  if (sample.includes('browse') || sample.includes('link') || sample.includes('url')) return '{{product_link}}'
+
+  const fallbacks = ['{{customer_name}}', '{{catalog_link}}', '{{product_name}}', '{{product_link}}', '{{product_price}}']
+  return fallbacks[index] || '{{catalog_link}}'
+}
+
+function getTemplateExamples(component, groupKey) {
+  const examples = component?.example?.[groupKey]
+  if (Array.isArray(examples) && Array.isArray(examples[0])) return examples[0]
+  return []
+}
+
+function getTemplateParameterSlots(templateComponents = []) {
+  const slots = []
+
+  for (const component of templateComponents) {
+    if (component?.type === 'HEADER' && component.format === 'TEXT') {
+      const matches = component.text?.match(/\{\{\d+\}\}/g) || []
+      const examples = getTemplateExamples(component, 'header_text')
+      matches.forEach((_match, index) => {
+        slots.push({
+          componentType: 'HEADER',
+          parameterType: 'text',
+          example: examples[index] || ''
+        })
+      })
+    }
+
+    if (component?.type === 'BODY') {
+      const matches = component.text?.match(/\{\{\d+\}\}/g) || []
+      const examples = getTemplateExamples(component, 'body_text')
+      matches.forEach((_match, index) => {
+        slots.push({
+          componentType: 'BODY',
+          parameterType: 'text',
+          example: examples[index] || ''
+        })
+      })
+    }
+
+    if (component?.type === 'BUTTONS' && Array.isArray(component.buttons)) {
+      component.buttons.forEach((button) => {
+        const matches = button?.url?.match(/\{\{\d+\}\}/g) || []
+        matches.forEach((_match, index) => {
+          slots.push({
+            componentType: 'BUTTON',
+            parameterType: 'text',
+            buttonType: String(button.type || '').toUpperCase(),
+            example: button?.example?.[index] || ''
+          })
+        })
+      })
+    }
+  }
+
+  return slots
+}
+
+function templateHasProductActions(templateComponents = []) {
+  return templateComponents.some((component) => (
+    component?.type === 'BUTTONS' &&
+    Array.isArray(component.buttons) &&
+    component.buttons.some((button) => {
+      const buttonType = String(button?.type || '').toUpperCase()
+      return buttonType === 'MPM' || buttonType === 'CATALOG'
+    })
+  ))
+}
+
+function validatePublicMediaUrl(url, typeLabel) {
+  const value = String(url || '').trim()
+  if (!value) {
+    throw new Error(`Template requires a ${typeLabel} header but no public ${typeLabel} URL was provided.`)
+  }
+
+  if (value.startsWith('http://localhost') || value.startsWith('http://0.0.0.0') || value.startsWith('http://127.0.0.1')) {
+    throw new Error(`Template ${typeLabel} URL must be publicly accessible. "${value}" points to a local server.`)
+  }
+
+  return value
+}
+
+function buildCampaignTemplatePayload({ templateDefinition, templateName, templateLanguage, templateVariables = [], templateHeaderImageUrl = '', productContext, recipientContext }) {
+  const mergedContext = { ...productContext, ...recipientContext }
+  const templateComponents = Array.isArray(templateDefinition?.components) ? templateDefinition.components : []
+  const slots = getTemplateParameterSlots(templateComponents)
+  const resolvedVariableOrder = slots.map((slot, index) => (
+    typeof templateVariables[index] === 'string' && templateVariables[index].trim()
+      ? templateVariables[index].trim()
+      : inferTemplateVariable(slot.example, index)
+  ))
+
+  let cursor = 0
+  const components = []
+
+  for (const component of templateComponents) {
+    if (component?.type === 'HEADER') {
+      if (component.format === 'IMAGE') {
+        const headerUrl = validatePublicMediaUrl(templateHeaderImageUrl, 'image')
+        components.push({
+          type: 'header',
+          parameters: [
+            {
+              type: 'image',
+              image: { link: headerUrl }
+            }
+          ]
+        })
+      } else if (component.format === 'VIDEO') {
+        const headerUrl = validatePublicMediaUrl(templateHeaderImageUrl, 'video')
+        components.push({
+          type: 'header',
+          parameters: [
+            {
+              type: 'video',
+              video: { link: headerUrl }
+            }
+          ]
+        })
+      } else if (component.format === 'TEXT') {
+        const matches = component.text?.match(/\{\{\d+\}\}/g) || []
+        if (matches.length > 0) {
+          components.push({
+            type: 'header',
+            parameters: matches.map(() => {
+              const value = resolveCampaignVariable(resolvedVariableOrder[cursor] || '', mergedContext)
+              cursor += 1
+              return { type: 'text', text: value }
+            })
+          })
+        }
+      }
+    }
+
+    if (component?.type === 'BODY') {
+      const matches = component.text?.match(/\{\{\d+\}\}/g) || []
+      if (matches.length > 0) {
+        components.push({
+          type: 'body',
+          parameters: matches.map(() => {
+            const value = resolveCampaignVariable(resolvedVariableOrder[cursor] || '', mergedContext)
+            cursor += 1
+            return { type: 'text', text: value }
+          })
+        })
+      }
+    }
+
+    if (component?.type === 'BUTTONS' && Array.isArray(component.buttons)) {
+      component.buttons.forEach((button, buttonIndex) => {
+        const buttonType = String(button?.type || '').toUpperCase()
+
+        if (buttonType === 'MPM') {
+          const retailerIds = Array.isArray(productContext.explicit_product_retailer_ids) ? productContext.explicit_product_retailer_ids : []
+          if (retailerIds.length === 0) {
+            throw new Error('This template requires Meta retailer IDs for the selected products. Sync or map your Meta catalog retailer_id values before sending MPM templates.')
+          }
+
+          components.push({
+            type: 'button',
+            sub_type: 'mpm',
+            index: String(buttonIndex),
+            parameters: [
+              {
+                type: 'action',
+                action: {
+                  thumbnail_product_retailer_id: retailerIds[0],
+                  sections: [
+                    {
+                      title: 'Products',
+                      product_items: retailerIds.slice(0, 30).map((productRetailerId) => ({
+                        product_retailer_id: productRetailerId
+                      }))
+                    }
+                  ]
+                }
+              }
+            ]
+          })
+          return
+        }
+
+        if (buttonType === 'CATALOG') {
+          if (!productContext.explicit_product_retailer_id) {
+            throw new Error('This template requires a Meta retailer ID for the selected product. Sync or map the product retailer_id before sending catalog-button templates.')
+          }
+
+          components.push({
+            type: 'button',
+            sub_type: 'catalog',
+            index: String(buttonIndex),
+            parameters: [
+              {
+                type: 'action',
+                action: {
+                  thumbnail_product_retailer_id: productContext.explicit_product_retailer_id
+                }
+              }
+            ]
+          })
+          return
+        }
+
+        const matches = button?.url?.match(/\{\{\d+\}\}/g) || []
+        if (matches.length > 0) {
+          components.push({
+            type: 'button',
+            sub_type: buttonType.toLowerCase(),
+            index: String(buttonIndex),
+            parameters: matches.map(() => {
+              const value = resolveCampaignVariable(resolvedVariableOrder[cursor] || '', mergedContext)
+              cursor += 1
+              return { type: 'text', text: value }
+            })
+          })
+        }
+      })
+    }
+  }
+
+  const payload = {
+    name: templateName,
+    language: {
+      code: templateLanguage || templateDefinition?.language || 'en_US'
+    }
+  }
+
+  if (components.length > 0) {
+    payload.components = components
+  }
+
+  return payload
+}
+
+async function getRecipients(campaign) {
+  if (campaign.audience === 'custom') {
+    return Array.isArray(campaign.recipients) ? campaign.recipients : []
+  }
+
+  if (campaign.audience === 'recent_buyers') {
+    const rows = await queryMany(
+      `SELECT DISTINCT "customerPhone"
+       FROM orders
+       WHERE "userId" = $1
+         AND "customerPhone" IS NOT NULL
+         AND "createdAt" >= NOW() - INTERVAL '30 days'`,
+      ['default']
+    )
+    return rows.map((row) => row.customerPhone).filter(Boolean)
+  }
+
+  const rows = await queryMany(
+    `SELECT DISTINCT phone
+     FROM chats
+     WHERE "userId" = $1 AND phone IS NOT NULL`,
+    ['default']
+  )
+
+  return rows.map((row) => row.phone).filter(Boolean)
+}
+
 export async function POST(request, { params }) {
   try {
-    const { id } = params
-    const db = await connectToMongo()
-    
-    // Fetch the campaign from the database
-    const campaign = await db.collection('campaigns').findOne({ 
-      id: id, 
-      userId: 'default' 
-    })
-    
+    await ensureCampaignSchema()
+    const campaign = await queryOne(
+      `SELECT id, name, template, "templateLanguage", "templateCategory", "templateHeaderImageUrl", "campaignType", "productIds", message, variables, audience, recipients, status
+       FROM campaigns
+       WHERE id = $1 AND "userId" = $2`,
+      [params.id, 'default']
+    )
+
     if (!campaign) {
+      return NextResponse.json({ error: 'Campaign not found' }, { status: 404 })
+    }
+
+    if (campaign.status === 'sent') {
       return NextResponse.json(
-        { error: 'Campaign not found' },
-        { status: 404 }
+        { error: `Campaign "${campaign.name}" was already sent on this saved record. Create a new campaign to send again.` },
+        { status: 409 }
       )
     }
-    
-    // Validate the campaign is in a sendable state
-    if (campaign.status !== 'draft' && campaign.status !== 'scheduled') {
-      return NextResponse.json(
-        { error: 'Campaign is not in a sendable state' },
-        { status: 400 }
-      )
-    }
-    
-    // Get integrations
-    const integrations = await db.collection('integrations').findOne({ userId: 'default' })
-    
+
+    const integrations = await queryOne(
+      `SELECT whatsapp, shopify FROM integrations
+       WHERE "userId" = $1
+       ORDER BY "updatedAt" DESC NULLS LAST, id DESC
+       LIMIT 1`,
+      ['default']
+    )
+
     if (!integrations?.whatsapp?.phoneNumberId || !integrations?.whatsapp?.accessToken) {
+      return NextResponse.json({ error: 'WhatsApp not configured' }, { status: 400 })
+    }
+
+    // Fetch the live template definition from WhatsApp API
+    const templateDefinition = await getApprovedTemplateDefinition(
+      integrations.whatsapp.businessAccountId,
+      integrations.whatsapp.accessToken,
+      campaign.template
+    )
+
+    const storedVariables = Array.isArray(campaign.variables) ? campaign.variables : []
+    const hasProductActions = templateHasProductActions(templateDefinition.components || [])
+    const selectedProducts = await getSelectedProducts(campaign.productIds)
+
+    if (hasProductActions && selectedProducts.length === 0) {
       return NextResponse.json(
-        { error: 'WhatsApp not configured' },
+        { error: `Campaign template "${campaign.template}" includes a catalog product button. Campaigns without selected products cannot send this template. Use a template without MPM/catalog buttons or add campaign product selection support.` },
         { status: 400 }
       )
     }
-    
-    // Determine recipients
-    let recipients = []
-    if (campaign.audience === 'custom' && campaign.recipients && Array.isArray(campaign.recipients)) {
-      recipients = campaign.recipients
-    } else if (campaign.audience === 'custom' && campaign.recipientPhones) {
-      // Support comma-separated phone numbers
-      recipients = campaign.recipientPhones.split(',').map(p => p.trim()).filter(p => p)
-    } else {
-      // For demo purposes, we'll use a test phone number
-      // In a real implementation, you would fetch actual customer phone numbers
-      recipients = [process.env.TEST_PHONE_NUMBER || '+1234567890']
+
+    const productContext = buildProductContext(selectedProducts, integrations.shopify, integrations.whatsapp)
+
+    const recipients = await getRecipients(campaign)
+    if (recipients.length === 0) {
+      return NextResponse.json({ error: 'No recipients found for this campaign' }, { status: 400 })
     }
-    
-    // Send the campaign to each recipient
+
     const results = []
-    let successCount = 0
-    let failureCount = 0
-    
     for (const recipient of recipients) {
       try {
-        // Validate and format phone number
-        const formattedRecipient = recipient.replace(/\D/g, '')
-        
-        if (formattedRecipient.length < 10) {
-          results.push({
-            recipient: recipient,
-            success: false,
-            error: 'Invalid phone number format'
-          })
-          failureCount++
-          continue
-        }
-        
-        let messageData
-        
-        // Check if campaign uses a template
-        if (campaign.template) {
-          // Send using template
-          messageData = {
-            messaging_product: 'whatsapp',
-            to: formattedRecipient,
-            type: 'template',
-            template: {
-              name: campaign.template,
-              language: {
-                code: 'en'
-              }
-            }
-          }
-        } else {
-          // Send using text message
-          const messageBody = campaign.message || 'Hello! This is a campaign message.'
-          
-          if (!messageBody.trim()) {
-            results.push({
-              recipient: recipient,
-              success: false,
-              error: 'Message body is required when not using a template'
-            })
-            failureCount++
-            continue
-          }
-          
-          messageData = {
-            messaging_product: 'whatsapp',
-            to: formattedRecipient,
-            type: 'text',
-            text: {
-              body: messageBody
-            }
-          }
-        }
-        
-        // Send the message
+        const recipientContext = await getRecipientContext(recipient)
+        const messageTemplate = buildCampaignTemplatePayload({
+          templateDefinition,
+          templateName: campaign.template,
+          templateLanguage: campaign.templateLanguage,
+          templateVariables: storedVariables,
+          templateHeaderImageUrl: campaign.templateHeaderImageUrl,
+          productContext,
+          recipientContext
+        })
+
         const result = await sendWhatsAppMessage(
           integrations.whatsapp.phoneNumberId,
           integrations.whatsapp.accessToken,
-          formattedRecipient,
-          messageData
+          recipient,
+          {
+            messaging_product: 'whatsapp',
+            to: recipient.replace(/\D/g, ''),
+            type: 'template',
+            template: messageTemplate
+          }
         )
-        
-        results.push({
-          recipient: recipient,
-          success: true,
-          messageId: result.messages?.[0]?.id
-        })
-        successCount++
+
+        await query(
+          `INSERT INTO messages (id, "userId", "campaignId", recipient, phone, message, "isCustomer", timestamp, "whatsappMessageId", status, template, "sentAt", "createdAt")
+           VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8, $9, $10, NOW(), NOW())`,
+          [
+            crypto.randomUUID(),
+            'default',
+            campaign.id,
+            recipient,
+            recipient,
+            campaign.message || campaign.template,
+            false,
+            result.messages?.[0]?.id || null,
+            'sent',
+            campaign.template
+          ]
+        )
+
+        results.push({ recipient, success: true, messageId: result.messages?.[0]?.id || null })
       } catch (error) {
-        console.error(`Failed to send campaign to ${recipient}:`, error)
-        results.push({
-          recipient: recipient,
-          success: false,
-          error: error.message || 'Failed to send message'
-        })
-        failureCount++
+        results.push({ recipient, success: false, error: error.message })
       }
     }
-    
-    // Determine overall campaign status
-    let campaignStatus
-    if (successCount > 0 && failureCount === 0) {
-      campaignStatus = 'sent'
-    } else if (successCount > 0 && failureCount > 0) {
-      campaignStatus = 'partially_sent'
-    } else {
-      campaignStatus = 'failed'
-    }
-    
-    // Update campaign status
-    const updateData = {
-      status: campaignStatus,
-      sentAt: new Date(),
-      results: results,
-      sentCount: successCount,
-      failedCount: failureCount
-    }
-    
-    await db.collection('campaigns').updateOne(
-      { id: id, userId: 'default' },
-      { $set: updateData }
+
+    const anySuccess = results.some((item) => item.success)
+
+    await query(
+      `UPDATE campaigns
+       SET status = $2, results = $3::jsonb, "sentAt" = CASE WHEN $2 = 'sent' THEN NOW() ELSE "sentAt" END,
+           "failedAt" = CASE WHEN $2 = 'failed' THEN NOW() ELSE "failedAt" END
+       WHERE id = $1`,
+      [campaign.id, anySuccess ? 'sent' : 'failed', JSON.stringify(results)]
     )
-    
-    return NextResponse.json({ 
-      success: successCount > 0,
-      status: campaignStatus,
-      message: `${successCount} messages sent successfully, ${failureCount} failed`,
-      sentAt: new Date(),
-      results: results
+
+    return NextResponse.json({
+      success: anySuccess,
+      message: anySuccess ? 'Campaign sent successfully using the approved template' : 'Campaign failed',
+      results
     })
   } catch (error) {
     console.error('Error sending campaign:', error)
-    
-    // Update campaign status to failed if there was a system error
-    try {
-      const db = await connectToMongo()
-      await db.collection('campaigns').updateOne(
-        { id: params.id, userId: 'default' },
-        { $set: { status: 'failed', error: error.message } }
-      )
-    } catch (updateError) {
-      console.error('Failed to update campaign status after error:', updateError)
-    }
-    
-    return NextResponse.json(
-      { error: 'Failed to send campaign', details: error.message },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: error.message || 'Failed to send campaign' }, { status: 500 })
   }
 }
