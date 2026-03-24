@@ -2,236 +2,386 @@ import { NextResponse } from 'next/server'
 import { query } from '@/lib/postgres'
 import { ensureSettingsTables } from '@/lib/settings-db'
 
-// Standard Shopify webhook topics mapped to internal trigger events
 const SHOPIFY_WEBHOOK_TOPICS = [
-    { value: 'shopify.order_created', label: 'Order Created', topic: 'orders/create', description: 'When a new order is created' },
-    { value: 'shopify.order_updated', label: 'Order Updated', topic: 'orders/updated', description: 'When an order is updated' },
-    { value: 'shopify.order_paid', label: 'Order Paid', topic: 'orders/paid', description: 'When payment is received for an order' },
-    { value: 'shopify.fulfillment_created', label: 'Fulfillment Created', topic: 'orders/fulfilled', description: 'When tracking is created' },
-    { value: 'shopify.order_cancelled', label: 'Order Cancelled', topic: 'orders/cancelled', description: 'When an order is cancelled' },
-    { value: 'shopify.order_delivered', label: 'Order Delivered', topic: 'orders/delivered', description: 'When delivery is confirmed' },
-    { value: 'shopify.customer_created', label: 'Customer Created', topic: 'customers/create', description: 'When a new customer registers' },
-    { value: 'shopify.customer_updated', label: 'Customer Updated', topic: 'customers/update', description: 'When customer information is updated' },
+  { value: 'shopify.order_created', label: 'Order Created', topic: 'orders/create', description: 'When a new order is created' },
+  { value: 'shopify.order_updated', label: 'Order Updated', topic: 'orders/updated', description: 'When an order is updated' },
+  { value: 'shopify.order_paid', label: 'Order Paid', topic: 'orders/paid', description: 'When payment is received for an order' },
+  { value: 'shopify.fulfillment_created', label: 'Fulfillment Created', topic: 'orders/fulfilled', description: 'When tracking is created' },
+  { value: 'shopify.order_cancelled', label: 'Order Cancelled', topic: 'orders/cancelled', description: 'When an order is cancelled' },
+  { value: 'shopify.order_delivered', label: 'Order Delivered', topic: 'orders/delivered', description: 'When delivery is confirmed' },
+  { value: 'shopify.customer_created', label: 'Customer Created', topic: 'customers/create', description: 'When a new customer registers' },
+  { value: 'shopify.customer_updated', label: 'Customer Updated', topic: 'customers/update', description: 'When customer information is updated' },
 ]
 
+const EMPTY_WORDPRESS_CONFIG = {
+  wordpress_url: '',
+  woocommerce: {
+    enabled: false,
+    triggers: []
+  },
+  custom_tables: {
+    enabled: false,
+    tables: []
+  }
+}
+
 const EMPTY_CONFIG = {
-    wordpress_url: '',
+  ...EMPTY_WORDPRESS_CONFIG,
+  shopify: {
+    enabled: false,
+    connected: false,
+    triggers: []
+  },
+  connection: null,
+  selected_wordpress_connection_id: null
+}
+
+function normalizeConnection(row) {
+  if (!row) return null
+
+  return {
+    id: row.id,
+    site_id: row.site_id,
+    site_name: row.site_name,
+    site_url: row.site_url,
+    status: row.status,
+    plugin_version: row.plugin_version || '',
+    webhook_secret: row.webhook_secret || '',
+    lastSeenAt: row.lastSeenAt || null,
+    metadata: row.metadata && typeof row.metadata === 'object' ? row.metadata : {}
+  }
+}
+
+function normalizeWordPressConfig(config, fallbackUrl = '') {
+  if (!config || typeof config !== 'object') {
+    return {
+      ...EMPTY_WORDPRESS_CONFIG,
+      wordpress_url: fallbackUrl
+    }
+  }
+
+  return {
+    wordpress_url: config.wordpress_url || fallbackUrl || '',
     woocommerce: {
-        enabled: false,
-        triggers: []
+      enabled: Boolean(config?.woocommerce?.enabled),
+      triggers: Array.isArray(config?.woocommerce?.triggers) ? config.woocommerce.triggers : []
     },
     custom_tables: {
-        enabled: false,
-        tables: []
-    },
-    shopify: {
-        enabled: false,
-        connected: false,
-        triggers: []
+      enabled: Boolean(config?.custom_tables?.enabled),
+      tables: Array.isArray(config?.custom_tables?.tables) ? config.custom_tables.tables : []
     }
+  }
 }
 
-// Fetch configuration from WordPress plugin
-// This allows Automation Studio to show only configured tables and triggers
+async function getShopifyConfig(userId) {
+  let shopifyConfig = { enabled: false, connected: false, triggers: [] }
 
-export async function GET() {
-    try {
-        await ensureSettingsTables()
+  try {
+    const shopifyIntegration = await query(
+      `SELECT shopify FROM integrations WHERE "userId" = $1 ORDER BY "updatedAt" DESC NULLS LAST, id DESC LIMIT 1`,
+      [userId]
+    )
 
-        // Get WordPress site URL from database first, then environment
-        let wordpressUrl = process.env.WORDPRESS_URL || process.env.NEXT_PUBLIC_WORDPRESS_URL
+    if (shopifyIntegration?.rows?.[0]?.shopify) {
+      const shopify = shopifyIntegration.rows[0].shopify
+      const isConnected = !!(shopify.shopDomain && shopify.clientId && shopify.clientSecret)
+      shopifyConfig = {
+        enabled: true,
+        connected: isConnected,
+        shopDomain: shopify.shopDomain || '',
+        triggers: SHOPIFY_WEBHOOK_TOPICS
+      }
+    }
+  } catch (error) {
+    console.log('Shopify integration check skipped:', error.message)
+  }
 
-        // Try to get from database if not in env
-        if (!wordpressUrl) {
-            const storedConfig = await query(
-                `SELECT config FROM wa_config WHERE "userId" = $1 ORDER BY "updatedAt" DESC LIMIT 1`,
-                ['default']
-            )
+  return shopifyConfig
+}
 
-            if (storedConfig?.rows?.[0]?.config?.wordpress_url) {
-                wordpressUrl = storedConfig.rows[0].config.wordpress_url
-            }
-        }
+async function getStoredWaConfig(userId) {
+  const result = await query(
+    `SELECT id, config FROM wa_config WHERE "userId" = $1 ORDER BY "updatedAt" DESC LIMIT 1`,
+    [userId]
+  )
 
-        // Get Shopify integration status
-        let shopifyConfig = { enabled: false, connected: false, triggers: [] }
-        try {
-            const shopifyIntegration = await query(
-                `SELECT shopify FROM integrations WHERE "userId" = $1 ORDER BY "updatedAt" DESC NULLS LAST, id DESC LIMIT 1`,
-                ['default']
-            )
+  return result?.rows?.[0] || null
+}
 
-            if (shopifyIntegration?.rows?.[0]?.shopify) {
-                const shopify = shopifyIntegration.rows[0].shopify
-                const isConnected = !!(shopify.shopDomain && shopify.clientId && shopify.clientSecret)
-                shopifyConfig = {
-                    enabled: true,
-                    connected: isConnected,
-                    shopDomain: shopify.shopDomain || '',
-                    triggers: SHOPIFY_WEBHOOK_TOPICS
-                }
-            }
-        } catch (err) {
-            console.log('Shopify integration check skipped:', err.message)
-        }
+async function getPreferredWordPressConnection({ userId, connectionId, siteId, selectedConnectionId }) {
+  if (connectionId) {
+    const result = await query(
+      'SELECT * FROM wordpress_connections WHERE id = $1 AND "userId" = $2 LIMIT 1',
+      [connectionId, userId]
+    )
+    return result?.rows?.[0] || null
+  }
 
-        if (!wordpressUrl || wordpressUrl === 'undefined' || wordpressUrl === '') {
-            // Return stored config from database as fallback
-            const stored = await query(
-                `SELECT config FROM wa_config WHERE "userId" = $1 ORDER BY "updatedAt" DESC LIMIT 1`,
-                ['default']
-            )
+  if (siteId) {
+    const result = await query(
+      'SELECT * FROM wordpress_connections WHERE site_id = $1 AND "userId" = $2 LIMIT 1',
+      [siteId, userId]
+    )
+    return result?.rows?.[0] || null
+  }
 
-            if (stored?.rows?.[0]?.config) {
-                // Ensure we return the wordpress_url even if not in plugin config
-                const config = stored.rows[0].config
-                return NextResponse.json({
-                    wordpress_url: config.wordpress_url || '',
-                    woocommerce: config.woocommerce || { enabled: false, triggers: [] },
-                    custom_tables: config.custom_tables || { enabled: false, tables: [] },
-                    shopify: shopifyConfig
-                })
-            }
+  if (selectedConnectionId) {
+    const result = await query(
+      'SELECT * FROM wordpress_connections WHERE id = $1 AND "userId" = $2 LIMIT 1',
+      [selectedConnectionId, userId]
+    )
+    if (result?.rows?.[0]) {
+      return result.rows[0]
+    }
+  }
 
-            return NextResponse.json({
-                wordpress_url: '',
-                woocommerce: {
-                    enabled: false,
-                    triggers: []
-                },
-                custom_tables: {
-                    enabled: false,
-                    tables: []
-                },
-                shopify: shopifyConfig
-            })
-        }
+  const result = await query(
+    `SELECT * FROM wordpress_connections
+     WHERE "userId" = $1
+     ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END, "updatedAt" DESC, "createdAt" DESC
+     LIMIT 1`,
+    [userId]
+  )
 
-        // Fetch from WordPress admin AJAX
-        const wpUrl = `${wordpressUrl}/wp-admin/admin-ajax.php?action=wa_get_config`
+  return result?.rows?.[0] || null
+}
 
-        try {
-            const response = await fetch(wpUrl, {
-                method: 'GET',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                cache: 'no-store' // Don't cache - fetch fresh from WordPress every time
-            })
+async function upsertWaConfig(userId, config) {
+  const existing = await getStoredWaConfig(userId)
 
-            if (response.ok) {
-                const config = await response.json()
+  if (existing?.id) {
+    await query(
+      `UPDATE wa_config SET config = $1::jsonb, "updatedAt" = NOW() WHERE id = $2`,
+      [JSON.stringify(config), existing.id]
+    )
+    return existing.id
+  }
 
-                // Store config in database for offline access.
-                const existing = await query(
-                    `SELECT id FROM wa_config WHERE "userId" = $1 ORDER BY "updatedAt" DESC LIMIT 1`,
-                    ['default']
-                )
+  const inserted = await query(
+    `INSERT INTO wa_config ("userId", config, "createdAt", "updatedAt")
+     VALUES ($1, $2::jsonb, NOW(), NOW())
+     RETURNING id`,
+    [userId, JSON.stringify(config)]
+  )
 
-                if (existing?.rows?.[0]?.id) {
-                    await query(
-                        `UPDATE wa_config SET config = $1::jsonb, "updatedAt" = NOW() WHERE id = $2`,
-                        [JSON.stringify(config), existing.rows[0].id]
-                    )
-                } else {
-                    await query(
-                        `INSERT INTO wa_config ("userId", config, "createdAt", "updatedAt")
-                         VALUES ($1, $2::jsonb, NOW(), NOW())`,
-                        ['default', JSON.stringify(config)]
-                    )
-                }
+  return inserted?.rows?.[0]?.id || null
+}
 
-                // Return combined config with Shopify
-                return NextResponse.json({
-                    ...config,
-                    shopify: shopifyConfig
-                })
-            }
-        } catch (fetchError) {
-            console.log('Failed to fetch from WordPress:', fetchError.message)
-        }
+async function cacheConnectionConfig(connectionId, config, status = 'active') {
+  const metadataPatch = {
+    cached_plugin_config: config,
+    cached_plugin_config_at: new Date().toISOString()
+  }
 
-        // Return stored config as fallback
-        const stored = await query(
-            `SELECT config FROM wa_config WHERE "userId" = $1 ORDER BY "updatedAt" DESC LIMIT 1`,
-            ['default']
-        )
+  await query(
+    `UPDATE wordpress_connections
+     SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
+         status = $2,
+         "lastSeenAt" = NOW(),
+         "updatedAt" = NOW()
+     WHERE id = $3`,
+    [JSON.stringify(metadataPatch), status, connectionId]
+  )
+}
 
-        if (stored?.rows?.[0]?.config) {
-            const config = stored.rows[0].config
-            return NextResponse.json({
-                wordpress_url: config.wordpress_url || '',
-                woocommerce: config.woocommerce || { enabled: false, triggers: [] },
-                custom_tables: config.custom_tables || { enabled: false, tables: [] },
-                shopify: shopifyConfig
-            })
-        }
+function buildResponse({ wordpressConfig, shopifyConfig, connection, selectedConnectionId }) {
+  return {
+    ...wordpressConfig,
+    shopify: shopifyConfig,
+    connection,
+    selected_wordpress_connection_id: selectedConnectionId || null
+  }
+}
 
-        return NextResponse.json({
-            wordpress_url: '',
-            woocommerce: {
-                enabled: false,
-                triggers: []
-            },
-            custom_tables: {
-                enabled: false,
-                tables: []
-            },
-            shopify: shopifyConfig
+export async function GET(request) {
+  try {
+    await ensureSettingsTables()
+
+    const url = new URL(request.url)
+    const userId = url.searchParams.get('userId') || 'default'
+    const connectionId = url.searchParams.get('connectionId') || url.searchParams.get('connection_id')
+    const siteId = url.searchParams.get('siteId') || url.searchParams.get('site_id')
+
+    const [shopifyConfig, storedConfigRow] = await Promise.all([
+      getShopifyConfig(userId),
+      getStoredWaConfig(userId)
+    ])
+
+    const storedConfig = storedConfigRow?.config && typeof storedConfigRow.config === 'object'
+      ? storedConfigRow.config
+      : {}
+
+    const preferredConnectionRow = await getPreferredWordPressConnection({
+      userId,
+      connectionId,
+      siteId,
+      selectedConnectionId: storedConfig.selected_wordpress_connection_id
+    })
+
+    const preferredConnection = normalizeConnection(preferredConnectionRow)
+    const fallbackWordPressUrl = preferredConnection?.site_url
+      || storedConfig.wordpress_url
+      || process.env.WORDPRESS_URL
+      || process.env.NEXT_PUBLIC_WORDPRESS_URL
+      || ''
+
+    if (!fallbackWordPressUrl) {
+      return NextResponse.json(
+        buildResponse({
+          wordpressConfig: normalizeWordPressConfig(storedConfig),
+          shopifyConfig,
+          connection: preferredConnection,
+          selectedConnectionId: preferredConnection?.id || storedConfig.selected_wordpress_connection_id || null
         })
-
-    } catch (error) {
-        console.error('Error fetching config:', error)
-        return NextResponse.json(EMPTY_CONFIG)
+      )
     }
+
+    const wpUrl = `${fallbackWordPressUrl}/wp-admin/admin-ajax.php?action=wa_get_config`
+
+    try {
+      const response = await fetch(wpUrl, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        cache: 'no-store'
+      })
+
+      if (response.ok) {
+        const fetchedConfig = await response.json()
+        const normalizedConfig = normalizeWordPressConfig(fetchedConfig, fallbackWordPressUrl)
+        const selectedConnectionId = preferredConnection?.id || storedConfig.selected_wordpress_connection_id || null
+
+        const persistedConfig = {
+          ...normalizedConfig,
+          selected_wordpress_connection_id: selectedConnectionId
+        }
+
+        await upsertWaConfig(userId, persistedConfig)
+
+        if (preferredConnection?.id) {
+          await cacheConnectionConfig(preferredConnection.id, normalizedConfig, 'active')
+        }
+
+        return NextResponse.json(
+          buildResponse({
+            wordpressConfig: normalizedConfig,
+            shopifyConfig,
+            connection: preferredConnection,
+            selectedConnectionId
+          })
+        )
+      }
+    } catch (fetchError) {
+      console.log('Failed to fetch from WordPress:', fetchError.message)
+    }
+
+    const cachedPluginConfig = preferredConnection?.metadata?.cached_plugin_config
+    const fallbackConfig = normalizeWordPressConfig(
+      cachedPluginConfig || storedConfig,
+      fallbackWordPressUrl
+    )
+
+    return NextResponse.json(
+      buildResponse({
+        wordpressConfig: fallbackConfig,
+        shopifyConfig,
+        connection: preferredConnection,
+        selectedConnectionId: preferredConnection?.id || storedConfig.selected_wordpress_connection_id || null
+      })
+    )
+  } catch (error) {
+    console.error('Error fetching config:', error)
+    return NextResponse.json(EMPTY_CONFIG)
+  }
 }
 
-// Store manual config update
 export async function POST(request) {
-    try {
-        await ensureSettingsTables()
+  try {
+    await ensureSettingsTables()
 
-        const body = await request.json()
-        const { wordpress_url, woocommerce_triggers, custom_tables } = body
+    const body = await request.json()
+    const {
+      userId = 'default',
+      connection_id,
+      site_id,
+      wordpress_url,
+      woocommerce_triggers,
+      custom_tables
+    } = body
+    const storedConfigRow = await getStoredWaConfig(userId)
+    const storedConfig = storedConfigRow?.config && typeof storedConfigRow.config === 'object'
+      ? storedConfigRow.config
+      : {}
 
-        // Store WordPress URL in config
-        const config = {
-            wordpress_url: wordpress_url || '',
-            woocommerce: {
-                enabled: true,
-                triggers: woocommerce_triggers || []
-            },
-            custom_tables: {
-                enabled: true,
-                tables: custom_tables || []
-            }
-        }
+    let selectedConnectionRow = null
+    if (connection_id || site_id) {
+      selectedConnectionRow = await getPreferredWordPressConnection({
+        userId,
+        connectionId: connection_id,
+        siteId: site_id,
+        selectedConnectionId: null
+      })
 
-        // Try to update first, then insert if not exists
-        const existing = await query(
-            `SELECT id FROM wa_config WHERE "userId" = $1`,
-            ['default']
-        )
-
-        if (existing?.rows?.length > 0) {
-            await query(
-                `UPDATE wa_config SET config = $1, "updatedAt" = NOW() WHERE "userId" = $2`,
-                [JSON.stringify(config), 'default']
-            )
-        } else {
-            await query(
-                `INSERT INTO wa_config ("userId", config, "createdAt", "updatedAt")
-                VALUES ($1, $2::jsonb, NOW(), NOW())`,
-                ['default', JSON.stringify(config)]
-            )
-        }
-
-        return NextResponse.json({ success: true, config })
-    } catch (error) {
-        console.error('Error saving config:', error)
+      if (!selectedConnectionRow) {
         return NextResponse.json(
-            { error: 'Failed to save configuration' },
-            { status: 500 }
+          { error: 'Selected WordPress connection was not found' },
+          { status: 404 }
         )
+      }
     }
+
+    const selectedConnection = normalizeConnection(selectedConnectionRow)
+    const existingConnectionConfig = selectedConnection?.metadata?.cached_plugin_config
+      && typeof selectedConnection.metadata.cached_plugin_config === 'object'
+      ? selectedConnection.metadata.cached_plugin_config
+      : {}
+    const nextConfig = {
+      wordpress_url: selectedConnection?.site_url || wordpress_url || '',
+      woocommerce: {
+        enabled: Array.isArray(woocommerce_triggers)
+          ? woocommerce_triggers.length > 0
+          : Boolean(existingConnectionConfig?.woocommerce?.enabled || storedConfig?.woocommerce?.enabled),
+        triggers: Array.isArray(woocommerce_triggers)
+          ? woocommerce_triggers
+          : (existingConnectionConfig?.woocommerce?.triggers || storedConfig?.woocommerce?.triggers || [])
+      },
+      custom_tables: {
+        enabled: Array.isArray(custom_tables)
+          ? custom_tables.length > 0
+          : Boolean(existingConnectionConfig?.custom_tables?.enabled || storedConfig?.custom_tables?.enabled),
+        tables: Array.isArray(custom_tables)
+          ? custom_tables
+          : (existingConnectionConfig?.custom_tables?.tables || storedConfig?.custom_tables?.tables || [])
+      },
+      selected_wordpress_connection_id: selectedConnection?.id || null
+    }
+
+    await upsertWaConfig(userId, nextConfig)
+
+    if (selectedConnection?.id) {
+      const shouldCacheManualConfig = nextConfig.woocommerce.triggers.length > 0 || nextConfig.custom_tables.tables.length > 0
+
+      if (shouldCacheManualConfig) {
+        await cacheConnectionConfig(selectedConnection.id, nextConfig, selectedConnection.status || 'pending')
+      }
+    }
+
+    const shopifyConfig = await getShopifyConfig(userId)
+
+    return NextResponse.json(
+      buildResponse({
+        wordpressConfig: nextConfig,
+        shopifyConfig,
+        connection: selectedConnection,
+        selectedConnectionId: selectedConnection?.id || null
+      })
+    )
+  } catch (error) {
+    console.error('Error saving config:', error)
+    return NextResponse.json(
+      { error: 'Failed to save configuration' },
+      { status: 500 }
+    )
+  }
 }

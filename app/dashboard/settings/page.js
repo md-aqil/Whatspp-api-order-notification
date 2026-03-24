@@ -61,6 +61,15 @@ export default function SettingsPage() {
   ]
 
   const [customWebhookStatus, setCustomWebhookStatus] = useState(null)
+  const [wordpressConnections, setWordpressConnections] = useState([])
+  const [loadingWordPressConnections, setLoadingWordPressConnections] = useState(false)
+  const [addWordPressOpen, setAddWordPressOpen] = useState(false)
+  const [selectedWordPressConnectionId, setSelectedWordPressConnectionId] = useState(null)
+  const [newWordPressConnection, setNewWordPressConnection] = useState({
+    site_name: '',
+    site_url: '',
+    site_id: '',
+  })
 
   useEffect(() => {
     setMounted(true)
@@ -90,6 +99,23 @@ export default function SettingsPage() {
       }
     } catch (error) {
       console.error('Failed to load registered webhooks:', error)
+    }
+  }
+
+  const loadWordPressConnections = async () => {
+    try {
+      setLoadingWordPressConnections(true)
+      const response = await fetch('/api/wordpress-connections', {
+        cache: 'no-store'
+      })
+      if (response.ok) {
+        const data = await response.json()
+        setWordpressConnections(Array.isArray(data) ? data : [])
+      }
+    } catch (error) {
+      console.error('Failed to load WordPress connections:', error)
+    } finally {
+      setLoadingWordPressConnections(false)
     }
   }
 
@@ -142,9 +168,100 @@ export default function SettingsPage() {
     }
   }
 
+  const handleAddWordPressConnection = async () => {
+    if (!newWordPressConnection.site_url) {
+      toast.error('Please enter the WordPress site URL')
+      return
+    }
+
+    try {
+      setLoading(true)
+      const response = await fetch('/api/wordpress-connections', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newWordPressConnection)
+      })
+
+      const payload = await response.json()
+
+      if (response.ok) {
+        toast.success('WordPress site connected')
+        setAddWordPressOpen(false)
+        setNewWordPressConnection({ site_name: '', site_url: '', site_id: '' })
+        setSelectedWordPressConnectionId(payload.id)
+        await savePreferredWordPressConnection(payload.id, false)
+        loadWordPressConnections()
+      } else {
+        toast.error(payload.error || 'Failed to connect WordPress site')
+      }
+    } catch (error) {
+      console.error('Failed to add WordPress connection:', error)
+      toast.error('Failed to connect WordPress site')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleDeleteWordPressConnection = async (id) => {
+    try {
+      const response = await fetch(`/api/wordpress-connections?id=${id}`, {
+        method: 'DELETE'
+      })
+
+      if (response.ok) {
+        toast.success('WordPress site removed')
+        if (selectedWordPressConnectionId === id) {
+          setSelectedWordPressConnectionId(null)
+        }
+        loadWordPressConnections()
+      } else {
+        const payload = await response.json()
+        toast.error(payload.error || 'Failed to remove WordPress site')
+      }
+    } catch (error) {
+      console.error('Failed to delete WordPress connection:', error)
+      toast.error('Failed to remove WordPress site')
+    }
+  }
+
+  const savePreferredWordPressConnection = async (connectionId, showToast = true) => {
+    try {
+      setLoading(true)
+      const response = await fetch('/api/wa-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connection_id: connectionId })
+      })
+
+      const payload = await response.json()
+
+      if (!response.ok) {
+        toast.error(payload.error || 'Failed to select WordPress site')
+        return false
+      }
+
+      setSelectedWordPressConnectionId(payload.selected_wordpress_connection_id || null)
+      setWoocommerceTriggers(payload.woocommerce?.triggers || [])
+      setCustomTables(payload.custom_tables?.tables || [])
+
+      if (showToast) {
+        toast.success('WordPress site selected for plugin config')
+      }
+
+      return true
+    } catch (error) {
+      console.error('Failed to save preferred WordPress connection:', error)
+      toast.error('Failed to select WordPress site')
+      return false
+    } finally {
+      setLoading(false)
+    }
+  }
+
   // Load registered webhooks on mount
   useEffect(() => {
     loadRegisteredWebhooks()
+    loadWordPressConnections()
   }, [])
 
   // Integration state
@@ -216,6 +333,7 @@ export default function SettingsPage() {
         if (data && data.wordpress_url !== undefined) {
           setWoocommerceTriggers(data.woocommerce?.triggers || [])
           setCustomTables(data.custom_tables?.tables || [])
+          setSelectedWordPressConnectionId(data.selected_wordpress_connection_id || null)
         }
       } catch (e) {
         console.log('No config loaded yet:', e)
@@ -279,6 +397,7 @@ export default function SettingsPage() {
           if (waConfig?.custom_tables?.tables) {
             setCustomTables(waConfig.custom_tables.tables)
           }
+          setSelectedWordPressConnectionId(waConfig?.selected_wordpress_connection_id || null)
         }
       } catch (e) {
         console.log('wa-config fetch error:', e)
@@ -545,6 +664,145 @@ export default function SettingsPage() {
                   <IntegrationForm type="stripe" integration={integrations.stripe} onSave={saveIntegration} />
                 </DialogContent>
               </Dialog>
+            </div>
+          </div>
+
+          <div className="bg-white p-8 rounded-xl shadow-sm border-none ring-1 ring-black/[0.03]">
+            <div className="flex items-center justify-between mb-8">
+              <div>
+                <h3 className="text-xl font-bold font-headline">WordPress Sites</h3>
+                <p className="text-sm text-[#3d618c] mt-1">Store each customer site in the database instead of asking for `.env` changes.</p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={loadWordPressConnections}
+                  disabled={loadingWordPressConnections}
+                  className="bg-[#eff4ff] hover:bg-[#dce9ff] px-3 py-2 rounded-lg text-sm font-bold transition-colors"
+                >
+                  <RefreshCw className={`w-4 h-4 text-[#005cc0] ${loadingWordPressConnections ? 'animate-spin' : ''}`} />
+                </button>
+                <Dialog open={addWordPressOpen} onOpenChange={setAddWordPressOpen}>
+                  <DialogTrigger asChild>
+                    <button className="bg-[#eff4ff] hover:bg-[#dce9ff] px-4 py-2 rounded-lg text-sm font-bold text-[#005cc0] transition-colors flex items-center gap-2">
+                      <Plus className="w-4 h-4" /> Connect WordPress
+                    </button>
+                  </DialogTrigger>
+                  <DialogContent className="sm:max-w-[425px]">
+                    <DialogHeader>
+                      <DialogTitle>Connect WordPress Site</DialogTitle>
+                      <DialogDescription>
+                        Save this site in the platform database. Site ID is optional and will be generated from the URL if blank.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="grid gap-4 py-4">
+                      <div className="grid gap-2">
+                        <Label htmlFor="wp-site-name">Site Name</Label>
+                        <Input
+                          id="wp-site-name"
+                          placeholder="Vaclav Fashion"
+                          value={newWordPressConnection.site_name}
+                          onChange={(e) => setNewWordPressConnection({ ...newWordPressConnection, site_name: e.target.value })}
+                        />
+                      </div>
+                      <div className="grid gap-2">
+                        <Label htmlFor="wp-site-url">Site URL</Label>
+                        <Input
+                          id="wp-site-url"
+                          placeholder="https://store.example.com"
+                          value={newWordPressConnection.site_url}
+                          onChange={(e) => setNewWordPressConnection({ ...newWordPressConnection, site_url: e.target.value })}
+                        />
+                      </div>
+                      <div className="grid gap-2">
+                        <Label htmlFor="wp-site-id">Site ID (Optional)</Label>
+                        <Input
+                          id="wp-site-id"
+                          placeholder="my-shop-1"
+                          value={newWordPressConnection.site_id}
+                          onChange={(e) => setNewWordPressConnection({ ...newWordPressConnection, site_id: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-3">
+                      <Button variant="outline" onClick={() => setAddWordPressOpen(false)}>
+                        Cancel
+                      </Button>
+                      <Button onClick={handleAddWordPressConnection} disabled={loading}>
+                        {loading ? 'Saving...' : 'Save Site'}
+                      </Button>
+                    </div>
+                  </DialogContent>
+                </Dialog>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {wordpressConnections.map((connection) => (
+                <div key={connection.id} className="border border-[#e5eeff] rounded-xl p-4 bg-[#f8f9ff]">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="space-y-3 min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-bold">{connection.site_name || connection.site_id}</span>
+                        {selectedWordPressConnectionId === connection.id && (
+                          <span className="px-2 py-0.5 rounded text-[9px] font-black uppercase bg-[#05345c] text-white">
+                            Selected
+                          </span>
+                        )}
+                        <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${connection.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-[#eff4ff] text-[#005cc0]'}`}>
+                          {connection.status}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                        <div className="bg-white rounded-lg px-3 py-2 border border-[#e5eeff]">
+                          <div className="text-[10px] font-bold uppercase text-[#3d618c] mb-1">Site URL</div>
+                          <code className="text-[#05345c] break-all">{connection.site_url}</code>
+                        </div>
+                        <div className="bg-white rounded-lg px-3 py-2 border border-[#e5eeff]">
+                          <div className="text-[10px] font-bold uppercase text-[#3d618c] mb-1">Site ID</div>
+                          <div className="flex items-center justify-between gap-2">
+                            <code className="text-[#05345c] break-all">{connection.site_id}</code>
+                            <Button variant="outline" size="sm" onClick={() => copyToClipboard(connection.site_id)}>
+                              <Copy className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+                        <div className="bg-white rounded-lg px-3 py-2 border border-[#e5eeff] md:col-span-2">
+                          <div className="text-[10px] font-bold uppercase text-[#3d618c] mb-1">Webhook Secret</div>
+                          <div className="flex items-center justify-between gap-2">
+                            <code className="text-[#05345c] break-all">{connection.webhook_secret || 'Not generated'}</code>
+                            <Button variant="outline" size="sm" onClick={() => copyToClipboard(connection.webhook_secret)}>
+                              <Copy className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          variant={selectedWordPressConnectionId === connection.id ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => savePreferredWordPressConnection(connection.id)}
+                          disabled={loading}
+                        >
+                          {selectedWordPressConnectionId === connection.id ? 'Using for Plugin Config' : 'Use for Plugin Config'}
+                        </Button>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleDeleteWordPressConnection(connection.id)}
+                      className="text-red-500 hover:text-red-700 p-1"
+                      title="Delete WordPress site"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+
+              {wordpressConnections.length === 0 && (
+                <div className="p-4 text-center text-sm text-gray-500 border border-dashed border-[#e5eeff] rounded-xl">
+                  No WordPress sites connected yet. Use "Connect WordPress" to save the first site.
+                </div>
+              )}
             </div>
           </div>
 
