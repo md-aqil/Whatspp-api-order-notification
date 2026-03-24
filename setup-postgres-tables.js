@@ -1,19 +1,22 @@
 const { Pool } = require('pg');
 
-const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT || '5432'),
-  database: process.env.DB_NAME || 'whatsapp_api',
-  user: process.env.DB_USER || 'mdaqil',
-  password: process.env.DB_PASSWORD || 'your_secure_password',
-});
+const connectionString = process.env.DATABASE_URL || process.env.DB_URL;
+const pool = connectionString 
+  ? new Pool({ connectionString })
+  : new Pool({
+      host: process.env.DB_HOST || 'localhost',
+      port: parseInt(process.env.DB_PORT || '5432'),
+      database: process.env.DB_NAME || 'whatsapp_api',
+      user: process.env.DB_USER || 'mdaqil',
+      password: process.env.DB_PASSWORD || 'your_secure_password',
+    });
 
 async function setupTables() {
   const client = await pool.connect();
-  
+
   try {
     console.log('Connected to PostgreSQL database');
-    
+
     // Create integrations table
     await client.query(`
       CREATE TABLE IF NOT EXISTS integrations (
@@ -202,6 +205,22 @@ async function setupTables() {
     `);
     console.log('Created webhooks table');
 
+    // Create registered_webhooks table for user-added target URLs
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS registered_webhooks (
+        id SERIAL PRIMARY KEY,
+        "userId" TEXT NOT NULL DEFAULT 'default',
+        name TEXT NOT NULL,
+        target_url TEXT NOT NULL,
+        event_types TEXT[] DEFAULT '{}'::text[],
+        secret_key TEXT,
+        is_active BOOLEAN DEFAULT true,
+        "createdAt" TIMESTAMP DEFAULT NOW(),
+        "updatedAt" TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    console.log('Created registered_webhooks table');
+
     // Create webhook_logs table
     await client.query(`
       CREATE TABLE IF NOT EXISTS webhook_logs (
@@ -228,7 +247,7 @@ async function setupTables() {
     console.log('Created shopify_customers table');
 
     console.log('\n✅ All tables created successfully!');
-    
+
   } catch (error) {
     console.error('Error setting up tables:', error);
     throw error;

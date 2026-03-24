@@ -23,7 +23,7 @@ export function ThemeToggle() {
   if (!mounted) {
     return (
       <div className="w-10 h-10 flex items-center justify-center">
-        <div className="w-5 h-5 bg-gray-200 rounded-full animate-pulse"></div>
+        <div className="h-5 w-5 animate-pulse rounded-full bg-slate-200 dark:bg-white/10"></div>
       </div>
     )
   }
@@ -37,7 +37,7 @@ export function ThemeToggle() {
       whileHover={{ scale: 1.05 }}
       whileTap={{ scale: 0.95 }}
       onClick={toggleTheme}
-      className="p-2 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+      className="rounded-full border border-slate-200/70 bg-white/80 p-2 text-slate-700 shadow-[0_12px_30px_-24px_rgba(5,52,92,0.4)] transition hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-[#3784f7] focus:ring-offset-2 focus:ring-offset-transparent dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-white/70 dark:hover:bg-white/[0.08] dark:focus:ring-violet-500"
       aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
     >
       <AnimatePresence mode="wait">

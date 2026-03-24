@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/postgres'
 import { Pool } from 'pg'
+import { ensureSettingsTables } from '@/lib/settings-db'
 
 // WordPress database pool (configured via environment variables)
 let wpPool
@@ -36,6 +37,7 @@ const REQUIRED_FIELDS = {
 const FIELD_MAPPINGS = {
     customer_name: ['customer_name', 'customerName', 'name', 'billing_name', 'first_name'],
     customer_phone: ['customer_phone', 'customerPhone', 'phone', 'billing_phone', 'tel'],
+    customer_email: ['customer_email', 'customerEmail', 'email', 'billing_email'],
     order_number: ['order_number', 'orderNumber', 'order_id', 'orderId', 'id'],
     order_total: ['order_total', 'orderTotal', 'total', 'amount'],
     currency: ['currency', 'currency_code'],
@@ -134,6 +136,8 @@ export async function GET(request) {
 // POST endpoint to receive custom webhook events from WordPress, WooCommerce, or other sources
 export async function POST(request) {
     try {
+        await ensureSettingsTables()
+
         const body = await request.json()
 
         // Check if this is a query-based request (WordPress database lookup)
@@ -175,17 +179,41 @@ export async function POST(request) {
             sourceId: source_id || 'N/A'
         })
 
-        // Validate required fields
-        const requiredFields = REQUIRED_FIELDS[eventType] || REQUIRED_FIELDS['custom.webhook']
-        const missingFields = requiredFields.filter(field => !context[field])
+        // Log to webhook_logs table with site identification
+        try {
+            const siteId = body.site_id || body.siteName || 'unknown'
+            const siteName = body.site_name || body.siteName || 'Unknown Site'
+            const siteUrl = body.site_url || 'unknown'
 
-        if (missingFields.length > 0) {
-            return NextResponse.json({
-                error: 'Missing required fields',
-                required: missingFields,
-                received: Object.keys(context),
-                hint: `Send these fields in your webhook: ${missingFields.join(', ')}`
-            }, { status: 400 })
+            await query(
+                `INSERT INTO webhook_logs (id, type, topic, payload, "receivedAt", "createdAt")
+                 VALUES ($1, $2, $3, $4, NOW(), NOW())`,
+                [
+                    `custom_${Date.now()}`,
+                    'custom',
+                    eventType,
+                    JSON.stringify({
+                        ...body,
+                        _site_info: {
+                            site_id: siteId,
+                            site_name: siteName,
+                            site_url: siteUrl,
+                            source: 'wordpress-plugin'
+                        }
+                    })
+                ]
+            )
+            console.log('Webhook logged with site info:', { siteId, siteName, siteUrl })
+        } catch (logError) {
+            console.error('Failed to log webhook:', logError)
+        }
+
+        const matchingAutomations = await getMatchingAutomations(eventType)
+        const warnings = []
+        const validation = validateWebhookContext(eventType, context, matchingAutomations)
+
+        if (validation.missingFields.length > 0) {
+            warnings.push(`Missing fields for direct customer delivery: ${validation.missingFields.join(', ')}`)
         }
 
         // Get user integrations
@@ -195,25 +223,35 @@ export async function POST(request) {
         )
 
         if (!integrations?.rows?.[0]?.whatsapp) {
-            return NextResponse.json(
-                { error: 'WhatsApp not configured' },
-                { status: 400 }
-            )
+            return NextResponse.json({
+                success: true,
+                event: eventType,
+                processed: 0,
+                matchedAutomations: matchingAutomations.length,
+                warnings: [...warnings, 'WhatsApp is not configured yet. Webhook was received and logged, but no automation messages were sent.'],
+                context
+            })
         }
 
         // Find and execute automations for this event type
         const automationResult = await executeCustomWebhookAutomations(
             eventType,
             context,
-            integrations.rows[0].whatsapp
+            integrations.rows[0].whatsapp,
+            matchingAutomations,
+            body
         )
+
+        warnings.push(...automationResult.warnings)
 
         return NextResponse.json({
             success: true,
             event: eventType,
             processed: automationResult.processed,
-            message: `Processed ${automationResult.processed} automation(s)`,
-            context: context
+            matchedAutomations: automationResult.matchedAutomations,
+            message: `Processed ${automationResult.processed} automation message(s)`,
+            warnings,
+            context
         })
     } catch (error) {
         console.error('Error processing custom webhook:', error)
@@ -328,6 +366,9 @@ function buildContextFromPayload(body, fieldMap = {}) {
         customerName,
         customerPhone,
         phone,
+        customer_email,
+        customerEmail,
+        email,
         order_number,
         orderNumber,
         order_id,
@@ -346,6 +387,7 @@ function buildContextFromPayload(body, fieldMap = {}) {
     let context = {
         customer_name: customer_name || customerName || '',
         customer_phone: customer_phone || customerPhone || phone || '',
+        customer_email: customer_email || customerEmail || email || '',
         order_number: order_number || orderNumber || order_id || orderId || '',
         order_total: order_total || orderTotal || total || '',
         currency: currency || 'USD',
@@ -374,93 +416,424 @@ function buildContextFromPayload(body, fieldMap = {}) {
     return context
 }
 
-async function executeCustomWebhookAutomations(eventType, context, whatsappConfig) {
-    const processed = 0
-    let automationJobsCreated = 0
+function getValueByPath(source, path = '') {
+    if (!source || !path) return undefined
 
-    try {
-        // Fetch enabled automations that should trigger for this event
-        // Map custom events to automation triggers
-        const triggerMappings = {
-            'custom.order_created': 'custom.webhook',
-            'custom.order_updated': 'custom.webhook',
-            'custom.order_status': 'custom.webhook',
-            'custom.payment_received': 'custom.webhook',
-            'custom.woocommerce.order_created': 'woocommerce.order_created',
-            'custom.woocommerce.order_updated': 'woocommerce.order_updated'
+    return String(path)
+        .split('.')
+        .filter(Boolean)
+        .reduce((current, segment) => {
+            if (current === undefined || current === null) return undefined
+            return current[segment]
+        }, source)
+}
+
+function normalizeComparableValue(value) {
+    if (value === undefined || value === null) return ''
+    return String(value).trim()
+}
+
+function inferCustomWebhookChangeType(eventType, payload = {}) {
+    const candidates = [
+        payload.change_type,
+        payload.changeType,
+        payload.operation,
+        payload.action,
+        payload.event_action,
+        payload.eventAction
+    ].filter(Boolean)
+
+    const normalizedCandidate = candidates
+        .map(value => String(value).trim().toLowerCase())
+        .find(Boolean)
+
+    if (normalizedCandidate) {
+        if (normalizedCandidate.includes('create') || normalizedCandidate.includes('insert')) return 'created'
+        if (normalizedCandidate.includes('update')) return 'updated'
+    }
+
+    if (eventType === 'custom.order_created') return 'created'
+    if (Array.isArray(payload.changed_columns || payload.changedColumns)) return 'updated'
+    if (payload.previous_values || payload.previousValues || payload.previous || payload.before) return 'updated'
+
+    return 'unknown'
+}
+
+function getColumnChangeSnapshot(payload = {}, context = {}, columnPath = '') {
+    const changedColumns = payload.changed_columns || payload.changedColumns || []
+    const previousValue =
+        getValueByPath(payload, `previous_values.${columnPath}`) ??
+        getValueByPath(payload, `previousValues.${columnPath}`) ??
+        getValueByPath(payload, `previous.${columnPath}`) ??
+        getValueByPath(payload, `before.${columnPath}`) ??
+        payload[`previous_${columnPath}`]
+
+    const currentValue =
+        getValueByPath(payload, `current_values.${columnPath}`) ??
+        getValueByPath(payload, `currentValues.${columnPath}`) ??
+        getValueByPath(payload, `current.${columnPath}`) ??
+        getValueByPath(payload, `after.${columnPath}`) ??
+        getValueByPath(payload, columnPath) ??
+        getValueByPath(context, columnPath)
+
+    const changed = (
+        (Array.isArray(changedColumns) && changedColumns.map(String).includes(columnPath)) ||
+        (previousValue !== undefined && currentValue !== undefined && normalizeComparableValue(previousValue) !== normalizeComparableValue(currentValue))
+    )
+
+    return {
+        previousValue,
+        currentValue,
+        changed
+    }
+}
+
+function applyTriggerFieldMappings(baseContext = {}, payload = {}, mappings = []) {
+    if (!Array.isArray(mappings) || mappings.length === 0) return baseContext
+
+    const mappedContext = { ...baseContext }
+
+    for (const mapping of mappings) {
+        const targetField = typeof mapping?.targetField === 'string' ? mapping.targetField.trim() : ''
+        const sourceField = typeof mapping?.sourceField === 'string' ? mapping.sourceField.trim() : ''
+        if (!targetField || !sourceField) continue
+
+        const mappedValue =
+            getValueByPath(payload, sourceField) ??
+            getValueByPath(baseContext, sourceField)
+
+        if (mappedValue !== undefined && mappedValue !== null && mappedValue !== '') {
+            mappedContext[targetField] = mappedValue
+        }
+    }
+
+    return mappedContext
+}
+
+function matchesCustomWebhookTrigger(triggerStep = {}, eventType, payload = {}, context = {}) {
+    if (triggerStep?.event !== 'custom.webhook') {
+        return { matched: true, reason: '' }
+    }
+
+    const mode = triggerStep.customTriggerMode || 'any'
+    const expectedTable = typeof triggerStep.selectedTable === 'string' ? triggerStep.selectedTable.trim() : ''
+    const payloadTable = payload.source_table || payload.sourceTable || payload.table || payload.table_name || payload.tableName || ''
+
+    if (expectedTable && payloadTable && expectedTable !== payloadTable) {
+        return {
+            matched: false,
+            reason: `Skipped "${triggerStep.title || 'Custom Webhook'}" because payload table "${payloadTable}" did not match "${expectedTable}".`
+        }
+    }
+
+    if (mode === 'any') {
+        return { matched: true, reason: '' }
+    }
+
+    const changeType = inferCustomWebhookChangeType(eventType, payload)
+
+    if (mode === 'row_created') {
+        return {
+            matched: changeType === 'created',
+            reason: changeType === 'created' ? '' : `Skipped "${triggerStep.title || 'Custom Webhook'}" because this payload is not marked as a row create event.`
+        }
+    }
+
+    if (mode === 'row_updated') {
+        return {
+            matched: changeType === 'updated',
+            reason: changeType === 'updated' ? '' : `Skipped "${triggerStep.title || 'Custom Webhook'}" because this payload is not marked as a row update event.`
+        }
+    }
+
+    const watchedColumn = typeof triggerStep.customWatchedColumn === 'string' ? triggerStep.customWatchedColumn.trim() : ''
+    if (!watchedColumn) {
+        return {
+            matched: false,
+            reason: `Skipped "${triggerStep.title || 'Custom Webhook'}" because no watched column is configured.`
+        }
+    }
+
+    const snapshot = getColumnChangeSnapshot(payload, context, watchedColumn)
+    if (!snapshot.changed) {
+        return {
+            matched: false,
+            reason: `Skipped "${triggerStep.title || 'Custom Webhook'}" because "${watchedColumn}" did not change.`
+        }
+    }
+
+    if (mode === 'column_changed') {
+        if (triggerStep.customPreviousValue) {
+            const previousMatches = normalizeComparableValue(snapshot.previousValue) === normalizeComparableValue(triggerStep.customPreviousValue)
+            return {
+                matched: previousMatches,
+                reason: previousMatches ? '' : `Skipped "${triggerStep.title || 'Custom Webhook'}" because previous value for "${watchedColumn}" did not match "${triggerStep.customPreviousValue}".`
+            }
         }
 
-        const mappedTrigger = triggerMappings[eventType] || 'custom.webhook'
+        return { matched: true, reason: '' }
+    }
 
-        // Get automations that match our trigger
-        const automations = await query(
-            `SELECT id, name, status, steps FROM automations 
-       WHERE "userId" = $1 AND status = true`,
-            ['default']
-        )
+    if (mode === 'column_changed_to_value') {
+        const currentMatches = normalizeComparableValue(snapshot.currentValue) === normalizeComparableValue(triggerStep.customExpectedValue)
+        const previousMatches = !triggerStep.customPreviousValue ||
+            normalizeComparableValue(snapshot.previousValue) === normalizeComparableValue(triggerStep.customPreviousValue)
 
-        // Find matching automations
-        const matchingAutomations = automations.rows?.filter(automation => {
-            if (!automation.steps || !Array.isArray(automation.steps)) return false
+        return {
+            matched: currentMatches && previousMatches,
+            reason: currentMatches && previousMatches
+                ? ''
+                : `Skipped "${triggerStep.title || 'Custom Webhook'}" because "${watchedColumn}" transition did not match the configured values.`
+        }
+    }
 
-            const triggerStep = automation.steps.find(step => step.type === 'trigger')
-            return triggerStep?.event === mappedTrigger || triggerStep?.event === 'custom.webhook'
-        }) || []
+    return { matched: true, reason: '' }
+}
 
+function parseDelayToMs(step) {
+    const value = parseInt(step?.delayValue || '0', 10)
+    if (!value) return 0
+    if (step.delayUnit === 'minutes') return value * 60 * 1000
+    if (step.delayUnit === 'days') return value * 24 * 60 * 60 * 1000
+    return value * 60 * 60 * 1000
+}
+
+function getSequentialStepId(steps, currentStepId) {
+    const index = steps.findIndex(step => step.id === currentStepId)
+    if (index === -1) return ''
+    return steps[index + 1]?.id || ''
+}
+
+function getNextAutomationStepId(steps, step, key = 'main') {
+    const explicitTarget = step?.connections?.[key]
+    if (explicitTarget) return explicitTarget
+    if (key === 'fallback') return ''
+    return getSequentialStepId(steps, step?.id)
+}
+
+function matchesCondition(rule, context) {
+    if (!rule) return true
+    const trimmed = rule.trim()
+
+    if (trimmed.includes(' contains_any ')) {
+        const [left, right] = trimmed.split(' contains_any ').map(value => value.trim())
+        const haystack = String(context[left] ?? '').toLowerCase()
+        return right.split('|').some(token => haystack.includes(token.trim().toLowerCase()))
+    }
+
+    if (trimmed.includes(' not contains ')) {
+        const [left, right] = trimmed.split(' not contains ').map(value => value.trim())
+        return !String(context[left] ?? '').toLowerCase().includes(right.toLowerCase())
+    }
+
+    if (trimmed.includes(' contains ')) {
+        const [left, right] = trimmed.split(' contains ').map(value => value.trim())
+        return String(context[left] ?? '').toLowerCase().includes(right.toLowerCase())
+    }
+
+    if (trimmed.includes('!=')) {
+        const [left, right] = trimmed.split('!=').map(value => value.trim())
+        return String(context[left] ?? '') !== right
+    }
+
+    if (trimmed.includes('=')) {
+        const [left, right] = trimmed.split('=').map(value => value.trim())
+        return String(context[left] ?? '') === right
+    }
+
+    return true
+}
+
+function resolveCustomWebhookTrigger(eventType) {
+    const triggerMappings = {
+        'custom.order_created': 'custom.webhook',
+        'custom.order_updated': 'custom.webhook',
+        'custom.order_status': 'custom.webhook',
+        'custom.payment_received': 'custom.webhook',
+        'custom.woocommerce.order_created': 'woocommerce.order_created',
+        'custom.woocommerce.order_updated': 'woocommerce.order_updated'
+    }
+
+    const isWooCommerceEvent = eventType.startsWith('woocommerce.')
+    return triggerMappings[eventType] || (isWooCommerceEvent ? eventType : 'custom.webhook')
+}
+
+function resolveAutomationRecipient(step, context) {
+    if (step?.recipientMode === 'fixed_number') {
+        const fixedRecipient = typeof step.recipientNumber === 'string'
+            ? step.recipientNumber.replace(/\D/g, '')
+            : ''
+        return fixedRecipient || null
+    }
+
+    const customerRecipient = typeof context.customer_phone === 'string'
+        ? context.customer_phone.replace(/\D/g, '')
+        : ''
+    return customerRecipient || null
+}
+
+function buildAutomationStateRecipient(steps, context) {
+    for (const step of steps) {
+        if (step?.type !== 'message') continue
+        const recipient = resolveAutomationRecipient(step, context)
+        if (recipient) return recipient
+    }
+
+    const emailKey = typeof context.customer_email === 'string'
+        ? context.customer_email.replace(/[^\w.-]/g, '_')
+        : ''
+    return emailKey || `unknown_${Date.now()}`
+}
+
+function interpolateAutomationMessage(message = '', context = {}) {
+    return String(message || '').replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_match, key) => {
+        const value = context[key]
+        return value === undefined || value === null ? '' : String(value)
+    })
+}
+
+async function getMatchingAutomations(eventType) {
+    const automations = await query(
+        `SELECT id, name, status, steps FROM automations
+         WHERE "userId" = $1 AND status = true`,
+        ['default']
+    )
+
+    const mappedTrigger = resolveCustomWebhookTrigger(eventType)
+
+    return automations.rows?.filter(automation => {
+        if (!Array.isArray(automation.steps)) return false
+        const triggerStep = automation.steps.find(step => step.type === 'trigger')
+        return triggerStep?.event === mappedTrigger || triggerStep?.event === 'custom.webhook'
+    }) || []
+}
+
+function validateWebhookContext(eventType, context, automations = []) {
+    const requiredFields = REQUIRED_FIELDS[eventType] || REQUIRED_FIELDS['custom.webhook'] || []
+    const missingFields = requiredFields.filter(field => {
+        if (context[field]) return false
+        if (field !== 'customer_phone') return true
+
+        return !automations.some(automation => (
+            Array.isArray(automation.steps) &&
+            automation.steps.some(step => step.type === 'message' && !!resolveAutomationRecipient(step, context))
+        ))
+    })
+
+    return { missingFields }
+}
+
+async function executeCustomWebhookAutomations(eventType, context, whatsappConfig, matchingAutomations, payload = {}) {
+    let automationJobsCreated = 0
+    const warnings = []
+
+    try {
         // Process each matching automation
         for (const automation of matchingAutomations) {
             try {
-                // Find all message steps in the automation
-                const messageSteps = automation.steps.filter(
-                    step => step.type === 'message' && step.channel === 'whatsapp'
+                const steps = Array.isArray(automation.steps) ? automation.steps : []
+                const triggerStep = steps.find(step => step.type === 'trigger')
+                if (!triggerStep) continue
+
+                const triggerMatch = matchesCustomWebhookTrigger(triggerStep, eventType, payload, context)
+                if (!triggerMatch.matched) {
+                    if (triggerMatch.reason) warnings.push(triggerMatch.reason)
+                    continue
+                }
+
+                const automationContext = applyTriggerFieldMappings(
+                    context,
+                    payload,
+                    triggerStep.customFieldMappings || []
                 )
 
-                for (const messageStep of messageSteps) {
-                    // Build the message content from variables
-                    let messageContent = messageStep.message || ''
+                const stateRecipient = buildAutomationStateRecipient(steps, automationContext)
+                const stateId = `${automation.id}:${stateRecipient}`
 
-                    // Replace variables in the message
-                    messageContent = messageContent.replace(/\{\{\s*customer_name\s*\}\}/g, context.customer_name || '')
-                    messageContent = messageContent.replace(/\{\{\s*order_number\s*\}\}/g, context.order_number || '')
-                    messageContent = messageContent.replace(/\{\{\s*order_total\s*\}\}/g, context.order_total || '')
-                    messageContent = messageContent.replace(/\{\{\s*currency\s*\}\}/g, context.currency || 'USD')
-                    messageContent = messageContent.replace(/\{\{\s*order_product_name\s*\}\}/g, context.order_product_name || '')
-                    messageContent = messageContent.replace(/\{\{\s*order_product_names\s*\}\}/g, context.order_product_names || '')
+                await query(
+                    `INSERT INTO automation_conversation_state
+                     (id, "userId", "automationId", recipient, state, "lastInboundAt", payload, "updatedAt")
+                     VALUES ($1, $2, $3, $4, $5, NOW(), $6::jsonb, NOW())
+                     ON CONFLICT (id) DO UPDATE SET
+                     payload = EXCLUDED.payload,
+                     "lastInboundAt" = NOW(),
+                     "updatedAt" = NOW()`,
+                    [stateId, 'default', automation.id, stateRecipient, 'active', JSON.stringify(automationContext)]
+                )
 
-                    // Queue the automation job
-                    if (context.customer_phone) {
+                let totalDelayMs = 0
+                let currentStepId = getNextAutomationStepId(steps, triggerStep, 'main')
+                const visited = new Set([triggerStep.id])
+
+                while (currentStepId && !visited.has(currentStepId)) {
+                    visited.add(currentStepId)
+                    const step = steps.find(item => item.id === currentStepId)
+                    if (!step) break
+
+                    if (step.type === 'condition') {
+                        const passed = matchesCondition(step.rule, automationContext)
+                        currentStepId = getNextAutomationStepId(steps, step, passed ? 'main' : 'fallback')
+                        continue
+                    }
+
+                    if (step.type === 'delay') {
+                        totalDelayMs += parseDelayToMs(step)
+                        currentStepId = getNextAutomationStepId(steps, step, 'main')
+                        continue
+                    }
+
+                    if (step.type === 'message') {
+                        const recipient = resolveAutomationRecipient(step, automationContext)
+                        if (!recipient) {
+                            warnings.push(`Skipped "${automation.name}" step "${step.title || step.id}" because no recipient was available.`)
+                            currentStepId = getNextAutomationStepId(steps, step, 'main')
+                            continue
+                        }
+
                         await query(
                             `INSERT INTO automation_jobs (id, "automationId", "userId", recipient, message, template, payload, status, "runAt", "createdAt")
-               VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', NOW(), NOW())`,
+                             VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, 'pending', $8, NOW())`,
                             [
                                 crypto.randomUUID(),
                                 automation.id,
                                 'default',
-                                context.customer_phone,
-                                messageContent,
-                                messageStep.template || null,
+                                recipient,
+                                interpolateAutomationMessage(step.message, automationContext),
+                                step.template || null,
                                 JSON.stringify({
-                                    ...context,
-                                    templateLanguage: messageStep.templateLanguage,
-                                    templateComponents: messageStep.templateComponents,
-                                    variableMappings: messageStep.variableMappings
-                                })
+                                    ...automationContext,
+                                    recipientMode: step.recipientMode || 'customer',
+                                    recipientNumber: step.recipientNumber || '',
+                                    templateLanguage: step.templateLanguage || 'en_US',
+                                    templateComponents: step.templateComponents || [],
+                                    variableMappings: step.variableMappings || []
+                                }),
+                                new Date(Date.now() + totalDelayMs)
                             ]
                         )
+
                         automationJobsCreated++
                     }
+
+                    currentStepId = getNextAutomationStepId(steps, step, 'main')
                 }
             } catch (automationError) {
                 console.error(`Error processing automation ${automation.id}:`, automationError)
+                warnings.push(`Automation "${automation.name}" failed: ${automationError.message}`)
             }
         }
 
         return {
             processed: automationJobsCreated,
-            matchedAutomations: matchingAutomations.length
+            matchedAutomations: matchingAutomations.length,
+            warnings
         }
     } catch (error) {
         console.error('Error in executeCustomWebhookAutomations:', error)
-        return { processed: 0 }
+        return {
+            processed: 0,
+            matchedAutomations: matchingAutomations?.length || 0,
+            warnings: [`Automation execution failed: ${error.message}`]
+        }
     }
 }

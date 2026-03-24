@@ -3,6 +3,8 @@ import { v4 as uuidv4 } from 'uuid'
 import { NextResponse } from 'next/server'
 import { buildMetaAuthHeaders, mapMetaAccessTokenError, sanitizeMetaAccessToken } from '@/lib/meta-auth'
 import { buildAutomationTemplateComponents as buildAutomationTemplateComponentsShared } from '@/lib/automation-template'
+import { getLocalIntegrationRecord, saveLocalIntegrationRecord } from '@/lib/local-settings-store'
+import { ensureSettingsTables } from '@/lib/settings-db'
 
 let pgPool
 const shopifyTokenCache = new Map()
@@ -15,14 +17,21 @@ const WHATSAPP_MENU_STEP_IDS = new Set(['step-message-4', 'step-message-6'])
 const WHATSAPP_SUPPORT_STEP_IDS = new Set(['step-message-11'])
 
 function getPostgresPool() {
-  if (!process.env.DB_URL) {
-    throw new Error('DB_URL is not configured')
-  }
-
   if (!pgPool) {
-    pgPool = new Pool({
-      connectionString: process.env.DB_URL
-    })
+    const connectionString = process.env.DATABASE_URL || process.env.DB_URL
+    if (connectionString) {
+      pgPool = new Pool({
+        connectionString
+      })
+    } else {
+      pgPool = new Pool({
+        host: process.env.DB_HOST || 'localhost',
+        port: parseInt(process.env.DB_PORT || '5432', 10),
+        database: process.env.DB_NAME || 'whatsapp_api',
+        user: process.env.DB_USER || 'mdaqil',
+        password: process.env.DB_PASSWORD || ''
+      })
+    }
   }
 
   return pgPool
@@ -36,6 +45,10 @@ async function queryOne(sql, params = []) {
 async function queryMany(sql, params = []) {
   const result = await getPostgresPool().query(sql, params)
   return result.rows
+}
+
+async function query(sql, params = []) {
+  return getPostgresPool().query(sql, params)
 }
 
 async function ensureAutomationConversationStateTable() {
@@ -230,36 +243,61 @@ async function getShopifyAccessToken(shopify) {
 }
 
 async function getStoredIntegrations() {
-  const result = await getPostgresPool().query(
-    'SELECT whatsapp, shopify, stripe FROM integrations WHERE "userId" = $1 ORDER BY "updatedAt" DESC NULLS LAST, id DESC LIMIT 1',
-    ['default']
-  )
+  try {
+    await ensureSettingsTables()
 
-  return result.rows[0] || null
+    const result = await getPostgresPool().query(
+      'SELECT whatsapp, shopify, stripe FROM integrations WHERE "userId" = $1 ORDER BY "updatedAt" DESC NULLS LAST, id DESC LIMIT 1',
+      ['default']
+    )
+
+    return result.rows[0] || await getLocalIntegrationRecord()
+  } catch (error) {
+    console.error('Falling back to local integration store:', error)
+    return getLocalIntegrationRecord()
+  }
 }
 
 async function saveStoredIntegration(type, data) {
-  const pool = getPostgresPool()
-  const existing = await pool.query(
-    'SELECT id FROM integrations WHERE "userId" = $1 ORDER BY "updatedAt" DESC NULLS LAST, id DESC LIMIT 1',
-    ['default']
-  )
+  try {
+    await ensureSettingsTables()
 
-  if (existing.rows[0]) {
-    await pool.query(
-      `UPDATE integrations
-       SET "${type}" = $1::jsonb, "updatedAt" = NOW()
-       WHERE id = $2`,
-      [JSON.stringify(data), existing.rows[0].id]
+    const pool = getPostgresPool()
+    const existing = await pool.query(
+      'SELECT id FROM integrations WHERE "userId" = $1 ORDER BY "updatedAt" DESC NULLS LAST, id DESC LIMIT 1',
+      ['default']
     )
-    return
-  }
 
-  await pool.query(
-    `INSERT INTO integrations ("userId", "${type}", "createdAt", "updatedAt")
-     VALUES ($1, $2::jsonb, NOW(), NOW())`,
-    ['default', JSON.stringify(data)]
-  )
+    if (existing.rows[0]) {
+      await pool.query(
+        `UPDATE integrations
+         SET "${type}" = $1::jsonb, "updatedAt" = NOW()
+         WHERE id = $2`,
+        [JSON.stringify(data), existing.rows[0].id]
+      )
+      await saveLocalIntegrationRecord(type, data)
+      return
+    }
+
+    await pool.query(
+      `INSERT INTO integrations ("userId", "${type}", "createdAt", "updatedAt")
+       VALUES ($1, $2::jsonb, NOW(), NOW())`,
+      ['default', JSON.stringify(data)]
+    )
+
+    await saveLocalIntegrationRecord(type, data)
+  } catch (error) {
+    console.error('Failed to save integration to database:', error)
+    // Try to save to local storage as fallback
+    try {
+      await saveLocalIntegrationRecord(type, data)
+      console.log('Saved integration to local storage as fallback')
+    } catch (localError) {
+      console.error('Failed to save to local storage:', localError)
+    }
+    // Re-throw the original error so the caller can handle it
+    throw error
+  }
 }
 
 async function getStoredProducts() {
@@ -326,7 +364,9 @@ async function fetchMetaCatalogProducts(whatsapp) {
     const data = await response.json()
     if (!response.ok) {
       const metaMessage = data.error?.message || 'Meta catalog API error'
-      const isWrongCatalogNode = data.error?.code === 100 && /products/i.test(metaMessage)
+      const unsupportedGet = /unsupported get request/i.test(metaMessage)
+      const isWrongCatalogNode = (data.error?.code === 100 && /products/i.test(metaMessage)) || unsupportedGet
+      
       if (isWrongCatalogNode) {
         const looksLikeKnownNonCatalogId =
           String(whatsapp.catalogId || '') === String(whatsapp.businessAccountId || '') ||
@@ -335,7 +375,7 @@ async function fetchMetaCatalogProducts(whatsapp) {
         throw new Error(
           looksLikeKnownNonCatalogId
             ? 'Saved Catalog ID is using your WhatsApp account/phone ID, not a Meta product catalog ID. Open Commerce Manager and copy the actual Catalog ID.'
-            : 'Saved Catalog ID looks like a real catalog, but this token or app cannot access its products. Make sure the same Meta business/system user has access to that catalog in Commerce Manager.'
+            : 'Saved Catalog ID looks real, but this token or app cannot access it. Give the token’s Meta business/system user access to that catalog in Commerce Manager.'
         )
       }
 
@@ -622,6 +662,8 @@ async function insertStoredMessage(message) {
 }
 
 async function saveStoredWebhooks(webhooks) {
+  await ensureSettingsTables()
+
   const pool = getPostgresPool()
   const existing = await queryOne(
     'SELECT id FROM webhooks WHERE "userId" = $1 AND type = $2 ORDER BY "createdAt" DESC NULLS LAST, id DESC LIMIT 1',
@@ -643,6 +685,8 @@ async function saveStoredWebhooks(webhooks) {
 }
 
 async function getStoredWebhooks(type = 'shopify') {
+  await ensureSettingsTables()
+
   const result = await getPostgresPool().query(
     'SELECT id, type, webhooks, "createdAt" FROM webhooks WHERE "userId" = $1 AND type = $2 ORDER BY "createdAt" DESC NULLS LAST, id DESC LIMIT 1',
     ['default', type]
@@ -651,6 +695,8 @@ async function getStoredWebhooks(type = 'shopify') {
 }
 
 async function insertWebhookLog(type, topic, payload) {
+  await ensureSettingsTables()
+
   await getPostgresPool().query(
     `INSERT INTO webhook_logs (id, type, topic, payload, "receivedAt", "createdAt")
      VALUES ($1, $2, $3, $4::jsonb, NOW(), NOW())`,
@@ -659,6 +705,8 @@ async function insertWebhookLog(type, topic, payload) {
 }
 
 async function getWebhookLogs(limit = 10) {
+  await ensureSettingsTables()
+
   const result = await getPostgresPool().query(
     `SELECT id, type, topic, payload, "receivedAt", "createdAt"
      FROM webhook_logs
@@ -1845,7 +1893,13 @@ async function handleRoute(request, { params }) {
 
     // Integrations endpoints
     if (route === '/integrations' && method === 'GET') {
-      const integrations = await getStoredIntegrations()
+      let integrations = null
+
+      try {
+        integrations = await getStoredIntegrations()
+      } catch (error) {
+        console.error('Failed to load stored integrations:', error)
+      }
 
       const defaultIntegrations = {
         whatsapp: {
@@ -1926,8 +1980,8 @@ async function handleRoute(request, { params }) {
                 phoneNumberId: data.phoneNumberId
               })
             } catch (error) {
-              warning = `Meta Catalog ID was not saved: ${error.message}`
-              delete data.catalogId
+              warning = `Catalog validation failed: ${error.message}. Catalog ID has been saved but may not work until the access token is refreshed.`
+              // Don't delete catalogId - save it anyway
             }
           }
         }
@@ -1972,7 +2026,15 @@ async function handleRoute(request, { params }) {
       }
 
       // Save integration
-      await saveStoredIntegration(type, data)
+      try {
+        await saveStoredIntegration(type, data)
+      } catch (saveError) {
+        console.error('Failed to save integration:', saveError)
+        return handleCORS(NextResponse.json(
+          { error: `Failed to save integration: ${saveError.message}` },
+          { status: 500 }
+        ))
+      }
 
       return handleCORS(NextResponse.json({ success: true, ...(warning ? { warning } : {}) }))
     }
@@ -2056,21 +2118,21 @@ async function handleRoute(request, { params }) {
 
     // Webhooks endpoint - get registered webhooks
     if (route === '/webhooks' && method === 'GET') {
+      const webhookUrl = new URL(request.url)
+      const type = webhookUrl.searchParams.get('type') || 'shopify'
+      let webhooks = null
+
       try {
-        const webhookUrl = new URL(request.url)
-        const type = webhookUrl.searchParams.get('type') || 'shopify'
-        const webhooks = await getStoredWebhooks(type)
-        return handleCORS(NextResponse.json({
-          type,
-          webhooks: webhooks?.webhooks || [],
-          createdAt: webhooks?.createdAt
-        }))
+        webhooks = await getStoredWebhooks(type)
       } catch (error) {
-        return handleCORS(NextResponse.json(
-          { error: `Failed to get webhooks: ${error.message}` },
-          { status: 500 }
-        ))
+        console.error(`Failed to load stored ${type} webhooks:`, error)
       }
+
+      return handleCORS(NextResponse.json({
+        type,
+        webhooks: webhooks?.webhooks || [],
+        createdAt: webhooks?.createdAt || null
+      }))
     }
 
     // Products endpoint
@@ -2409,6 +2471,30 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
       }
     }
 
+    // Get automation logs/state
+    if (route === '/automations/logs' && method === 'GET') {
+      try {
+        const automationId = request.nextUrl.searchParams.get('automationId')
+        if (!automationId) {
+          return handleCORS(NextResponse.json({ error: 'automationId is required' }, { status: 400 }))
+        }
+
+        const states = await queryMany(
+          `SELECT id, recipient, state, payload, "updatedAt"
+           FROM automation_conversation_state
+           WHERE "automationId" = $1
+           ORDER BY "updatedAt" DESC
+           LIMIT 10`,
+          [automationId]
+        )
+
+        return handleCORS(NextResponse.json(states || []))
+      } catch (error) {
+        console.error('Failed to fetch automation logs:', error)
+        return handleCORS(NextResponse.json({ error: 'Failed to fetch automation logs' }, { status: 500 }))
+      }
+    }
+
     // New endpoint to fetch WhatsApp templates
     if (route === '/whatsapp-templates' && method === 'GET') {
       try {
@@ -2512,8 +2598,15 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
           }))
         }
 
-        const integrations = await getStoredIntegrations()
-        const storedToken = integrations?.whatsapp?.webhookVerifyToken
+        let storedToken = ''
+
+        try {
+          const integrations = await getStoredIntegrations()
+          storedToken = integrations?.whatsapp?.webhookVerifyToken || ''
+        } catch (error) {
+          console.error('Failed to load WhatsApp webhook token from storage:', error)
+        }
+
         // Use env token if stored token is empty or is a test value like '123'
         const expectedToken = (storedToken && storedToken.length > 10) ? storedToken : process.env.WHATSAPP_VERIFY_TOKEN
 

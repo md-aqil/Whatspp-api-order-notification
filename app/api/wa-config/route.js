@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/postgres'
+import { ensureSettingsTables } from '@/lib/settings-db'
 
 // Standard Shopify webhook topics mapped to internal trigger events
 const SHOPIFY_WEBHOOK_TOPICS = [
@@ -13,11 +14,30 @@ const SHOPIFY_WEBHOOK_TOPICS = [
     { value: 'shopify.customer_updated', label: 'Customer Updated', topic: 'customers/update', description: 'When customer information is updated' },
 ]
 
+const EMPTY_CONFIG = {
+    wordpress_url: '',
+    woocommerce: {
+        enabled: false,
+        triggers: []
+    },
+    custom_tables: {
+        enabled: false,
+        tables: []
+    },
+    shopify: {
+        enabled: false,
+        connected: false,
+        triggers: []
+    }
+}
+
 // Fetch configuration from WordPress plugin
 // This allows Automation Studio to show only configured tables and triggers
 
 export async function GET() {
     try {
+        await ensureSettingsTables()
+
         // Get WordPress site URL from database first, then environment
         let wordpressUrl = process.env.WORDPRESS_URL || process.env.NEXT_PUBLIC_WORDPRESS_URL
 
@@ -102,13 +122,24 @@ export async function GET() {
             if (response.ok) {
                 const config = await response.json()
 
-                // Store config in database for offline access
-                await query(
-                    `INSERT INTO wa_config ("userId", config, "createdAt", "updatedAt")
-           VALUES ($1, $2::jsonb, NOW(), NOW())
-           ON CONFLICT (id) DO UPDATE SET config = $2::jsonb, "updatedAt" = NOW()`,
-                    ['default', JSON.stringify(config)]
+                // Store config in database for offline access.
+                const existing = await query(
+                    `SELECT id FROM wa_config WHERE "userId" = $1 ORDER BY "updatedAt" DESC LIMIT 1`,
+                    ['default']
                 )
+
+                if (existing?.rows?.[0]?.id) {
+                    await query(
+                        `UPDATE wa_config SET config = $1::jsonb, "updatedAt" = NOW() WHERE id = $2`,
+                        [JSON.stringify(config), existing.rows[0].id]
+                    )
+                } else {
+                    await query(
+                        `INSERT INTO wa_config ("userId", config, "createdAt", "updatedAt")
+                         VALUES ($1, $2::jsonb, NOW(), NOW())`,
+                        ['default', JSON.stringify(config)]
+                    )
+                }
 
                 // Return combined config with Shopify
                 return NextResponse.json({
@@ -151,33 +182,17 @@ export async function GET() {
 
     } catch (error) {
         console.error('Error fetching config:', error)
-        return NextResponse.json(
-            { error: 'Failed to fetch configuration' },
-            { status: 500 }
-        )
+        return NextResponse.json(EMPTY_CONFIG)
     }
 }
 
 // Store manual config update
 export async function POST(request) {
     try {
+        await ensureSettingsTables()
+
         const body = await request.json()
         const { wordpress_url, woocommerce_triggers, custom_tables } = body
-
-        // Create table if not exists
-        try {
-            await query(`
-                CREATE TABLE IF NOT EXISTS wa_config (
-                    id SERIAL PRIMARY KEY,
-                    "userId" VARCHAR(255) NOT NULL,
-                    config JSONB,
-                    "createdAt" TIMESTAMP DEFAULT NOW(),
-                    "updatedAt" TIMESTAMP DEFAULT NOW()
-                )
-            `)
-        } catch (tableError) {
-            console.log('Table creation skipped:', tableError.message)
-        }
 
         // Store WordPress URL in config
         const config = {

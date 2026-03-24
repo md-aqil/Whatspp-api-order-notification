@@ -110,6 +110,10 @@ function sanitizeAutomation(inputAutomation) {
   }
 }
 
+function stepHasOwnTemplateSelection(step) {
+  return Object.prototype.hasOwnProperty.call(step || {}, 'template')
+}
+
 async function upsertAutomationRow(automation) {
   await query(
     `INSERT INTO automations (id, "userId", name, status, source, summary, steps, metrics, "createdAt", "updatedAt")
@@ -190,7 +194,9 @@ async function syncDefaultAutomations(rows) {
       if (step.type !== 'message') return step
       if (!defaultStep?.template) return step
 
-      if (!step.template) {
+      // Only backfill missing legacy template fields.
+      // If the user explicitly cleared the template to "", keep that choice.
+      if (!stepHasOwnTemplateSelection(step)) {
         changed = true
         return {
           ...step,

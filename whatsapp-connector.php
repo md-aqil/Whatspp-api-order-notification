@@ -1,407 +1,483 @@
 <?php
 /**
- * Plugin Name: WhatsApp Automation Connector
- * Description: Connect WooCommerce and custom WordPress tables to WhatsApp automation
- * Version: 2.1.0
+ * Plugin Name: WhatsApp Order Notification Connector
+ * Description: Sends WooCommerce order notifications via WhatsApp webhooks
+ * Version: 2.3
+ * Author: Your Name
  */
 
-if (!defined('ABSPATH'))
-    exit;
+if (!defined('ABSPATH')) exit;
 
-// Register ALL Settings
-function wa_connector_register_settings()
-{
-    // General
+function wa_connector_menu() {
+    add_options_page('WhatsApp Connector', 'WhatsApp Connector', 'manage_options', 'wa-connector', 'wa_connector_page');
+}
+add_action('admin_menu', 'wa_connector_menu');
+
+function wa_connector_settings() {
     register_setting('wa_connector_group', 'wa_connector_enabled');
-    register_setting('wa_connector_group', 'wa_connector_webhook_url');
-    register_setting('wa_connector_group', 'wa_connector_debug');
-
-    // WooCommerce (ALL triggers)
-    register_setting('wa_connector_group', 'wa_connector_woocommerce_enabled');
-    register_setting('wa_connector_group', 'wa_connector_woo_created');
-    register_setting('wa_connector_group', 'wa_connector_woo_paid');
-    register_setting('wa_connector_group', 'wa_connector_woo_processing');
-    register_setting('wa_connector_group', 'wa_connector_woo_completed');
-    register_setting('wa_connector_group', 'wa_connector_woo_refunded');
-    register_setting('wa_connector_group', 'wa_connector_woo_cancelled');
-    register_setting('wa_connector_group', 'wa_connector_woo_failed');
-
-    // Custom Tables
-    register_setting('wa_connector_group', 'wa_connector_custom_enabled');
-    register_setting('wa_connector_group', 'wa_connector_custom_tables_json');
-}
-add_action('admin_init', 'wa_connector_register_settings');
-
-// Admin Menu
-function wa_connector_add_admin_menu()
-{
-    add_menu_page('WhatsApp Connector', 'WA Connector', 'manage_options', 'wa-connector', 'wa_connector_admin_page', 'dashicons-email', 100);
-}
-add_action('admin_menu', 'wa_connector_add_admin_menu');
-
-// AJAX: Get full config for app sync
-add_action('wp_ajax_wa_get_config', 'wa_connector_ajax_get_config');
-add_action('wp_ajax_nopriv_wa_get_config', 'wa_connector_ajax_get_config');
-
-function wa_connector_ajax_get_config()
-{
-    header('Content-Type: application/json');
-
-    // Get WooCommerce triggers with proper value format for App
-    $woo_triggers = [];
-    // Map trigger names to the option keys used in admin form
-    $woo_trigger_configs = [
-        ['name' => 'order_created', 'option' => 'wa_connector_woo_created', 'label' => 'Order Created', 'value' => 'woocommerce.order_created', 'description' => 'When a new order is created'],
-        ['name' => 'order_paid', 'option' => 'wa_connector_woo_paid', 'label' => 'Order Paid', 'value' => 'woocommerce.order_paid', 'description' => 'When payment is received'],
-        ['name' => 'order_processing', 'option' => 'wa_connector_woo_processing', 'label' => 'Order Processing', 'value' => 'woocommerce.order_processing', 'description' => 'When order is being processed'],
-        ['name' => 'order_completed', 'option' => 'wa_connector_woo_completed', 'label' => 'Order Completed', 'value' => 'woocommerce.order_completed', 'description' => 'When order is completed'],
-        ['name' => 'order_refunded', 'option' => 'wa_connector_woo_refunded', 'label' => 'Order Refunded', 'value' => 'woocommerce.order_refunded', 'description' => 'When order is refunded'],
-        ['name' => 'order_cancelled', 'option' => 'wa_connector_woo_cancelled', 'label' => 'Order Cancelled', 'value' => 'woocommerce.order_cancelled', 'description' => 'When order is cancelled'],
-        ['name' => 'order_failed', 'option' => 'wa_connector_woo_failed', 'label' => 'Order Failed', 'value' => 'woocommerce.order_failed', 'description' => 'When order is failed']
-    ];
-
-    foreach ($woo_trigger_configs as $config) {
-        if (get_option($config['option']) === 'yes') {
-            $woo_triggers[] = $config;
-        }
-    }
-
-    // Get Custom tables - format for App
-    $tables_json = get_option('wa_connector_custom_tables_json', '[]');
-    $raw_tables = json_decode($tables_json, true) ?: [];
-
-    // Format tables with proper structure for App
-    $tables = [];
-    foreach ($raw_tables as $table) {
-        $tables[] = [
-            'name' => $table['name'] ?? 'wp_custom_table',
-            'label' => $table['label'] ?? 'Custom Table',
-            'columns' => $table['columns'] ?? []
-        ];
-    }
-
-    echo json_encode([
-        'success' => true,
-        'enabled' => get_option('wa_connector_enabled') === 'yes' || get_option('wa_connector_woocommerce_enabled') === 'yes',
-        'webhook_url' => get_option('wa_connector_webhook_url', 'https://lcsw.dpdns.org/api/webhook/custom'),
-        'woocommerce' => [
-            'enabled' => get_option('wa_connector_woocommerce_enabled') === 'yes',
-            'triggers' => $woo_triggers
-        ],
-        'custom_tables' => [
-            'enabled' => get_option('wa_connector_custom_enabled') === 'yes',
-            'tables' => $tables
-        ]
+    register_setting('wa_connector_group', 'wa_connector_webhook_url', [
+        'sanitize_callback' => 'wa_connector_sanitize_webhook_url',
     ]);
-    wp_die();
+    register_setting('wa_connector_group', 'wa_connector_site_id');
+    register_setting('wa_connector_group', 'wa_connector_tables');
+}
+add_action('admin_init', 'wa_connector_settings');
+
+function wa_connector_sanitize_webhook_url($url) {
+    return wa_connector_normalize_webhook_url($url);
 }
 
-// Admin Page
-function wa_connector_admin_page()
-{
-    $active_tab = isset($_GET['tab']) ? sanitize_text_field($_GET['tab']) : 'settings';
-    $default_webhook = 'https://lcsw.dpdns.org/api/webhook/custom';
-    $tables_json = get_option('wa_connector_custom_tables_json', '[]');
-    $tables = json_decode($tables_json, true) ?: [];
+function wa_connector_normalize_webhook_url($url) {
+    $url = trim((string) $url);
 
-    $woo_triggers = [
-        'wa_connector_woo_created' => 'Order Created',
-        'wa_connector_woo_paid' => 'Order Paid (Payment Received)',
-        'wa_connector_woo_processing' => 'Order Processing',
-        'wa_connector_woo_completed' => 'Order Completed',
-        'wa_connector_woo_refunded' => 'Order Refunded',
-        'wa_connector_woo_cancelled' => 'Order Cancelled',
-        'wa_connector_woo_failed' => 'Order Failed'
-    ];
+    if ($url === '') {
+        return '';
+    }
+
+    $parts = wp_parse_url($url);
+    if (!$parts || empty($parts['scheme']) || empty($parts['host'])) {
+        return esc_url_raw($url);
+    }
+
+    $path = isset($parts['path']) ? untrailingslashit($parts['path']) : '';
+    $should_force_custom_endpoint = (
+        $path === '' ||
+        $path === '/dashboard' ||
+        $path === '/dashboard/settings' ||
+        substr($path, -19) === '/dashboard/settings'
+    );
+
+    if ($should_force_custom_endpoint) {
+        $normalized = $parts['scheme'] . '://';
+
+        if (!empty($parts['user'])) {
+            $normalized .= $parts['user'];
+            if (!empty($parts['pass'])) {
+                $normalized .= ':' . $parts['pass'];
+            }
+            $normalized .= '@';
+        }
+
+        $normalized .= $parts['host'];
+
+        if (!empty($parts['port'])) {
+            $normalized .= ':' . $parts['port'];
+        }
+
+        $normalized .= '/api/webhook/custom';
+
+        return esc_url_raw($normalized);
+    }
+
+    return esc_url_raw($url);
+}
+
+function wa_connector_get_webhook_url() {
+    return wa_connector_normalize_webhook_url(get_option('wa_connector_webhook_url'));
+}
+
+function wa_connector_page() {
+    $tables = wa_connector_get_tables();
+    $saved_tables = get_option('wa_connector_tables', '[]');
+    if (empty($saved_tables)) {
+        $saved_tables = '[]';
+    }
+    $tables_json = json_encode($tables);
+    $saved_tables_json = $saved_tables;
 ?>
 <div class="wrap">
-    <h1>WhatsApp Automation Connector 🚀</h1>
-    <h2 class="nav-tab-wrapper">
-        <a href="?page=wa-connector&tab=settings"
-            class="nav-tab <?php echo $active_tab == 'settings' ? 'nav-tab-active' : ''; ?>">⚙️ Settings</a>
-        <a href="?page=wa-connector&tab=woocommerce"
-            class="nav-tab <?php echo $active_tab == 'woocommerce' ? 'nav-tab-active' : ''; ?>">🛒 WooCommerce</a>
-        <a href="?page=wa-connector&tab=custom"
-            class="nav-tab <?php echo $active_tab == 'custom' ? 'nav-tab-active' : ''; ?>">📋 Custom Tables</a>
-    </h2>
-
-    <?php if ($active_tab == 'settings'): ?>
-    <div class="postbox" style="margin-top:20px;padding:20px;">
-        <h2>⚙️ General Settings</h2>
-        <form method="post" action="options.php">
-            <?php settings_fields('wa_connector_group'); ?>
-            <table class="form-table">
-                <tr>
-                    <th>Enable Connector</th>
-                    <td><select name="wa_connector_enabled">
-                            <option value="yes" <?php selected(get_option('wa_connector_enabled'), 'yes' ); ?>>Yes -
-                                Active
-                            </option>
-                            <option value="no" <?php selected(get_option('wa_connector_enabled'), 'no' ); ?>>No -
-                                Disabled
-                            </option>
-                        </select></td>
-                </tr>
-                <tr>
-                    <th>Webhook URL</th>
-                    <td><input type="url" name="wa_connector_webhook_url"
-                            value="<?php echo esc_attr(get_option('wa_connector_webhook_url', $default_webhook)); ?>"
-                            class="regular-text" /></td>
-                </tr>
-                <tr>
-                    <th>Debug Mode</th>
-                    <td><select name="wa_connector_debug">
-                            <option value="yes" <?php selected(get_option('wa_connector_debug'), 'yes' ); ?>>Yes
-                            </option>
-                            <option value="no" <?php selected(get_option('wa_connector_debug'), 'no' ); ?>>No</option>
-                        </select></td>
-                </tr>
-            </table>
-            <?php submit_button('Save Settings'); ?>
-        </form>
-        <hr>
-        <p><strong>Webhook URL:</strong> <code
-                style="background:#d4edda;padding:5px 10px;"><?php echo $default_webhook; ?></code></p>
-        <p><small>Your app will receive events at this URL. The Automation Studio will automatically sync configured
-                tables and triggers.</small></p>
-    </div>
-
-    <?php
-    elseif ($active_tab == 'woocommerce'): ?>
-    <div class="postbox" style="margin-top:20px;padding:20px;">
-        <h2>🛒 WooCommerce Triggers</h2>
-        <p>Select which order events should send WhatsApp notifications. These will appear in your Automation Studio.
-        </p>
-
-        <form method="post" action="options.php">
-            <?php settings_fields('wa_connector_group'); ?>
-            <input type="hidden" name="wa_connector_woocommerce_enabled" value="yes">
-
-            <table class="form-table">
-                <?php foreach ($woo_triggers as $key => $label): ?>
-                <tr>
-                    <th>
-                        <?php echo $label; ?>
-                    </th>
-                    <td><label><input type="checkbox" name="<?php echo $key; ?>" value="yes" <?php
-            checked(get_option($key), 'yes' ); ?> /> Enable</label></td>
-                </tr>
-                <?php
-        endforeach; ?>
-            </table>
-
-            <?php submit_button('Save WooCommerce Settings'); ?>
-        </form>
-
-        <hr>
-        <p><strong>These triggers will be available in your Automation Studio:</strong></p>
-        <ul>
-            <?php foreach ($woo_triggers as $key => $label):
-            if (get_option($key) === 'yes'): ?>
-            <li style="color:green;">✓
-                <?php echo $label; ?>
-            </li>
-            <?php
-            else: ?>
-            <li style="color:#ccc;">○
-                <?php echo $label; ?>
-            </li>
-            <?php
-            endif;
-        endforeach; ?>
-        </ul>
-    </div>
-
-    <?php
-    else: // custom tables ?>
-    <div class="postbox" style="margin-top:20px;padding:20px;">
-        <h2>📋 Custom Tables Configuration</h2>
-        <p>Add multiple database tables. Each table can have its own field mappings. Tables will be available in Automation Studio dropdown.</p>
+    <h1>WhatsApp Connector Settings</h1>
+    <form method="post" action="options.php">
+        <?php settings_fields('wa_connector_group'); ?>
         
-        <form method="post" action="options.php">
-            <?php settings_fields('wa_connector_group'); ?>
-    <input type="hidden" name="wa_connector_custom_tables_json" id="wa_tables_json"
-        value="<?php echo esc_attr($tables_json); ?>">
-    <input type="hidden" name="wa_connector_custom_enabled" value="yes">
-
-    <p><label><input type="checkbox" checked disabled /> Enable Custom Table Notifications</label></p>
-    <hr>
-
-    <div id="wa-tables-container">
-        <?php if (empty($tables)): ?>
-        <p>No tables configured. Click "Add Table" below.</p>
-        <?php
-        else:
-            foreach ($tables as $i => $t): ?>
-        <div class="wa-table-config"
-            style="background:#f5f5f5;padding:15px;margin-bottom:15px;border-radius:5px;border:1px solid #ddd;">
-            <h4>Table:
-                <?php echo esc_html($t['name'] ?: 'NEW'); ?> <span style="color:green;">✓ Active</span>
-            </h4>
-            <table class="form-table">
-                <tr>
-                    <th>Table Name</th>
-                    <td><input type="text" class="wa-table-name" value="<?php echo esc_attr($t['name'] ?? ''); ?>"
-                            placeholder="wp_orders"></td>
-                </tr>
-                <tr>
-                    <th>ID Column</th>
-                    <td><input type="text" class="wa-table-id" value="<?php echo esc_attr($t['id_column'] ?? 'id'); ?>"
-                            style="width:100px;"></td>
-                </tr>
-                <tr>
-                    <th>Field Mappings</th>
-                    <td>
-                        Customer Name: <input type="text" class="wa-map-name"
-                            value="<?php echo esc_attr($t['mappings']['customer_name'] ?? ''); ?>"
-                            placeholder="name"><br>
-                        Customer Phone: <input type="text" class="wa-map-phone"
-                            value="<?php echo esc_attr($t['mappings']['customer_phone'] ?? ''); ?>"
-                            placeholder="phone"><br>
-                        Order Number: <input type="text" class="wa-map-order"
-                            value="<?php echo esc_attr($t['mappings']['order_number'] ?? ''); ?>" placeholder="id"><br>
-                        Order Total: <input type="text" class="wa-map-total"
-                            value="<?php echo esc_attr($t['mappings']['order_total'] ?? ''); ?>" placeholder="total">
-                    </td>
-                </tr>
-            </table>
-            <button type="button" class="button wa-remove-table" style="color:red;">Remove Table</button>
+        <table class="form-table">
+            <tr valign="top">
+                <th scope="row">Enable</th>
+                <td><input type="checkbox" name="wa_connector_enabled" value="yes" <?php checked(get_option('wa_connector_enabled'), 'yes'); ?> /></td>
+            </tr>
+            <tr valign="top">
+                <th scope="row">Webhook URL</th>
+                <td>
+                    <input type="text" name="wa_connector_webhook_url" value="<?php echo esc_attr(get_option('wa_connector_webhook_url')); ?>" class="regular-text" placeholder="https://your-tunnel-url/api/webhook/custom" />
+                    <p class="description">Use the API endpoint, not the dashboard page. If you paste <code>http://localhost:3000</code> or <code>/dashboard/settings</code>, the plugin will automatically send to <code>/api/webhook/custom</code>.</p>
+                </td>
+            </tr>
+            <tr valign="top">
+                <th scope="row">Site ID (for multi-site identification)</th>
+                <td><input type="text" name="wa_connector_site_id" value="<?php echo esc_attr(get_option('wa_connector_site_id')); ?>" class="regular-text" placeholder="e.g., my-shop-1" /></td>
+            </tr>
+        </table>
+        
+        <h2>Custom Table Mappings</h2>
+        <p>Map custom database tables to webhook fields for order notifications.</p>
+        <button type="button" class="button" onclick="showAddModal()">+ Add Table Mapping</button>
+        
+        <div id="wa-tables-list" style="margin-top: 15px;">
+            <?php
+            $saved = json_decode($saved_tables, true);
+            if ($saved && is_array($saved)) {
+                foreach ($saved as $index => $table) {
+                    echo '<div class="wa-table-item" style="background:#f9f9f9;padding:10px;margin:5px 0;border:1px solid #ddd;position:relative;">';
+                    echo '<strong>Table:</strong> ' . esc_html($table['table']) . '<br>';
+                    echo '<strong>ID Column:</strong> ' . esc_html($table['id_column']) . ' | ';
+                    echo '<strong>Name:</strong> ' . esc_html($table['map_name']) . ' | ';
+                    echo '<strong>Phone:</strong> ' . esc_html($table['map_phone']) . ' | ';
+                    echo '<strong>Order:</strong> ' . esc_html($table['map_order']) . ' | ';
+                    echo '<strong>Total:</strong> ' . esc_html($table['map_total']);
+                    echo ' <span class="delete-btn" onclick="deleteTable(' . $index . ')" style="color:red;cursor:pointer;margin-left:10px;">[Delete]</span>';
+                    echo '</div>';
+                }
+            }
+            ?>
         </div>
-        <?php
-            endforeach;
-        endif; ?>
-    </div>
-
-    <button type="button" id="wa-add-table" class="button button-primary">+ Add Table</button>
-    <?php submit_button('Save All Tables'); ?>
+        
+        <?php submit_button(); ?>
     </form>
 
     <hr>
-    <h3>Configured Tables (will sync to Automation Studio):</h3>
-    <ul>
-        <?php if (empty($tables)): ?>
-        <li style="color:#ccc;">No tables configured</li>
-        <?php
-        else:
-            foreach ($tables as $t): ?>
-        <li style="color:green;">✓
-            <?php echo esc_html($t['name']); ?> -
-            <?php echo esc_html($t['mappings']['customer_name'] ?: 'no mapping'); ?>
-        </li>
-        <?php
-            endforeach;
-        endif; ?>
-    </ul>
-
-    <hr>
-    <h3>How to Use</h3>
-    <pre style="background:#f5f5f5;padding:10px;border-radius:5px;">// Trigger from your custom code
-wa_trigger_custom_notification('wp_orders', $record_id, ['name'=>'John','phone'=>'919999999999']);
-do_action('wa_connector_custom_table_updated', 'wp_orders', $record_id, $data);</pre>
-
-    <script>
-        jQuery(function ($) {
-            function saveTables() {
-                var tables = [];
-                $('.wa-table-config').each(function () {
-                    var t = {
-                        name: $(this).find('.wa-table-name').val(),
-                        id_column: $(this).find('.wa-table-id').val() || 'id',
-                        mappings: {
-                            customer_name: $(this).a - name').val(),
-                        customer_phone: $(this).find('.wa        -phone').val(),
-                            order_number: $(this).find('.wa-map-order').val(),
-                            rder_total: $(this).find('.wa-maptal').val()
-                        }
-                    };
-                    if (t.name) tables.push(t);
-                });
-                $('#wa_tables_json').val(JSON.stringify(tables));
-            }
-            $('#wa-add-table').click(function () {
-                var h = '<div class="wa-table-config" style="background:#f5f5f5;padding:15px;margin-bottom:15px;border-radius:5px;border:1px solid #ddd;"><h4>Table: NEW</h4><table class="form-table"><tr><th>Table</th><td><input type="text" class="wa-table-name" value="" placeholder="wp_orders"></td></tr><tr><th>ID</th><td><input type="text" class="wa-table-id" value="id" style="width:100px;"></td></tr><tr><th>Mappings</th><td>Name: <input type="text" class="wa-map-name"><br>Phone: <input type="text" class="wa-map-phone"><br>Order#: <input type="text" class="wa-map-order"><br>Total: <input type="text" class="wa-map-total"></td></tr></table><button type="button" class="button wa-remove-table" style="color:red;">Remove</button></div>';
-                $('#wa-tables-container').append(h);
-                $('.wa-remove-table').click(function () { $(this).closest('.wa-table-config').remove(); saveTables(); });
-            });
-            $('.wa-remove-table').click(function () { $(this).closest('.wa-table-config').remove(); saveTables(); });
-            $('form').submit(function () { saveTables(); });
-        });
-    </script>
-</div>
-<?php
-    endif; ?>
-</div>
-<?php
-}
-
-// Webhook sender
-function wa_connector_send_webhook($data)
-{
-    $url = get_option('wa_connector_webhook_url', 'https://lcsw.dpdns.org/api/webhook/custom');
-    if (get_option('wa_connector_enabled') !== 'yes')
-        return ['success' => false, 'error' => 'Disabled'];
-    wp_remote_post($url, ['body' => json_encode($data), 'headers' => ['Content-Type' => 'application/json'], 'timeout' => 30]);
-}
-
-// WooCommerce hooks - ALL triggers
-$woo_hooks = [
-    'wa_connector_woo_created' => ['hook' => 'woocommerce_order_created', 'event' => 'woocommerce.order_created'],
-    'wa_connector_woo_paid' => ['hook' => 'woocommerce_order_status_processing', 'event' => 'woocommerce.order_paid'],
-    'wa_connector_woo_processing' => ['hook' => 'woocommerce_order_status_processing', 'event' => 'woocommerce.order_processing'],
-    'wa_connector_woo_completed' => ['hook' => 'woocommerce_order_status_completed', 'event' => 'woocommerce.order_completed'],
-    'wa_connector_woo_refunded' => ['hook' => 'woocommerce_order_refunded', 'event' => 'woocommerce.order_refunded'],
-    'wa_connector_woo_cancelled' => ['hook' => 'woocommerce_order_status_cancelled', 'event' => 'woocommerce.order_cancelled'],
-    'wa_connector_woo_failed' => ['hook' => 'woocommerce_order_status_failed', 'event' => 'woocommerce.order_failed']
-];
-
-foreach ($woo_hooks as $option => $config) {
-    add_action($config['hook'], function ($id, $o) use ($option, $config) {
-        if (get_option('wa_connector_woocommerce_enabled') !== 'yes' || get_option($option) !== 'yes')
-            return;
-        wa_connector_send_webhook([
-            'event' => $config['event'],
-            'order_id' => $id,
-            'order_number' => $o->get_order_number(),
-            'customer_name' => $o->get_billing_first_name() . ' ' . $o->get_billing_last_name(),
-            'customer_phone' => $o->get_billing_phone(),
-            'order_total' => $o->get_total(),
-            'currency' => $o->get_currency(),
-            'status' => $o->get_status()
-        ]);
-    }, 10, 2);
-}
-
-// Custom table trigger
-function wa_trigger_custom_notification($table_name, $record_id, $data = [])
-{
-    if (get_option('wa_connector_custom_enabled') !== 'yes')
-        return;
-    $tables_json = get_option('wa_connector_custom_tables_json', '[]');
-    $tables = json_decode($tables_json, true) ?: [];
-    $table = null;
-    foreach ($tables as $t) {
-        if ($t['name'] === $table_name) {
-            $table = $t;
-            break;
+    <h2>Test Connection</h2>
+    <p>Send a test notification to your dashboard to verify the webhook connection.</p>
+    <form method="post" action="">
+        <?php wp_nonce_field('wa_test_webhook', 'wa_test_nonce'); ?>
+        <input type="submit" name="wa_send_test" class="button button-secondary" value="Send Test Webhook">
+    </form>
+    
+    <?php
+    if (isset($_POST['wa_send_test']) && check_admin_referer('wa_test_webhook', 'wa_test_nonce')) {
+        $test_data = [
+            'event' => 'woocommerce.order_created',
+            'order_id' => 'TEST-' . time(),
+            'order_number' => 'TEST-' . time(),
+            'customer_name' => 'Demo User',
+            'customer_phone' => '1234567890',
+            'customer_email' => 'demo@example.com',
+            'order_total' => '100.00',
+            'order_status' => 'processing',
+            'site_name' => get_bloginfo('name'),
+            'site_url' => get_site_url(),
+            'is_test' => true
+        ];
+        $success = wa_connector_send_webhook($test_data);
+        if ($success) {
+            echo '<div class="updated"><p>✅ Test webhook sent! Check your dashboard activity log.</p></div>';
+        } else {
+            echo '<div class="error"><p>❌ Failed to send. Check if your Webhook URL is correct and the plugin is enabled.</p></div>';
         }
     }
-    if (!$table)
-        return;
-    wa_connector_send_webhook([
-        'event' => 'custom.webhook',
-        'source_table' => $table_name,
-        'source_id' => $record_id,
-        'field_mapping' => $table['mappings'] ?? []
-    ] + $data);
-}
-add_action('wa_connector_custom_table_updated', 'wa_connector_on_custom_table', 10, 3);
-function wa_connector_on_custom_table($table, $id, $data)
-{
-    wa_trigger_custom_notification($table, $id, $data);
+    ?>
+</div>
+
+<div id="wa-add-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:9999;">
+    <div style="background:white;padding:20px;margin:100px auto;max-width:500px;border-radius:5px;">
+        <h3>Add Table Mapping</h3>
+        <p>
+            <label>Table:</label><br>
+            <select id="wa-table-select" onchange="loadTableColumns(this.value)" style="width:100%;">
+                <option value="">Select a table...</option>
+                <?php foreach ($tables as $table): ?>
+                    <option value="<?php echo esc_attr($table); ?>"><?php echo esc_html($table); ?></option>
+                <?php endforeach; ?>
+            </select>
+        </p>
+        <p>
+            <label>ID Column:</label><br>
+            <select id="wa-id-column" style="width:100%;"><option value="">Select table first...</option></select>
+        </p>
+        <p>
+            <label>Name Column:</label><br>
+            <select id="wa-map-name" style="width:100%;"><option value="">Select table first...</option></select>
+        </p>
+        <p>
+            <label>Phone Column:</label><br>
+            <select id="wa-map-phone" style="width:100%;"><option value="">Select table first...</option></select>
+        </p>
+        <p>
+            <label>Order Number Column:</label><br>
+            <select id="wa-map-order" style="width:100%;"><option value="">Select table first...</option></select>
+        </p>
+        <p>
+            <label>Total Amount Column:</label><br>
+            <select id="wa-map-total" style="width:100%;"><option value="">Select table first...</option></select>
+        </p>
+        <button type="button" class="button button-primary" onclick="addTable()">Save Table</button>
+        <button type="button" class="button" onclick="closeModal()">Cancel</button>
+    </div>
+</div>
+
+<div id="wa-loading" style="display:none;text-align:center;padding:20px;">Loading...</div>
+
+<script>
+var currentTables = <?php echo $saved_tables_json; ?>;
+
+function showAddModal() {
+    document.getElementById('wa-add-modal').style.display = 'block';
 }
 
-// Helper function for external use
-function wa_send_notification($event, $data)
-{
-    wa_connector_send_webhook(array_merge(['event' => $event], $data));
+function closeModal() {
+    document.getElementById('wa-add-modal').style.display = 'none';
+}
+
+function loadTableColumns(tableName) {
+    if (!tableName) return;
+    
+    document.getElementById('wa-loading').style.display = 'block';
+    
+    jQuery.post('<?php echo admin_url('admin-ajax.php'); ?>', {
+        action: 'wa_connector_get_table_columns',
+        table: tableName,
+        nonce: '<?php echo wp_create_nonce('wa_connector_nonce'); ?>'
+    }, function(res) {
+        document.getElementById('wa-loading').style.display = 'none';
+        if (res.success) {
+            var cols = res.data;
+            var options = '<option value="">-- Select --</option>';
+            cols.forEach(function(c) {
+                options += '<option value="' + c + '">' + c + '</option>';
+            });
+            
+            document.getElementById('wa-id-column').innerHTML = options;
+            document.getElementById('wa-map-name').innerHTML = options;
+            document.getElementById('wa-map-phone').innerHTML = options;
+            document.getElementById('wa-map-order').innerHTML = options;
+            document.getElementById('wa-map-total').innerHTML = options;
+        }
+    });
+}
+
+function addTable() {
+    var tableName = document.getElementById('wa-table-select').value;
+    var idCol = document.getElementById('wa-id-column').value;
+    var nameCol = document.getElementById('wa-map-name').value;
+    var phoneCol = document.getElementById('wa-map-phone').value;
+    var orderCol = document.getElementById('wa-map-order').value;
+    var totalCol = document.getElementById('wa-map-total').value;
+    
+    if (!tableName || !idCol) {
+        alert('Please select at least table and ID column');
+        return;
+    }
+    
+    currentTables.push({
+        table: tableName,
+        id_column: idCol,
+        map_name: nameCol,
+        map_phone: phoneCol,
+        map_order: orderCol,
+        map_total: totalCol
+    });
+    
+    jQuery.post('<?php echo admin_url('admin-ajax.php'); ?>', {
+        action: 'wa_connector_save_tables',
+        tables: JSON.stringify(currentTables),
+        nonce: '<?php echo wp_create_nonce('wa_connector_nonce'); ?>'
+    }, function(res) {
+        if (res.success) {
+            location.reload();
+        }
+    });
+}
+
+function deleteTable(index) {
+    if (!confirm('Delete this mapping?')) return;
+    currentTables.splice(index, 1);
+    jQuery.post('<?php echo admin_url('admin-ajax.php'); ?>', {
+        action: 'wa_connector_save_tables',
+        tables: JSON.stringify(currentTables),
+        nonce: '<?php echo wp_create_nonce('wa_connector_nonce'); ?>'
+    }, function(res) {
+        if (res.success) {
+            location.reload();
+        }
+    });
+}
+</script>
+
+<?php
+}
+
+function wa_connector_get_tables() {
+    global $wpdb;
+    $tables = $wpdb->get_results("SHOW TABLES", ARRAY_N);
+    return array_map(function($t) { return $t[0]; }, $tables);
+}
+
+add_action('wp_ajax_wa_connector_get_table_columns', function() {
+    check_ajax_referer('wa_connector_nonce', 'nonce');
+    global $wpdb;
+    $table = sanitize_text_field($_POST['table']);
+    $columns = $wpdb->get_results("DESCRIBE `$table`", ARRAY_N);
+    wp_send_json_success(array_map(function($c) { return $c[0]; }, $columns));
+});
+
+add_action('wp_ajax_wa_connector_save_tables', function() {
+    check_ajax_referer('wa_connector_nonce', 'nonce');
+    $tables = json_decode(stripslashes($_POST['tables']), true);
+    update_option('wa_connector_tables', json_encode($tables));
+    wp_send_json_success();
+});
+
+add_action('wp_ajax_wa_get_config', 'wa_connector_get_config_api');
+add_action('wp_ajax_nopriv_wa_get_config', 'wa_connector_get_config_api');
+
+function wa_connector_get_config_api() {
+    $enabled = get_option('wa_connector_enabled') === 'yes';
+    $site_url = get_site_url();
+    
+    // Check if WooCommerce is actually active on the site
+    $woo_active = class_exists('WooCommerce');
+    
+    // Default WooCommerce triggers supported by the plugin
+    $triggers = [];
+    
+    if ($woo_active) {
+        $triggers = [
+            [
+                'name' => 'woocommerce.order_created',
+                'label' => 'Order Created (New)',
+                'value' => 'woocommerce.order_created',
+                'description' => 'When a new order is received'
+            ],
+            [
+                'name' => 'woocommerce.order_processing',
+                'label' => 'Order Processing',
+                'value' => 'woocommerce.order_processing',
+                'description' => 'When order status changes to processing'
+            ],
+            [
+                'name' => 'woocommerce.order_completed',
+                'label' => 'Order Completed',
+                'value' => 'woocommerce.order_completed',
+                'description' => 'When order status changes to completed'
+            ],
+            [
+                'name' => 'woocommerce.order_cancelled',
+                'label' => 'Order Cancelled',
+                'value' => 'woocommerce.order_cancelled',
+                'description' => 'When an order is cancelled'
+            ],
+            [
+                'name' => 'woocommerce.order_failed',
+                'label' => 'Order Failed',
+                'value' => 'woocommerce.order_failed',
+                'description' => 'When an order payment fails'
+            ]
+        ];
+    }
+    
+    // Get custom mapped tables
+    $saved_tables = get_option('wa_connector_tables', '[]');
+    $tables_array = json_decode($saved_tables, true);
+    if (!is_array($tables_array)) {
+        $tables_array = [];
+    }
+    
+    $formatted_tables = array_map(function($t) {
+        return [
+            'name' => $t['table'],
+            'label' => 'Table: ' . $t['table']
+        ];
+    }, $tables_array);
+    
+    $config = [
+        'wordpress_url' => $site_url,
+        'woocommerce' => [
+            'enabled' => $enabled && $woo_active,
+            'triggers' => $triggers
+        ],
+        'custom_tables' => [
+            'enabled' => count($tables_array) > 0,
+            'tables' => $formatted_tables
+        ]
+    ];
+    
+    // Send CORS headers in case it's requested directly from browser
+    header("Access-Control-Allow-Origin: *");
+    header("Content-Type: application/json; charset=UTF-8");
+    echo json_encode($config);
+    wp_die();
+}
+
+// Hook into WooCommerce order statuses
+add_action('woocommerce_new_order', 'wa_connector_send_order_notification');
+add_action('woocommerce_order_status_processing', 'wa_connector_send_order_notification');
+add_action('woocommerce_order_status_completed', 'wa_connector_send_order_notification');
+add_action('woocommerce_order_status_cancelled', 'wa_connector_send_order_notification');
+add_action('woocommerce_order_status_failed', 'wa_connector_send_order_notification');
+
+function wa_connector_send_order_notification($order_id) {
+    error_log('WhatsApp Connector: Order notification triggered for ID ' . $order_id);
+    
+    $order = wc_get_order($order_id);
+    if (!$order) {
+        error_log('WhatsApp Connector: Could not load order object for ID ' . $order_id);
+        return;
+    }
+    
+    $webhook_url = wa_connector_get_webhook_url();
+    if (!$webhook_url) return;
+    
+    $current_hook = current_action();
+    $event_type = 'woocommerce.order_processing';
+    
+    if ($current_hook === 'woocommerce_new_order') {
+        $event_type = 'woocommerce.order_created';
+    } elseif ($current_hook === 'woocommerce_order_status_completed') {
+        $event_type = 'woocommerce.order_completed';
+    } elseif ($current_hook === 'woocommerce_order_status_cancelled') {
+        $event_type = 'woocommerce.order_cancelled';
+    } elseif ($current_hook === 'woocommerce_order_status_failed') {
+        $event_type = 'woocommerce.order_failed';
+    }
+    
+    $data = [
+        'event' => $event_type,
+        'order_id' => $order_id,
+        'order_number' => $order->get_order_number(),
+        'customer_name' => $order->get_billing_first_name() . ' ' . $order->get_billing_last_name(),
+        'customer_phone' => $order->get_billing_phone(),
+        'customer_email' => $order->get_billing_email(),
+        'order_total' => $order->get_total(),
+        'currency' => $order->get_currency(),
+        'order_status' => $order->get_status(),
+        'site_id' => get_option('wa_connector_site_id', ''),
+        'site_name' => get_bloginfo('name'),
+        'site_url' => get_site_url(),
+        'created_at' => date('c')
+    ];
+    
+    wa_connector_send_webhook($data);
+}
+
+function wa_connector_send_webhook($data) {
+    $url = wa_connector_get_webhook_url();
+    if (get_option('wa_connector_enabled') !== 'yes') return false;
+    if (!$url) {
+        error_log('WhatsApp Connector Webhook Error: webhook URL is empty or invalid.');
+        return false;
+    }
+    
+    $payload = json_encode($data);
+    
+    $response = wp_remote_post($url, [
+        'body' => $payload,
+        'headers' => ['Content-Type' => 'application/json'],
+        'timeout' => 30,
+        'sslverify' => (strpos($url, 'localhost') !== false) ? false : true
+    ]);
+    
+    if (is_wp_error($response)) {
+        error_log('WhatsApp Connector Webhook Error: ' . $response->get_error_message());
+        return false;
+    }
+
+    $status_code = wp_remote_retrieve_response_code($response);
+    if ($status_code < 200 || $status_code >= 300) {
+        $response_body = wp_remote_retrieve_body($response);
+        error_log('WhatsApp Connector Webhook Error: endpoint returned HTTP ' . $status_code . ' for ' . $url . '. Response: ' . $response_body);
+        return false;
+    }
+
+    error_log('WhatsApp Connector: Webhook delivered successfully to ' . $url . ' with status ' . $status_code);
+    
+    return true;
 }

@@ -304,7 +304,7 @@ export default function SendCatalogPage() {
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-4rem)] lg:h-[calc(100vh-6rem)] bg-slate-50 text-slate-900 overflow-hidden relative rounded-lg border border-slate-200 shadow-sm">
+    <div className="catalog-scene flex flex-col h-[calc(100vh-4rem)] lg:h-[calc(100vh-6rem)] bg-slate-50 text-slate-900 overflow-hidden relative rounded-lg border border-slate-200 shadow-sm">
       <Toaster />
 
 

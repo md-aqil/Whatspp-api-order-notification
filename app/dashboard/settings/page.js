@@ -1,11 +1,9 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Dialog,
   DialogContent,
@@ -19,8 +17,6 @@ import {
   CheckCircle,
   Copy,
   RefreshCw,
-  Wifi,
-  WifiOff,
   Clock,
   MessageCircle,
   Store,
@@ -28,27 +24,29 @@ import {
   Settings,
   Monitor,
   ChevronDown,
-  Plus
+  Plus,
+  Trash2
 } from 'lucide-react'
+import { useTheme } from 'next-themes'
 import { toast } from 'sonner'
 
 export default function SettingsPage() {
+  const { theme, setTheme } = useTheme()
   const [loading, setLoading] = useState(false)
   const [whatsappStatus, setWhatsappStatus] = useState('unknown')
   const [shopifyStatus, setShopifyStatus] = useState('unknown')
   const [lastWebhook, setLastWebhook] = useState(null)
+  const [lastCustomWebhook, setLastCustomWebhook] = useState(null)
   const [checking, setChecking] = useState(false)
   const [shopifyWebhooks, setShopifyWebhooks] = useState([])
   const [expandedWebhook, setExpandedWebhook] = useState(null)
-  const [expandedIntegration, setExpandedIntegration] = useState(null)
+  const [mounted, setMounted] = useState(false)
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true)
+  const [baseUrl, setBaseUrl] = useState(process.env.NEXT_PUBLIC_BASE_URL || '')
 
   const toggleWebhook = (type) => {
-    setExpandedWebhook(expandedWebhook === type ? null : type);
-  };
-
-  const toggleIntegration = (type) => {
-    setExpandedIntegration(expandedIntegration === type ? null : type);
-  };
+    setExpandedWebhook(expandedWebhook === type ? null : type)
+  }
 
   // Available Shopify webhook topics
   const shopifyWebhookTopics = [
@@ -63,6 +61,91 @@ export default function SettingsPage() {
   ]
 
   const [customWebhookStatus, setCustomWebhookStatus] = useState(null)
+
+  useEffect(() => {
+    setMounted(true)
+
+    if (typeof window !== 'undefined') {
+      setBaseUrl(window.location.origin)
+    }
+  }, [])
+
+  // Registered webhooks state (user-added)
+  const [registeredWebhooks, setRegisteredWebhooks] = useState([])
+  const [addWebhookOpen, setAddWebhookOpen] = useState(false)
+  const [newWebhook, setNewWebhook] = useState({
+    name: '',
+    target_url: '',
+    event_types: [],
+    secret_key: ''
+  })
+
+  // Load registered webhooks
+  const loadRegisteredWebhooks = async () => {
+    try {
+      const response = await fetch('/api/webhooks/registered')
+      if (response.ok) {
+        const data = await response.json()
+        setRegisteredWebhooks(data)
+      }
+    } catch (error) {
+      console.error('Failed to load registered webhooks:', error)
+    }
+  }
+
+  // Save new webhook
+  const handleAddWebhook = async () => {
+    if (!newWebhook.name || !newWebhook.target_url) {
+      toast.error('Please fill in name and target URL')
+      return
+    }
+
+    try {
+      setLoading(true)
+      const response = await fetch('/api/webhooks/registered', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newWebhook)
+      })
+
+      if (response.ok) {
+        toast.success('Webhook added successfully')
+        setAddWebhookOpen(false)
+        setNewWebhook({ name: '', target_url: '', event_types: [], secret_key: '' })
+        loadRegisteredWebhooks()
+      } else {
+        const error = await response.json()
+        toast.error(error.error || 'Failed to add webhook')
+      }
+    } catch (error) {
+      console.error('Failed to add webhook:', error)
+      toast.error('Failed to add webhook')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Delete webhook
+  const handleDeleteWebhook = async (id) => {
+    try {
+      const response = await fetch(`/api/webhooks/registered?id=${id}`, {
+        method: 'DELETE'
+      })
+
+      if (response.ok) {
+        toast.success('Webhook deleted')
+        loadRegisteredWebhooks()
+      }
+    } catch (error) {
+      console.error('Failed to delete webhook:', error)
+      toast.error('Failed to delete webhook')
+    }
+  }
+
+  // Load registered webhooks on mount
+  useEffect(() => {
+    loadRegisteredWebhooks()
+  }, [])
 
   // Integration state
   const [integrations, setIntegrations] = useState({
@@ -116,11 +199,8 @@ export default function SettingsPage() {
   }
 
   // WordPress/WooCommerce config state
-  const [wpUrl, setWpUrl] = useState('')
   const [woocommerceTriggers, setWoocommerceTriggers] = useState([])
   const [customTables, setCustomTables] = useState([])
-  const [savingConfig, setSavingConfig] = useState(false)
-  const [configLoaded, setConfigLoaded] = useState(false)
 
   // Load existing config on mount
   // Load existing config on mount
@@ -134,10 +214,8 @@ export default function SettingsPage() {
         })
         const data = await res.json()
         if (data && data.wordpress_url !== undefined) {
-          setWpUrl(data.wordpress_url || '')
           setWoocommerceTriggers(data.woocommerce?.triggers || [])
           setCustomTables(data.custom_tables?.tables || [])
-          setConfigLoaded(true)
         }
       } catch (e) {
         console.log('No config loaded yet:', e)
@@ -146,92 +224,19 @@ export default function SettingsPage() {
     loadConfig()
   }, [])
 
-  // Save WooCommerce configuration
-  const saveWooConfig = async () => {
-    setSavingConfig(true)
-    try {
-      const res = await fetch('/api/wa-config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          wordpress_url: wpUrl,
-          woocommerce_triggers: woocommerceTriggers,
-          custom_tables: customTables
-        })
-      })
-      if (res.ok) {
-        toast.success('WooCommerce configuration saved!')
-      } else {
-        toast.error('Failed to save configuration')
-      }
-    } catch (e) {
-      toast.error('Error saving configuration')
-    }
-    setSavingConfig(false)
-  }
-
-  // Add a new WooCommerce trigger
-  const addWooTrigger = () => {
-    setWoocommerceTriggers([...woocommerceTriggers, {
-      name: 'new_trigger',
-      label: 'New Trigger',
-      value: '',
-      description: 'Custom trigger'
-    }])
-  }
-
-  // Update a trigger
-  const updateTrigger = (index, field, value) => {
-    const updated = [...woocommerceTriggers]
-    updated[index][field] = value
-    // Auto-generate value from name
-    if (field === 'name') {
-      updated[index].value = `woocommerce.${value.toLowerCase().replace(/\s+/g, '_')}`
-    }
-    setWoocommerceTriggers(updated)
-  }
-
-  // Remove a trigger
-  const removeTrigger = (index) => {
-    setWoocommerceTriggers(woocommerceTriggers.filter((_, i) => i !== index))
-  }
-
-  // Add a new custom table
-  const addCustomTable = () => {
-    setCustomTables([...customTables, {
-      name: 'wp_custom_table',
-      label: 'Custom Table',
-      columns: []
-    }])
-  }
-
-  // Update a table
-  const updateTable = (index, field, value) => {
-    const updated = [...customTables]
-    updated[index][field] = value
-    setCustomTables(updated)
-  }
-
-  // Remove a table
-  const removeTable = (index) => {
-    setCustomTables(customTables.filter((_, i) => i !== index))
-  }
-
-  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://lcsw.dpdns.org'
-
   // Check webhook connectivity
   const checkWebhookStatus = async () => {
     setChecking(true)
     try {
       // Check WhatsApp webhook
-      const waResponse = await fetch(`${baseUrl}/api/webhook/whatsapp`, {
+      const waResponse = await fetch(`/api/webhook/whatsapp`, {
         method: 'GET',
         cache: 'no-cache'
       })
       setWhatsappStatus(waResponse.ok || waResponse.status === 200 ? 'connected' : 'error')
 
       // Check Shopify webhook
-      const shResponse = await fetch(`${baseUrl}/api/webhook/shopify`, {
+      const shResponse = await fetch(`/api/webhook/shopify`, {
         method: 'GET',
         cache: 'no-cache'
       })
@@ -239,7 +244,7 @@ export default function SettingsPage() {
 
       // Fetch registered Shopify webhooks
       try {
-        const webhooksRes = await fetch(`${baseUrl}/api/webhooks?type=shopify`)
+        const webhooksRes = await fetch(`/api/webhooks?type=shopify`)
         if (webhooksRes.ok) {
           const webhooksData = await webhooksRes.json()
           setShopifyWebhooks(webhooksData.webhooks || [])
@@ -251,7 +256,7 @@ export default function SettingsPage() {
 
       // Fetch custom webhook status
       try {
-        const customRes = await fetch(`${baseUrl}/api/webhook/custom`)
+        const customRes = await fetch(`/api/webhook/custom`)
         if (customRes.ok) {
           const customData = await customRes.json()
           setCustomWebhookStatus(customData)
@@ -263,7 +268,7 @@ export default function SettingsPage() {
 
       // Fetch WordPress plugin config (woocommerce triggers & custom tables)
       try {
-        const waConfigRes = await fetch(`${baseUrl}/api/wa-config`, { cache: 'no-store' })
+        const waConfigRes = await fetch(`/api/wa-config`, { cache: 'no-store' })
         if (waConfigRes.ok) {
           const waConfig = await waConfigRes.json()
           // Set WooCommerce triggers from plugin
@@ -279,13 +284,23 @@ export default function SettingsPage() {
         console.log('wa-config fetch error:', e)
       }
 
-      // Fetch last webhook log
+      // Fetch last webhook logs
       try {
-        const logsResponse = await fetch(`${baseUrl}/api/webhook-logs?limit=1`)
+        const logsResponse = await fetch(`/api/webhook-logs?limit=50`)
         if (logsResponse.ok) {
           const data = await logsResponse.json()
           if (data.logs && data.logs.length > 0) {
-            setLastWebhook(data.logs[0])
+            // Find latest for each type
+            const shopifyLog = data.logs.find(l => l.type === 'shopify')
+            const whatsappLog = data.logs.find(l => l.type === 'whatsapp')
+            const customLog = data.logs.find(l => l.type === 'custom')
+
+            if (shopifyLog || whatsappLog) {
+              setLastWebhook(shopifyLog || whatsappLog)
+            }
+            if (customLog) {
+              setLastCustomWebhook(customLog)
+            }
           }
         }
       } catch (e) {
@@ -299,23 +314,65 @@ export default function SettingsPage() {
     setChecking(false)
   }
 
+  const isDarkMode = mounted && theme === 'dark'
+  const activeWebhookCount =
+    registeredWebhooks.filter((webhook) => webhook.is_active).length +
+    (whatsappStatus === 'connected' ? 1 : 0) +
+    (shopifyStatus === 'connected' ? 1 : 0) +
+    (customWebhookStatus?.status === 'ready' ? 1 : 0)
+
+  const latestWordPressPayload = lastCustomWebhook?.payload || null
+  const latestWordPressRows = useMemo(() => {
+    if (!latestWordPressPayload || !lastCustomWebhook) return []
+
+    const formatCurrencyValue = () => {
+      if (!latestWordPressPayload.order_total) return ''
+      const currency = latestWordPressPayload.currency || ''
+      return `${currency}${latestWordPressPayload.order_total}`
+    }
+
+    return [
+      { label: 'Event Type', value: lastCustomWebhook.topic || latestWordPressPayload.event || 'Unknown', tone: 'badge' },
+      { label: 'Source', value: latestWordPressPayload?._site_info?.site_name || latestWordPressPayload.site_name || 'WordPress Plugin' },
+      { label: 'Site ID', value: latestWordPressPayload?._site_info?.site_id || latestWordPressPayload.site_id || 'Not provided', monospace: true },
+      { label: 'Site URL', value: latestWordPressPayload?._site_info?.site_url || latestWordPressPayload.site_url || 'Not provided', monospace: true },
+      { label: 'Received At', value: lastCustomWebhook.receivedAt ? new Date(lastCustomWebhook.receivedAt).toLocaleString() : 'Unknown' },
+      { label: 'Webhook Created At', value: latestWordPressPayload.created_at || 'Not provided' },
+      { label: 'Order ID', value: latestWordPressPayload.order_id || 'Not provided', monospace: true },
+      { label: 'Order Number', value: latestWordPressPayload.order_number || 'Not provided', monospace: true },
+      { label: 'Order Status', value: latestWordPressPayload.order_status || 'Not provided' },
+      { label: 'Customer', value: latestWordPressPayload.customer_name || 'Not provided' },
+      { label: 'Phone', value: latestWordPressPayload.customer_phone || 'Not provided', monospace: true, missing: !latestWordPressPayload.customer_phone },
+      { label: 'Email', value: latestWordPressPayload.customer_email || 'Not provided', monospace: true, missing: !latestWordPressPayload.customer_email },
+      { label: 'Total', value: formatCurrencyValue() || 'Not provided', tone: 'success' },
+      { label: 'Currency', value: latestWordPressPayload.currency || 'Not provided', monospace: true }
+    ]
+  }, [lastCustomWebhook, latestWordPressPayload])
+
+  const latestWordPressRawPayload = useMemo(() => {
+    if (!latestWordPressPayload) return ''
+    return JSON.stringify(latestWordPressPayload, null, 2)
+  }, [latestWordPressPayload])
+
+  const buildWebhookUrl = (path) => {
+    if (!baseUrl) return path
+    return `${baseUrl}${path}`
+  }
+
+  const toggleDarkMode = () => {
+    if (!mounted) return
+    setTheme(isDarkMode ? 'light' : 'dark')
+  }
+
   useEffect(() => {
     checkWebhookStatus()
     // Check every 30 seconds
     const interval = setInterval(checkWebhookStatus, 30000)
     return () => clearInterval(interval)
-  }, [baseUrl])
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <p>Loading settings...</p>
-      </div>
-    )
-  }
+  }, [])
 
   return (
-    <div className="p-8 mx-auto space-y-12 bg-[#f8f9ff] text-[#05345c] min-h-screen">
+    <div className="settings-scene p-8 mx-auto space-y-12 bg-[#f8f9ff] text-[#05345c] min-h-screen">
       {/* Bento Layout Content */}
       <div className="grid grid-cols-12 gap-8">
         {/* Left Column */}
@@ -339,7 +396,7 @@ export default function SettingsPage() {
               </div>
               <div className="grid grid-cols-2 gap-4 pt-4">
                 <div className="p-4 bg-[#eff4ff] rounded-lg text-center">
-                  <div className="text-2xl font-black">18</div>
+                  <div className="text-2xl font-black">{activeWebhookCount}</div>
                   <div className="text-[10px] uppercase font-bold text-[#3d618c] mt-1">Active Hooks</div>
                 </div>
                 <div className="p-4 bg-[#eff4ff] rounded-lg text-center">
@@ -359,13 +416,23 @@ export default function SettingsPage() {
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-semibold">Dark Mode</span>
-                <button className="w-10 h-6 bg-[#d2e4ff] rounded-full relative p-1 transition-colors">
+                <button
+                  type="button"
+                  aria-pressed={isDarkMode}
+                  onClick={toggleDarkMode}
+                  className={`w-10 h-6 rounded-full relative p-1 transition-colors ${isDarkMode ? 'bg-[#005cc0] flex justify-end' : 'bg-[#d2e4ff]'}`}
+                >
                   <div className="w-4 h-4 bg-white rounded-full shadow-sm"></div>
                 </button>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm font-semibold">Instant Notifications</span>
-                <button className="w-10 h-6 bg-[#005cc0] rounded-full relative p-1 flex justify-end transition-colors">
+                <button
+                  type="button"
+                  aria-pressed={notificationsEnabled}
+                  onClick={() => setNotificationsEnabled((current) => !current)}
+                  className={`w-10 h-6 rounded-full relative p-1 transition-colors ${notificationsEnabled ? 'bg-[#005cc0] flex justify-end' : 'bg-[#d2e4ff]'}`}
+                >
                   <div className="w-4 h-4 bg-white rounded-full shadow-sm"></div>
                 </button>
               </div>
@@ -386,7 +453,7 @@ export default function SettingsPage() {
           <div className="bg-white p-8 rounded-xl shadow-sm border-none ring-1 ring-black/[0.03]">
             <div className="flex items-center justify-between mb-8">
               <h3 className="text-xl font-bold font-headline">Service Integrations</h3>
-              <button className="text-[#005cc0] text-sm font-bold hover:underline">View All</button>
+              <div className="text-[#3d618c] text-sm font-semibold">{activeWebhookCount} active endpoints</div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {/* WhatsApp */}
@@ -415,7 +482,7 @@ export default function SettingsPage() {
                     <DialogTitle>WhatsApp Configuration</DialogTitle>
                     <DialogDescription>Configure your WhatsApp Business API integration</DialogDescription>
                   </DialogHeader>
-                  <IntegrationForm type="whatsapp" integration={integrations.whatsapp} />
+                  <IntegrationForm type="whatsapp" integration={integrations.whatsapp} onSave={saveIntegration} />
                 </DialogContent>
               </Dialog>
 
@@ -445,7 +512,7 @@ export default function SettingsPage() {
                     <DialogTitle>Shopify Configuration</DialogTitle>
                     <DialogDescription>Manage your Shopify eCommerce integration</DialogDescription>
                   </DialogHeader>
-                  <IntegrationForm type="shopify" integration={integrations.shopify} />
+                  <IntegrationForm type="shopify" integration={integrations.shopify} onSave={saveIntegration} />
                 </DialogContent>
               </Dialog>
 
@@ -475,7 +542,7 @@ export default function SettingsPage() {
                     <DialogTitle>Stripe Configuration</DialogTitle>
                     <DialogDescription>Connect your Stripe payment processing account</DialogDescription>
                   </DialogHeader>
-                  <IntegrationForm type="stripe" integration={integrations.stripe} />
+                  <IntegrationForm type="stripe" integration={integrations.stripe} onSave={saveIntegration} />
                 </DialogContent>
               </Dialog>
             </div>
@@ -489,9 +556,58 @@ export default function SettingsPage() {
                 <button onClick={checkWebhookStatus} disabled={checking} className="bg-[#eff4ff] hover:bg-[#dce9ff] px-3 py-2 rounded-lg text-sm font-bold transition-colors">
                   <RefreshCw className={`w-4 h-4 text-[#005cc0] ${checking ? 'animate-spin' : ''}`} />
                 </button>
-                <button className="bg-[#eff4ff] hover:bg-[#dce9ff] px-4 py-2 rounded-lg text-sm font-bold text-[#005cc0] transition-colors flex items-center gap-2">
-                  <Plus className="w-4 h-4" /> Add Webhook
-                </button>
+                <Dialog open={addWebhookOpen} onOpenChange={setAddWebhookOpen}>
+                  <DialogTrigger asChild>
+                    <button className="bg-[#eff4ff] hover:bg-[#dce9ff] px-4 py-2 rounded-lg text-sm font-bold text-[#005cc0] transition-colors flex items-center gap-2">
+                      <Plus className="w-4 h-4" /> Add Webhook
+                    </button>
+                  </DialogTrigger>
+                  <DialogContent className="sm:max-w-[425px]">
+                    <DialogHeader>
+                      <DialogTitle>Add New Webhook</DialogTitle>
+                      <DialogDescription>
+                        Configure a new webhook endpoint to receive notifications from external services.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="grid gap-4 py-4">
+                      <div className="grid gap-2">
+                        <Label htmlFor="webhook-name">Webhook Name</Label>
+                        <Input
+                          id="webhook-name"
+                          placeholder="My WooCommerce Store"
+                          value={newWebhook.name}
+                          onChange={(e) => setNewWebhook({ ...newWebhook, name: e.target.value })}
+                        />
+                      </div>
+                      <div className="grid gap-2">
+                        <Label htmlFor="webhook-url">Target URL</Label>
+                        <Input
+                          id="webhook-url"
+                          placeholder="https://your-site.com/webhook"
+                          value={newWebhook.target_url}
+                          onChange={(e) => setNewWebhook({ ...newWebhook, target_url: e.target.value })}
+                        />
+                      </div>
+                      <div className="grid gap-2">
+                        <Label htmlFor="webhook-secret">Secret Key (Optional)</Label>
+                        <Input
+                          id="webhook-secret"
+                          placeholder="Your webhook secret for verification"
+                          value={newWebhook.secret_key}
+                          onChange={(e) => setNewWebhook({ ...newWebhook, secret_key: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-3">
+                      <Button variant="outline" onClick={() => setAddWebhookOpen(false)}>
+                        Cancel
+                      </Button>
+                      <Button onClick={handleAddWebhook} disabled={loading}>
+                        {loading ? 'Adding...' : 'Add Webhook'}
+                      </Button>
+                    </div>
+                  </DialogContent>
+                </Dialog>
               </div>
             </div>
 
@@ -508,7 +624,7 @@ export default function SettingsPage() {
                       <span className="px-2 py-0.5 rounded text-[9px] font-black bg-[#e4ceff] text-[#53436c] uppercase">System</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <code className="text-xs text-[#3d618c] truncate bg-[#eff4ff] px-2 py-0.5 rounded">{`${baseUrl}/api/webhook/whatsapp`}</code>
+                      <code className="text-xs text-[#3d618c] truncate bg-[#eff4ff] px-2 py-0.5 rounded">{buildWebhookUrl('/api/webhook/whatsapp')}</code>
                     </div>
                   </div>
                   <div className="flex items-center gap-4">
@@ -525,8 +641,8 @@ export default function SettingsPage() {
                       <div>
                         <p className="font-semibold mb-2">Configure URL in Meta App</p>
                         <div className="flex items-center gap-2">
-                          <Input readOnly value={`${baseUrl}/api/webhook/whatsapp`} className="w-[300px] bg-white border-[#e5eeff]" />
-                          <Button variant="outline" size="sm" onClick={() => copyToClipboard(`${baseUrl}/api/webhook/whatsapp`)}>
+                          <Input readOnly value={buildWebhookUrl('/api/webhook/whatsapp')} className="w-[300px] bg-white border-[#e5eeff]" />
+                          <Button variant="outline" size="sm" onClick={() => copyToClipboard(buildWebhookUrl('/api/webhook/whatsapp'))}>
                             <Copy className="h-4 w-4 mr-2" />
                             Copy
                           </Button>
@@ -555,7 +671,7 @@ export default function SettingsPage() {
                       <span className="px-2 py-0.5 rounded text-[9px] font-black bg-[#d2e4ff] text-[#005cc0] uppercase">eCommerce</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <code className="text-xs text-[#3d618c] truncate bg-[#eff4ff] px-2 py-0.5 rounded">{`${baseUrl}/api/webhook/shopify`}</code>
+                      <code className="text-xs text-[#3d618c] truncate bg-[#eff4ff] px-2 py-0.5 rounded">{buildWebhookUrl('/api/webhook/shopify')}</code>
                     </div>
                   </div>
                   <div className="flex items-center gap-4">
@@ -572,8 +688,8 @@ export default function SettingsPage() {
                       <div>
                         <p className="font-semibold mb-2">Configure URL in Shopify App</p>
                         <div className="flex items-center gap-2">
-                          <Input readOnly value={`${baseUrl}/api/webhook/shopify`} className="w-[300px] bg-white border-[#e5eeff]" />
-                          <Button variant="outline" size="sm" onClick={() => copyToClipboard(`${baseUrl}/api/webhook/shopify`)}>
+                          <Input readOnly value={buildWebhookUrl('/api/webhook/shopify')} className="w-[300px] bg-white border-[#e5eeff]" />
+                          <Button variant="outline" size="sm" onClick={() => copyToClipboard(buildWebhookUrl('/api/webhook/shopify'))}>
                             <Copy className="h-4 w-4 mr-2" />
                             Copy
                           </Button>
@@ -618,7 +734,7 @@ export default function SettingsPage() {
                       <span className="px-2 py-0.5 rounded text-[9px] font-black bg-[#e4ceff] text-[#53436c] uppercase">WordPress</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <code className="text-xs text-[#3d618c] truncate bg-[#eff4ff] px-2 py-0.5 rounded">{`${process.env.NEXT_PUBLIC_BASE_URL}/api/webhook/custom`}</code>
+                      <code className="text-xs text-[#3d618c] truncate bg-[#eff4ff] px-2 py-0.5 rounded">{buildWebhookUrl('/api/webhook/custom')}</code>
                     </div>
                   </div>
                   <div className="flex items-center gap-4">
@@ -635,8 +751,8 @@ export default function SettingsPage() {
                       <div>
                         <p className="font-semibold mb-2">Configure in WordPress Plugin</p>
                         <div className="flex items-center gap-2">
-                          <Input readOnly value={`${process.env.NEXT_PUBLIC_BASE_URL}/api/webhook/custom`} className="w-[350px] bg-white border-[#e5eeff]" />
-                          <Button variant="outline" size="sm" onClick={() => copyToClipboard(`${process.env.NEXT_PUBLIC_BASE_URL}/api/webhook/custom`)}>
+                          <Input readOnly value={buildWebhookUrl('/api/webhook/custom')} className="w-[350px] bg-white border-[#e5eeff]" />
+                          <Button variant="outline" size="sm" onClick={() => copyToClipboard(buildWebhookUrl('/api/webhook/custom'))}>
                             <Copy className="h-4 w-4 mr-2" />
                             Copy
                           </Button>
@@ -682,9 +798,110 @@ export default function SettingsPage() {
                         <p className="mt-1">Configure triggers in the WordPress plugin to receive webhooks.</p>
                       </div>
                     )}
+
+                    {lastCustomWebhook ? (
+                      <div className="mt-6 pt-4 border-t border-[#e5eeff]">
+                        <p className="font-semibold text-xs text-[#3d618c] uppercase mb-3 flex items-center gap-2">
+                          <Clock className="w-3 h-3" /> Latest activity from WordPress
+                        </p>
+                        <div className="bg-white p-4 rounded-xl border border-[#e5eeff] space-y-4">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                            {latestWordPressRows.map((row) => (
+                              <div key={row.label} className="flex justify-between items-center gap-4 text-xs bg-[#f8f9ff] rounded-lg px-3 py-2">
+                                <span className="text-gray-500">{row.label}:</span>
+                                {row.tone === 'badge' ? (
+                                  <span className="font-bold text-[#005cc0] bg-[#eff4ff] px-2 py-0.5 rounded">{row.value}</span>
+                                ) : (
+                                  <span
+                                    className={[
+                                      'font-medium text-right',
+                                      row.monospace ? 'font-mono text-[11px]' : '',
+                                      row.tone === 'success' ? 'font-bold text-green-600' : '',
+                                      row.missing ? 'text-amber-600' : ''
+                                    ].join(' ')}
+                                  >
+                                    {row.value}
+                                  </span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="rounded-xl border border-[#e5eeff] overflow-hidden">
+                            <div className="flex items-center justify-between px-3 py-2 bg-[#f8f9ff] border-b border-[#e5eeff]">
+                              <p className="text-[11px] font-bold uppercase tracking-wide text-[#3d618c]">Raw Webhook Payload</p>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => copyToClipboard(latestWordPressRawPayload)}
+                              >
+                                <Copy className="h-4 w-4 mr-2" />
+                                Copy JSON
+                              </Button>
+                            </div>
+                            <pre className="max-h-72 overflow-auto p-3 text-[11px] leading-5 bg-[#05345c] text-[#dff3ff] whitespace-pre-wrap break-words">
+                              {latestWordPressRawPayload}
+                            </pre>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-6 pt-4 border-t border-[#e5eeff]">
+                        <p className="font-semibold text-xs text-[#3d618c] uppercase mb-3 flex items-center gap-2">
+                          <Clock className="w-3 h-3" /> Activity Log
+                        </p>
+                        <div className="bg-white/50 p-4 rounded-xl border border-dashed border-[#e5eeff] text-center">
+                          <p className="text-xs text-gray-500">Waiting for your first WordPress activity...</p>
+                          <p className="text-[10px] text-gray-400 mt-1">Place a test order in WooCommerce to see it here.</p>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
+
+              {/* User-Registered Webhooks */}
+              {registeredWebhooks && registeredWebhooks.length > 0 && (
+                <>
+                  {registeredWebhooks.map((webhook) => (
+                    <div key={webhook.id} className="border border-[#e5eeff] rounded-xl overflow-hidden transition-all duration-200">
+                      <div className="flex items-center gap-4 py-4 px-4 hover:bg-[#eff4ff] cursor-pointer transition-colors">
+                        <div className="flex-shrink-0">
+                          <div className={`w-3 h-3 rounded-full ${webhook.is_active ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : 'bg-slate-300'}`}></div>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-sm font-bold">{webhook.name}</span>
+                            <span className="px-2 py-0.5 rounded text-[9px] font-black bg-[#d2e4ff] text-[#005cc0] uppercase">Custom</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <code className="text-xs text-[#3d618c] truncate bg-[#eff4ff] px-2 py-0.5 rounded">{webhook.target_url}</code>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-4">
+                          <div className="text-right hidden sm:block">
+                            <div className="text-[10px] font-bold text-[#3d618c] uppercase">Status</div>
+                            <div className="text-xs font-semibold capitalize">{webhook.is_active ? 'Active' : 'Inactive'}</div>
+                          </div>
+                          <button
+                            onClick={() => handleDeleteWebhook(webhook.id)}
+                            className="text-red-500 hover:text-red-700 p-1"
+                            title="Delete webhook"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </>
+              )}
+
+              {registeredWebhooks.length === 0 && (
+                <div className="p-4 text-center text-sm text-gray-500 border border-dashed border-[#e5eeff] rounded-xl">
+                  No custom webhooks added yet. Click "Add Webhook" to connect additional sites.
+                </div>
+              )}
 
             </div>
           </div>
@@ -695,7 +912,7 @@ export default function SettingsPage() {
 }
 
 // Integration Form Component
-function IntegrationForm({ type, integration, loading }) {
+function IntegrationForm({ type, integration, loading, onSave }) {
   const [formData, setFormData] = useState(integration.data || {})
   const [copiedField, setCopiedField] = useState('')
   const [saving, setSaving] = useState(false)
@@ -708,7 +925,7 @@ function IntegrationForm({ type, integration, loading }) {
     e.preventDefault()
     setSaving(true)
     try {
-      await saveIntegration(type, formData)
+      await onSave(type, formData)
     } finally {
       setSaving(false)
     }
@@ -830,9 +1047,17 @@ function IntegrationForm({ type, integration, loading }) {
 }
 
 // Helper function to copy text to clipboard
-function copyToClipboard(text) {
-  navigator.clipboard.writeText(text)
-  if (typeof window !== 'undefined') {
-    window.alert('Copied to clipboard!')
+async function copyToClipboard(text) {
+  if (!text) {
+    toast.error('Nothing to copy')
+    return
+  }
+
+  try {
+    await navigator.clipboard.writeText(text)
+    toast.success('Copied to clipboard')
+  } catch (error) {
+    console.error('Failed to copy to clipboard:', error)
+    toast.error('Failed to copy to clipboard')
   }
 }

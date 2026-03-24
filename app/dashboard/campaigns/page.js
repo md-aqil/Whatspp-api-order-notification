@@ -213,7 +213,7 @@ export default function CampaignsPage() {
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-4rem)] bg-slate-50 text-slate-900 overflow-hidden relative rounded-lg border border-slate-200">
+    <div className="campaigns-scene flex flex-col h-[calc(100vh-4rem)] bg-slate-50 text-slate-900 overflow-hidden relative rounded-lg border border-slate-200">
       <Toaster />
 
 
