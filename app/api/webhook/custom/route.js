@@ -9,19 +9,22 @@ import { persistCartRecoveryEvent } from '@/lib/cart-recovery'
 let wpPool
 
 function getWordPressPool() {
-    if (wpPool) return wpPool
+    if (globalThis.wpPoolRoute) return globalThis.wpPoolRoute
 
     if (!process.env.WP_DB_HOST) {
         return null
     }
 
-    wpPool = mysql.createPool({
-        host: process.env.WP_DB_HOST,
-        port: parseInt(process.env.WP_DB_PORT || '3306'),
-        database: process.env.WP_DB_NAME,
-        user: process.env.WP_DB_USER,
-        password: process.env.WP_DB_PASSWORD
-    })
+    if (!wpPool) {
+        wpPool = mysql.createPool({
+            host: process.env.WP_DB_HOST,
+            port: parseInt(process.env.WP_DB_PORT || '3306'),
+            database: process.env.WP_DB_NAME,
+            user: process.env.WP_DB_USER,
+            password: process.env.WP_DB_PASSWORD
+        })
+        globalThis.wpPoolRoute = wpPool
+    }
 
     return wpPool
 }

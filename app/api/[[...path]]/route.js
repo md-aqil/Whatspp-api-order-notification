@@ -26,60 +26,73 @@ const WHATSAPP_MENU_STEP_IDS = new Set(['step-message-4', 'step-message-6'])
 const WHATSAPP_SUPPORT_STEP_IDS = new Set(['step-message-11'])
 
 function getMysqlPool() {
+  if (globalThis.mysqlPoolRoute) return globalThis.mysqlPoolRoute
+
   if (!mysqlPool) {
     const connectionString = process.env.DATABASE_URL || process.env.DB_URL
     if (connectionString) {
-      mysqlPool = mysql.createPool({
-        uri: connectionString
-      })
+      mysqlPool = mysql.createPool(connectionString)
     } else {
       mysqlPool = mysql.createPool({
-        host: process.env.DB_HOST || 'localhost',
+        host: process.env.DB_HOST || '127.0.0.1',
         port: parseInt(process.env.DB_PORT || '3306', 10),
         database: process.env.DB_NAME || 'whatsapp_api',
-        user: process.env.DB_USER || 'mdaqil',
+        user: process.env.DB_USER || 'root',
         password: process.env.DB_PASSWORD || ''
       })
     }
+    globalThis.mysqlPoolRoute = mysqlPool
   }
 
   return mysqlPool
 }
 
 async function queryOne(sql, params = []) {
-  const [rows] = await getMysqlPool().execute(sql, params)
+  const [rows] = await getMysqlPool().query(sql, params)
   return rows[0] || null
 }
 
 async function queryMany(sql, params = []) {
-  const [rows] = await getMysqlPool().execute(sql, params)
+  const [rows] = await getMysqlPool().query(sql, params)
   return rows
 }
 
 async function query(sql, params = []) {
-  return getMysqlPool().execute(sql, params)
+  return getMysqlPool().query(sql, params)
 }
 
 async function ensureAutomationConversationStateTable() {
   if (!automationConversationStateReadyPromise) {
-    automationConversationStateReadyPromise = getMysqlPool().query(`
-      CREATE TABLE IF NOT EXISTS automation_conversation_state (
-        id VARCHAR(255) PRIMARY KEY,
-        userId VARCHAR(255) NOT NULL DEFAULT 'default',
-        automationId VARCHAR(255) NOT NULL,
-        recipient VARCHAR(255) NOT NULL,
-        state TEXT,
-        lastInboundAt DATETIME,
-        lastMenuSentAt DATETIME,
-        lastReplyKey TEXT,
-        lastReplyAt DATETIME,
-        handoffUntil DATETIME,
-        payload JSON DEFAULT '{}',
-        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        INDEX automation_conversation_state_lookup_idx (userId, automationId, recipient)
-      );
-    `)
+    automationConversationStateReadyPromise = (async () => {
+      await getMysqlPool().query(`
+        CREATE TABLE IF NOT EXISTS automation_conversation_state (
+          id VARCHAR(255) PRIMARY KEY,
+          userId VARCHAR(255) NOT NULL DEFAULT 'default',
+          automationId VARCHAR(255) NOT NULL,
+          recipient VARCHAR(255) NOT NULL,
+          state TEXT,
+          lastInboundAt DATETIME,
+          lastMenuSentAt DATETIME,
+          lastReplyKey TEXT,
+          lastReplyAt DATETIME,
+          handoffUntil DATETIME,
+          awaitingInteractiveStepId VARCHAR(255) DEFAULT NULL,
+          payload JSON,
+          createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          INDEX automation_conversation_state_lookup_idx (userId, automationId, recipient)
+        );
+      `)
+      // Add the column if it doesn't exist yet (safe for MySQL 5.7+)
+      try {
+        await getMysqlPool().query(
+          `ALTER TABLE automation_conversation_state
+           ADD COLUMN awaitingInteractiveStepId VARCHAR(255) DEFAULT NULL`
+        )
+      } catch (e) {
+        // Column already exists — ignore the Duplicate column error
+      }
+    })()
   }
 
   await automationConversationStateReadyPromise
@@ -125,7 +138,7 @@ async function getAutomationConversationState(automationId, recipient) {
   await ensureAutomationConversationStateTable()
 
   return queryOne(
-    `SELECT id, automationId, recipient, state, lastInboundAt, lastMenuSentAt, lastReplyKey, lastReplyAt, handoffUntil, payload
+    `SELECT id, automationId, recipient, state, lastInboundAt, lastMenuSentAt, lastReplyKey, lastReplyAt, handoffUntil, awaitingInteractiveStepId, payload
      FROM automation_conversation_state
      WHERE userId = ? AND automationId = ? AND recipient = ?
      LIMIT 1`,
@@ -147,14 +160,17 @@ async function saveAutomationConversationState(automationId, recipient, currentS
     lastReplyKey: patch.lastReplyKey ?? currentState?.lastReplyKey ?? null,
     lastReplyAt: patch.lastReplyAt ?? currentState?.lastReplyAt ?? null,
     handoffUntil: patch.handoffUntil ?? currentState?.handoffUntil ?? null,
+    awaitingInteractiveStepId: patch.awaitingInteractiveStepId !== undefined
+      ? patch.awaitingInteractiveStepId
+      : (currentState?.awaitingInteractiveStepId ?? null),
     payload: patch.payload ?? currentState?.payload ?? {}
   }
 
   await getMysqlPool().execute(
     `INSERT INTO automation_conversation_state
-      (id, userId, automationId, recipient, state, lastInboundAt, lastMenuSentAt, lastReplyKey, lastReplyAt, handoffUntil, payload, createdAt, updatedAt)
+      (id, userId, automationId, recipient, state, lastInboundAt, lastMenuSentAt, lastReplyKey, lastReplyAt, handoffUntil, awaitingInteractiveStepId, payload, createdAt, updatedAt)
      VALUES
-      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
      ON DUPLICATE KEY UPDATE
       state = VALUES(state),
       lastInboundAt = VALUES(lastInboundAt),
@@ -162,6 +178,7 @@ async function saveAutomationConversationState(automationId, recipient, currentS
       lastReplyKey = VALUES(lastReplyKey),
       lastReplyAt = VALUES(lastReplyAt),
       handoffUntil = VALUES(handoffUntil),
+      awaitingInteractiveStepId = VALUES(awaitingInteractiveStepId),
       payload = VALUES(payload),
       updatedAt = NOW()`,
     [
@@ -175,6 +192,7 @@ async function saveAutomationConversationState(automationId, recipient, currentS
       nextState.lastReplyKey,
       nextState.lastReplyAt,
       nextState.handoffUntil,
+      nextState.awaitingInteractiveStepId,
       JSON.stringify(nextState.payload || {})
     ]
   )
@@ -707,7 +725,7 @@ async function getStoredWebhooks(type = 'shopify') {
 async function insertWebhookLog(type, topic, payload) {
   await ensureSettingsTables()
 
-  await getMysqlPool().execute(
+  await getMysqlPool().query(
     `INSERT INTO webhook_logs (id, type, topic, payload, receivedAt, createdAt)
      VALUES (?, ?, ?, ?, NOW(), NOW())`,
     [uuidv4(), type, topic || null, JSON.stringify(payload || {})]
@@ -717,14 +735,14 @@ async function insertWebhookLog(type, topic, payload) {
 async function getWebhookLogs(limit = 10) {
   await ensureSettingsTables()
 
-  const result = await getMysqlPool().execute(
+  const [rows] = await getMysqlPool().query(
     `SELECT id, type, topic, payload, receivedAt, createdAt
      FROM webhook_logs
      ORDER BY receivedAt DESC
-     LIMIT ?`,
-    [limit]
+     LIMIT ${parseInt(limit, 10) || 10}`
   )
-  return result[0]
+
+  return rows || []
 }
 
 async function getStoredShopifyCustomer(customerId) {
@@ -1285,18 +1303,28 @@ function buildIncomingWhatsAppAutomationContext(messageData, savedMessage, conta
     savedMessage?.recipient ||
     'Customer'
 
+  // Detect button / list reply from interactive messages
+  const interactiveReply = messageData?.interactive?.button_reply || messageData?.interactive?.list_reply || null
+  const chosenButtonId = interactiveReply?.id || null    // e.g. 'opt0', 'opt1', ...
+  const chosenButtonTitle = interactiveReply?.title || ''
+
   return {
     customer_name: displayName,
     customer_phone: messageData?.from || savedMessage?.recipient || '',
     customerPhone: messageData?.from || savedMessage?.recipient || '',
-    customer_message: textBody,
+    customer_message: textBody || chosenButtonTitle,
     financial_status: '',
     order_number: '',
     tracking_number: '',
     tracking_url: '',
     review_link: process.env.NEXT_PUBLIC_BASE_URL || 'https://example.com/review',
     order_total: '',
-    currency: 'INR'
+    currency: 'INR',
+    // Internal: used to send typing indicator / read-receipt before replies
+    _inboundWamid: messageData?.id || null,
+    // Internal: set when this message is an interactive button/list selection
+    _isInteractiveReply: messageData?.type === 'interactive',
+    _chosenOptionId: chosenButtonId  // 'opt0', 'opt1', etc.
   }
 }
 
@@ -1334,67 +1362,155 @@ function resolveAutomationRecipient(step, context) {
   return customerRecipient || null
 }
 
+// ─── Smooth Conversation Helpers ────────────────────────────────────────────
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * Calculate a human-like delay (ms) based on message length.
+ * Short messages: ~0.8s, longer messages: up to ~3s.
+ */
+function calcTypingDelay(text = '') {
+  const chars = String(text || '').length
+  // ~60 WPM typing speed ≈ 5 chars/sec. Add a 600ms base read delay.
+  const typingMs = Math.min(Math.ceil(chars / 5) * 100, 2400)
+  return 600 + typingMs
+}
+
+/**
+ * Send a "typing" indicator via WhatsApp status API so the customer
+ * sees the animated typing dots before the message arrives.
+ */
+async function sendTypingIndicator(phoneNumberId, accessToken, to, wamid) {
+  if (!wamid) return
+  try {
+    await fetch(`https://graph.facebook.com/v22.0/${phoneNumberId}/messages`, {
+      method: 'POST',
+      headers: {
+        ...buildMetaAuthHeaders(accessToken),
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        status: 'read',
+        message_id: wamid
+      })
+    })
+  } catch {
+    // Non-critical — ignore errors
+  }
+}
+
 async function executeAutomationsForEvent(eventType, context, integrations) {
+  console.log('executeAutomationsForEvent called:', eventType, 'context:', JSON.stringify(context))
+  
   const pool = getMysqlPool()
   if (!pool || !integrations?.whatsapp?.phoneNumberId || !integrations?.whatsapp?.accessToken) {
+    console.log('executeAutomationsForEvent skipped: no pool or WhatsApp not configured')
     return
   }
 
-  const automations = await queryMany(
+  const [rows] = await query(
     `SELECT id, name, steps, metrics
      FROM automations
-     WHERE userId = ? AND status = true`,
+     WHERE userId = ? AND status = 1`,
     ['default']
   )
+  const automations = rows || []
+
+  console.log('Found automations:', automations.map(a => a.id).join(', '))
 
   for (const automation of automations) {
     const steps = Array.isArray(automation.steps) ? automation.steps : []
     const trigger = steps.find((step) => step.type === 'trigger')
+    console.log(`Automation ${automation.id}: trigger =`, trigger?.event, 'looking for', eventType)
     if (!trigger || trigger.event !== eventType) continue
 
+    console.log(`Processing automation: ${automation.id}, steps count:`, steps.length)
+
     const isIncomingWhatsAppAutomation = eventType === 'whatsapp.message_received'
+    console.log('isIncomingWhatsAppAutomation:', isIncomingWhatsAppAutomation)
     const conversationRecipient = isIncomingWhatsAppAutomation
       ? normalizeAutomationRecipientKey(resolveAutomationRecipient({ recipientMode: 'customer' }, context))
       : ''
+    console.log('conversationRecipient:', conversationRecipient)
     const now = new Date()
     let conversationState = null
 
     if (isIncomingWhatsAppAutomation && conversationRecipient) {
+      console.log('Getting conversation state for:', conversationRecipient)
       conversationState = await getAutomationConversationState(automation.id, conversationRecipient)
-      conversationState = await saveAutomationConversationState(
-        automation.id,
-        conversationRecipient,
-        conversationState,
-        { lastInboundAt: now }
-      )
-
+      console.log('Got conversation state:', conversationState)
+      
       if (isHandoffActive(conversationState, now)) {
-        continue
+        console.log('Clearing handoff - customer sent new message')
+        conversationState = await saveAutomationConversationState(
+          automation.id,
+          conversationRecipient,
+          conversationState,
+          {
+            state: 'active',
+            lastInboundAt: now,
+            handoffUntil: null
+          }
+        )
       }
     }
 
     let totalDelayMs = 0
-    let currentStepId = getNextAutomationStepId(steps, trigger, 'main')
+    const inboundWamid = context?._inboundWamid || null
+    let messagesSentInThisRun = 0
+
+    // ── If customer is replying to an interactive menu, jump straight to it ──
+    // This avoids re-walking the entire flow from the trigger.
+    const awaitingStepId = conversationState?.awaitingInteractiveStepId || null
+    const isReplyingToMenu = !!(
+      isIncomingWhatsAppAutomation &&
+      context._isInteractiveReply &&
+      awaitingStepId &&
+      steps.find(s => s.id === awaitingStepId)
+    )
+    let currentStepId = isReplyingToMenu
+      ? awaitingStepId
+      : getNextAutomationStepId(steps, trigger, 'main')
+
+    // After routing through an interactive choice we track when the first reply
+    // message has been sent so we can STOP — prevents the sequential auto-connection
+    // chain in mapStep from firing all sibling reply nodes.
+    let sentAfterChoice = false
+
     const visited = new Set([trigger.id])
 
     while (currentStepId && !visited.has(currentStepId)) {
       visited.add(currentStepId)
       const step = steps.find((item) => item.id === currentStepId)
-      if (!step) break
+      console.log('Processing step:', step?.id, step?.type, step?.title)
+      if (!step) {
+        console.log('Step not found, breaking')
+        break
+      }
 
       if (step.type === 'condition') {
+        console.log('Checking condition:', step.rule, 'context:', JSON.stringify(context))
         const passed = matchesCondition(step.rule, context)
+        console.log('Condition passed:', passed)
         currentStepId = getNextAutomationStepId(steps, step, passed ? 'main' : 'fallback')
+        console.log('Next step ID:', currentStepId)
         continue
       }
 
       if (step.type === 'delay') {
+        console.log('Processing delay:', step.delayValue, step.delayUnit)
         totalDelayMs += parseDelayToMs(step)
         currentStepId = getNextAutomationStepId(steps, step, 'main')
         continue
       }
 
       if (step.type === 'message') {
+        console.log('Processing message step:', step.id, step.title, 'template:', step.template, 'message:', step.message?.substring(0, 50))
+
         const recipient = resolveAutomationRecipient(step, context)
         if (!recipient) {
           currentStepId = getNextAutomationStepId(steps, step, 'main')
@@ -1452,6 +1568,26 @@ async function executeAutomationsForEvent(eventType, context, integrations) {
         }
 
         try {
+          // ── Smooth conversation: typing delay between consecutive messages ──
+          if (isIncomingWhatsAppAutomation) {
+            const typingDelay = calcTypingDelay(body)
+            // For the very first reply: mark message as read + short "reading" pause
+            // For subsequent replies: longer pause so each feels like a separate thought
+            const pauseMs = messagesSentInThisRun === 0
+              ? Math.min(typingDelay, 1500)
+              : typingDelay
+            // Show typing indicator (read receipt) only for the first message
+            if (messagesSentInThisRun === 0 && inboundWamid) {
+              await sendTypingIndicator(
+                integrations.whatsapp.phoneNumberId,
+                integrations.whatsapp.accessToken,
+                recipient,
+                inboundWamid
+              )
+            }
+            await sleep(pauseMs)
+          }
+
           const templateComponents = buildAutomationTemplateComponents(step.templateComponents, step.variableMappings, context)
           const messageData = step.template
             ? {
@@ -1479,6 +1615,10 @@ async function executeAutomationsForEvent(eventType, context, integrations) {
             recipient,
             messageData
           )
+
+          messagesSentInThisRun++
+          if (isReplyingToMenu) sentAfterChoice = true
+
 
           await insertStoredMessage({
             id: uuidv4(),
@@ -1516,7 +1656,128 @@ async function executeAutomationsForEvent(eventType, context, integrations) {
         }
 
         currentStepId = getNextAutomationStepId(steps, step, 'main')
+        // If we just sent the first reply after a menu choice, stop here.
+        // mapStep auto-connects sibling reply nodes sequentially which would
+        // cause ALL branch replies to fire. Breaking after the first prevents that.
+        if (isReplyingToMenu && sentAfterChoice) break
         continue
+      }
+
+      // ── Interactive Menu step ─────────────────────────────────────────────
+      if (step.type === 'interactive') {
+        const recipient = resolveAutomationRecipient({ recipientMode: 'customer' }, context)
+        if (!recipient) break
+
+        // If this is a button reply that matches the step we're waiting on, route to the chosen branch
+        if (
+          isIncomingWhatsAppAutomation &&
+          context._isInteractiveReply &&
+          context._chosenOptionId &&
+          conversationState?.awaitingInteractiveStepId === step.id
+        ) {
+          const chosenKey = context._chosenOptionId   // 'opt0', 'opt1', ...
+          const nextId = step.connections?.[chosenKey] || ''
+          // Clear awaiting state and follow the chosen branch
+          conversationState = await saveAutomationConversationState(
+            automation.id, conversationRecipient, conversationState,
+            { state: 'active', awaitingInteractiveStepId: null, lastInboundAt: now }
+          )
+          // Mark that the next message must be the ONLY reply (don't chain siblings)
+          sentAfterChoice = false
+          currentStepId = nextId
+          // If nextId is another interactive step, loop will handle it. Otherwise send one msg.
+          continue
+        }
+
+        // Otherwise – send the interactive menu and STOP waiting for choice
+        try {
+          if (isIncomingWhatsAppAutomation && inboundWamid && messagesSentInThisRun === 0) {
+            await sendTypingIndicator(integrations.whatsapp.phoneNumberId, integrations.whatsapp.accessToken, recipient, inboundWamid)
+          }
+          if (isIncomingWhatsAppAutomation) {
+            await sleep(calcTypingDelay(step.message || ''))
+          }
+
+          const options = Array.isArray(step.options) ? step.options : []
+          let menuData
+
+          if (options.length <= 3) {
+            // Use reply buttons (max 3)
+            menuData = {
+              messaging_product: 'whatsapp',
+              to: recipient,
+              type: 'interactive',
+              interactive: {
+                type: 'button',
+                body: { text: interpolateMessage(step.message, context) },
+                action: {
+                  buttons: options.map((opt, idx) => ({
+                    type: 'reply',
+                    reply: { id: opt.id || `opt${idx}`, title: String(opt.label || `Option ${idx + 1}`).substring(0, 20) }
+                  }))
+                }
+              }
+            }
+          } else {
+            // Use list message (up to 10 items)
+            menuData = {
+              messaging_product: 'whatsapp',
+              to: recipient,
+              type: 'interactive',
+              interactive: {
+                type: 'list',
+                body: { text: interpolateMessage(step.message, context) },
+                action: {
+                  button: 'Choose an option',
+                  sections: [{
+                    title: 'Options',
+                    rows: options.map((opt, idx) => ({
+                      id: opt.id || `opt${idx}`,
+                      title: String(opt.label || `Option ${idx + 1}`).substring(0, 24),
+                      description: ''
+                    }))
+                  }]
+                }
+              }
+            }
+          }
+
+          const result = await sendWhatsAppMessage(
+            integrations.whatsapp.phoneNumberId,
+            integrations.whatsapp.accessToken,
+            recipient,
+            menuData
+          )
+          messagesSentInThisRun++
+
+          await insertStoredMessage({
+            id: uuidv4(), userId: 'default',
+            recipient, phone: recipient,
+            message: `[Menu] ${step.message}`,
+            isCustomer: false, timestamp: new Date(),
+            whatsappMessageId: result.messages?.[0]?.id, status: 'sent'
+          })
+          await incrementAutomationSentMetric(automation.id)
+
+          // Save state: waiting for the customer to pick an option
+          if (isIncomingWhatsAppAutomation && conversationRecipient) {
+            conversationState = await saveAutomationConversationState(
+              automation.id, conversationRecipient, conversationState,
+              {
+                state: 'awaiting_choice',
+                awaitingInteractiveStepId: step.id,
+                lastMenuSentAt: now,
+                lastReplyKey: step.id,
+                lastReplyAt: now
+              }
+            )
+          }
+        } catch (error) {
+          console.error(`Interactive menu send failed in ${automation.name}:`, error.message)
+        }
+
+        // Always STOP after sending an interactive menu – wait for the customer's reply
+        break
       }
 
       currentStepId = getNextAutomationStepId(steps, step, 'main')
@@ -1701,6 +1962,12 @@ async function saveIncomingMessage(messageData) {
   // Handle different message types
   if (type === 'text' && text?.body) {
     message.message = text.body;
+  } else if (type === 'interactive') {
+    // Button reply or list reply from interactive menu
+    const btnReply = messageData?.interactive?.button_reply
+    const listReply = messageData?.interactive?.list_reply
+    const title = btnReply?.title || listReply?.title || ''
+    message.message = title ? `✅ ${title}` : '[Option selected]'
   } else if (type === 'image') {
     message.message = '[Image message received]';
   } else if (type === 'document') {
@@ -2028,25 +2295,22 @@ async function handleRoute(request, { params }) {
 
       // Test the integration before saving
       try {
+        // Skip WhatsApp validation - trust user's credentials
+        // Validation will happen when actually sending messages
         if (type === 'whatsapp' && data.phoneNumberId && data.accessToken) {
-          await validateWhatsAppPhoneNumberAccess(
-            data.phoneNumberId,
-            data.accessToken,
-            data.businessAccountId
-          )
+          console.log('WhatsApp credentials received, skipping validation')
+        }
 
-          if (data.catalogId) {
-            try {
-              await validateMetaCatalogAccess({
-                catalogId: data.catalogId,
-                accessToken: data.accessToken,
-                businessAccountId: data.businessAccountId,
-                phoneNumberId: data.phoneNumberId
-              })
-            } catch (error) {
-              warning = `Catalog validation failed: ${error.message}. Catalog ID has been saved but may not work until the access token is refreshed.`
-              // Don't delete catalogId - save it anyway
-            }
+        if (type === 'whatsapp' && data.catalogId) {
+          try {
+            await validateMetaCatalogAccess({
+              catalogId: data.catalogId,
+              accessToken: data.accessToken,
+              businessAccountId: data.businessAccountId,
+              phoneNumberId: data.phoneNumberId
+            })
+          } catch (error) {
+            warning = `Catalog validation failed: ${error.message}. Catalog ID has been saved but may not work until the access token is refreshed.`
           }
         }
 
@@ -2855,10 +3119,11 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
           for (const entry of body.entry) {
             if (entry.changes && Array.isArray(entry.changes)) {
               for (const change of entry.changes) {
-                console.log('Processing change:', JSON.stringify(change, null, 2));
+                console.log('Processing change field:', change.field);
 
                 // Handle incoming messages
                 if (change.field === 'messages') {
+                  console.log('Found messages field in change value');
                   const contactsByWaId = new Map(
                     (change.value?.contacts || [])
                       .filter((contact) => contact?.wa_id)
@@ -2867,19 +3132,23 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
 
                   // Check for actual messages
                   if (change.value?.messages && Array.isArray(change.value.messages)) {
-                    console.log('Processing incoming messages');
+                    console.log('Processing incoming messages, count:', change.value.messages.length);
                     const automationIntegrations = await getStoredIntegrations()
+                    console.log('Got integrations:', automationIntegrations?.whatsapp?.connected);
                     for (const message of change.value.messages) {
                       console.log('Saving incoming message:', JSON.stringify(message, null, 2));
                       // Save incoming message to database
                       const contact = contactsByWaId.get(message.from)
                       const savedMessage = await saveIncomingMessage(message)
+                      console.log('Saved message, id:', savedMessage?.id);
                       await executeAutomationsForEvent(
                         'whatsapp.message_received',
                         buildIncomingWhatsAppAutomationContext(message, savedMessage, contact),
                         automationIntegrations
                       )
                     }
+                  } else {
+                    console.log('No messages in change.value');
                   }
 
                   // Handle message statuses (delivery/read receipts)

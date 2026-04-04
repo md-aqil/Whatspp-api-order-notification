@@ -34,13 +34,19 @@ function shouldReplaceLegacyWhatsAppDefaultFlow(steps = []) {
   const welcome = steps.find((step) => step.id === 'step-message-4')
   const menu = steps.find((step) => step.id === 'step-message-6')
 
-  return (
+  const hasLegacyMessages = 
     trigger?.connections?.main === 'step-message-4' &&
     welcome?.connections?.main === 'step-message-6' &&
     menu?.connections?.main === 'step-condition-4' &&
     legacyWhatsAppReplyMessages.has(welcome?.message) &&
     legacyWhatsAppReplyMenus.has(menu?.message)
-  )
+
+  const hasV5Intermediate =
+    trigger?.connections?.main === 'step-interactive-1' &&
+    steps.find((s) => s.id === 'step-interactive-1')?.message?.includes('thanks for messaging us') &&
+    !steps.find((s) => s.id === 'step-interactive-shop')
+
+  return hasLegacyMessages || hasV5Intermediate
 }
 
 function syncLegacyWhatsAppReplyStep(step, defaultStep) {
@@ -102,7 +108,7 @@ function sanitizeAutomation(inputAutomation) {
   return {
     ...defaultAutomation,
     ...inputAutomation,
-    status: typeof inputAutomation.status === 'boolean' ? inputAutomation.status : !!defaultAutomation?.status,
+    status: typeof inputAutomation.status !== 'undefined' ? !!inputAutomation.status : !!defaultAutomation?.status,
     source: inputAutomation.source || defaultAutomation?.source || 'Shopify',
     summary: inputAutomation.summary || defaultAutomation?.summary || '',
     metrics: inputAutomation.metrics || defaultAutomation?.metrics || {},
@@ -302,6 +308,6 @@ export async function PUT(request) {
     return NextResponse.json({ success: true })
   } catch (error) {
     console.error('Error saving automations:', error)
-    return NextResponse.json({ error: 'Failed to save automations' }, { status: 500 })
+    return NextResponse.json({ error: 'Failed to save automations', details: error.message, stack: error.stack }, { status: 500 })
   }
 }

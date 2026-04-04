@@ -35,6 +35,7 @@ const BLOCKS = [
   { type: 'delay', tab: 'Actions', label: 'Delay', icon: Clock3, color: 'blue', description: 'Pause before next action', defaults: { title: 'Wait 2 Hours', delayValue: '2', delayUnit: 'hours', description: 'Fixed time offset' } },
   { type: 'message', tab: 'Actions', label: 'WhatsApp', icon: MessageSquareText, color: 'emerald', description: 'Send a WhatsApp message', defaults: { title: 'Order Confirmation', channel: 'whatsapp', template: '', templateLanguage: '', message: 'Hi {{customer_name}}, your order #{{order_number}} is confirmed!', description: 'Confirmation message', recipientMode: 'customer', recipientNumber: '', variableMappings: [{ label: 'Customer Name', value: '{{shopify.customer.first_name}}' }, { label: 'Order Amount', value: '{{shopify.total_price}}' }] } },
   { type: 'condition', tab: 'Actions', label: 'Condition', icon: Workflow, color: 'amber', description: 'Branch logic on a rule', defaults: { title: 'Order > $100', rule: 'total_price > 100', description: 'Conditional branch' } },
+  { type: 'interactive', tab: 'Actions', label: 'Interactive Menu', icon: HelpCircle, color: 'fuchsia', description: 'Send a menu with reply options', defaults: { title: 'Auto Reply Menu', message: 'Hello! Please choose an option:', options: [{ id: 'opt0', label: 'Check Order Status' }, { id: 'opt1', label: 'Talk to Support' }], description: 'Send a 4-option menu' } },
 ]
 const COLORS = {
   test: { border: 'border-pink-500/40', bg: 'bg-[#1d0f18]', hdr: 'bg-pink-600/15', icon: 'bg-pink-600/25 text-pink-300', lbl: 'text-pink-300', dot: 'bg-pink-500' },
@@ -42,6 +43,7 @@ const COLORS = {
   delay: { border: 'border-blue-500/40', bg: 'bg-[#0f1525]', hdr: 'bg-blue-600/15', icon: 'bg-blue-600/25 text-blue-300', lbl: 'text-blue-300', dot: 'bg-blue-500' },
   message: { border: 'border-emerald-500/40', bg: 'bg-[#0f1a16]', hdr: 'bg-emerald-600/15', icon: 'bg-emerald-600/25 text-emerald-300', lbl: 'text-emerald-300', dot: 'bg-emerald-500' },
   condition: { border: 'border-amber-500/40', bg: 'bg-[#1a1508]', hdr: 'bg-amber-600/15', icon: 'bg-amber-600/25 text-amber-300', lbl: 'text-amber-300', dot: 'bg-amber-500' },
+  interactive: { border: 'border-fuchsia-500/40', bg: 'bg-[#1a0f18]', hdr: 'bg-fuchsia-600/15', icon: 'bg-fuchsia-600/25 text-fuchsia-300', lbl: 'text-fuchsia-300', dot: 'bg-fuchsia-500' },
 }
 const uid = p => `${p}-${Math.random().toString(36).slice(2, 9)}`
 const isDefault = id => defaultAutomations.some(a => a.id === id)
@@ -215,7 +217,8 @@ function mapStep(step, i, arr) {
       }))
       : [],
     variableMappings: Array.isArray(step.variableMappings) ? step.variableMappings : [],
-    connections: step.type === 'condition' ? { main: ex.main ?? nxt?.id ?? '', fallback: ex.fallback ?? '' } : { main: ex.main ?? nxt?.id ?? '' }
+    options: step.type === 'interactive' ? (Array.isArray(step.options) ? step.options : [{ id: 'opt0', label: 'Check Order Status' }, { id: 'opt1', label: 'Talk to Support' }]) : undefined,
+    connections: step.type === 'condition' ? { main: ex.main ?? nxt?.id ?? '', fallback: ex.fallback ?? '' } : step.type === 'interactive' ? Object.fromEntries((step.options || [{id:'opt0'}, {id:'opt1'}]).map((o, idx) => [`opt${idx}`, ex[`opt${idx}`] ?? ''])) : { main: ex.main ?? nxt?.id ?? '' }
   }
 }
 const normalize = a => ({ ...a, metrics: a?.metrics || { sent: 0, openRate: 0, conversions: 0 }, steps: (Array.isArray(a?.steps) ? a.steps : []).map((s, i, arr) => mapStep(s, i, arr)) })
@@ -237,7 +240,9 @@ function blankFlow(name) {
 function buildEdges(steps) {
   const m = new Map(steps.map(s => [s.id, s])); const edges = []
   steps.forEach(s => {
-    const outs = s.type === 'condition' ? [{ key: 'main', label: 'Yes' }, { key: 'fallback', label: 'No' }] : [{ key: 'main', label: '' }]
+    let outs = [{ key: 'main', label: '' }]
+    if (s.type === 'condition') outs = [{ key: 'main', label: 'Yes' }, { key: 'fallback', label: 'No' }]
+    else if (s.type === 'interactive') outs = (s.options || []).map((opt, i) => ({ key: `opt${i}`, label: '' }))
     outs.forEach(({ key, label }) => { const tid = s.connections?.[key]; if (tid && m.has(tid)) edges.push({ id: `${s.id}-${key}`, sourceId: s.id, targetId: tid, key, label }) })
   }); return edges
 }
@@ -245,6 +250,10 @@ function outPt(s, key) {
   const x = s.position.x + 260
   if (s.type === 'condition' && key === 'fallback') return { x, y: s.position.y + 100 }
   if (s.type === 'condition' && key === 'main') return { x, y: s.position.y + 60 }
+  if (s.type === 'interactive') {
+    const idx = parseInt(key.replace('opt', ''), 10)
+    return { x, y: s.position.y + 90 + (idx * 30) }
+  }
   return { x, y: s.position.y + 70 }
 }
 const inPt = s => ({ x: s.position.x, y: s.position.y + 70 })
@@ -355,6 +364,19 @@ function validateAutomationFlow(automation) {
         pushIssue('errors', step.id, 'Connect at least one branch from this condition.')
       } else if (!step.connections?.main || !step.connections?.fallback) {
         pushIssue('warnings', step.id, 'Add both Yes and No branches for a complete condition flow.')
+      }
+    }
+
+    if (step.type === 'interactive') {
+      if (!String(step.message || '').trim()) {
+        pushIssue('errors', step.id, 'Add a message body for the menu.')
+      }
+      if (!step.options || step.options.length === 0) {
+        pushIssue('errors', step.id, 'Add at least one option to the menu.')
+      }
+      const allEmpty = (step.options || []).every((_, i) => !step.connections?.[`opt${i}`])
+      if (allEmpty) {
+        pushIssue('errors', step.id, 'Connect at least one option to a follow-up step.')
       }
     }
 
@@ -1137,7 +1159,7 @@ export function AutomationStudio() {
               const isThisTestRunning = testing && step.id === testingNodeId
               const body = step.type === 'test'
                 ? (step.testSource === 'dummy' ? 'Dummy order data' : 'Latest saved order data')
-                : (step.template ? `Template: ${step.template}` : step.message || step.rule || step.description || 'Configure node')
+                : (step.type === 'interactive' ? step.message : (step.template ? `Template: ${step.template}` : step.message || step.rule || step.description || 'Configure node'))
               return (
                 <div key={step.id} data-node="true" role="article" aria-label={`${step.type} node: ${step.title}`} aria-selected={isSel} tabIndex={0}
 	                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') setSelId(step.id); if (e.key === 'Delete') delNode(step.id) }}
@@ -1157,6 +1179,15 @@ export function AutomationStudio() {
                   <div className="relative px-3.5 py-3.5 border-t border-white/[0.06]">
                     <div className="text-sm font-bold text-white/90 leading-tight pr-6">{step.title}</div>
                     <p className="mt-1.5 text-[11px] text-white/35 line-clamp-2 leading-relaxed">{tMeta?.description || step.description || body}</p>
+                    {step.type === 'interactive' && (
+                      <div className="mt-3 flex flex-col gap-1.5" style={{ minHeight: `${(step.options?.length || 0) * 30}px` }}>
+                        {(step.options || []).map((opt, idx) => (
+                           <div key={idx} className="text-[10px] flex items-center bg-fuchsia-500/10 border border-fuchsia-500/20 rounded px-2 h-[22px] truncate w-[85%] text-fuchsia-100/90 shadow-sm relative top-[8px]">
+                              {opt.label || `Option ${idx + 1}`}
+                           </div>
+                        ))}
+                      </div>
+                    )}
 	                    {recipientSummary && (
 	                      <p className="mt-2 text-[10px] font-semibold uppercase tracking-wider text-emerald-300/80">{recipientSummary}</p>
 	                    )}
@@ -1200,6 +1231,13 @@ export function AutomationStudio() {
                       <>
                         <button aria-label="True branch output" onMouseDown={e => startConn(e, step.id, 'main')} className={`absolute -right-2.5 top-7 h-5 w-5 rounded-full border-2 border-[#0b0d14] ${c.dot} hover:brightness-125 transition-all ring-1 ring-transparent hover:ring-violet-400/40`} />
                         <button aria-label="False branch output" onMouseDown={e => startConn(e, step.id, 'fallback')} className="absolute -right-2.5 bottom-7 h-5 w-5 rounded-full border-2 border-[#0b0d14] bg-amber-500 hover:brightness-125 transition-all ring-1 ring-transparent hover:ring-amber-400/40" />
+                      </>
+                    ) : step.type === 'interactive' ? (
+                      <>
+                        {(step.options || []).map((opt, idx) => {
+                          const topOff = 92 + (idx * 30);
+                          return <button key={idx} aria-label={`Option: ${opt.label}`} onMouseDown={e => startConn(e, step.id, `opt${idx}`)} className={`absolute -right-2.5 h-5 w-5 rounded-full border-2 border-[#0b0d14] ${c.dot} hover:brightness-125 transition-all ring-1 ring-transparent hover:ring-fuchsia-400/40`} style={{ top: topOff }} />
+                        })}
                       </>
                     ) : (
                       <button aria-label="Output connection port" onMouseDown={e => startConn(e, step.id, 'main')} className={`absolute -right-2.5 top-1/2 -translate-y-1/2 h-5 w-5 rounded-full border-2 border-[#0b0d14] ${c.dot} hover:brightness-125 transition-all ring-1 ring-transparent hover:ring-violet-400/40`} />
@@ -1638,6 +1676,40 @@ export function AutomationStudio() {
                       <Label htmlFor="cond-rule" className="text-[10px] font-bold uppercase tracking-widest text-white/25">Condition Rule</Label>
                       <Textarea id="cond-rule" rows={4} value={sel.rule || ''} onChange={e => updStep({ rule: e.target.value })} disabled={selLocked} className={textCls} />
                     </div>
+                  )}
+                  {sel.type === 'interactive' && (
+                    <>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="inter-msg" className="text-[10px] font-bold uppercase tracking-widest text-fuchsia-300">Menu Message</Label>
+                        <Textarea id="inter-msg" rows={3} value={sel.message || ''} onChange={e => updStep({ message: e.target.value })} disabled={selLocked} className={textCls} placeholder="e.g. Please choose an option below" />
+                      </div>
+                      <div className="space-y-2 mt-4 pt-4 border-t border-white/[0.05]">
+                        <Label className="text-[10px] font-bold uppercase tracking-widest text-fuchsia-300 flex justify-between">
+                           Options (Max 4)
+                           <span className="text-white/40">{sel.options?.length || 0} / 4</span>
+                        </Label>
+                        {(sel.options || []).map((opt, idx) => (
+                          <div key={idx} className="flex gap-2 items-center bg-white/[0.02] p-1.5 rounded-lg border border-white/[0.05]">
+                            <Input value={opt.label || ''} onChange={e => {
+                               const newOpts = [...(sel.options || [])];
+                               newOpts[idx].label = e.target.value;
+                               updStep({ options: newOpts });
+                            }} className={`${inputCls} flex-1`} placeholder={`Option ${idx + 1}`} />
+                            <Button variant="ghost" size="icon" className="h-8 w-8 text-white/40 hover:text-rose-400 bg-rose-500/5 hover:bg-rose-500/20" onClick={() => {
+                               const newOpts = (sel.options || []).filter((_, i) => i !== idx);
+                               updStep({ options: newOpts });
+                            }}><Trash2 className="h-3.5 w-3.5" /></Button>
+                          </div>
+                        ))}
+                        {(sel.options || []).length < 4 && (
+                           <Button variant="ghost" className="w-full text-fuchsia-300 hover:text-fuchsia-200 hover:bg-fuchsia-500/10 text-[11px] h-8 border border-dashed border-fuchsia-500/30" onClick={() => {
+                              const newOpts = [...(sel.options || []), { id: `opt${Date.now()}`, label: `Option ${(sel.options || []).length + 1}` }];
+                              updStep({ options: newOpts });
+                           }}><Plus className="h-3 w-3 mr-1" /> Add Option</Button>
+                        )}
+                        <p className="text-[10px] text-white/35">Each option creates an outgoing connection branch on the node.</p>
+                      </div>
+                    </>
                   )}
                   {sel.type === 'message' && (
                     <>
