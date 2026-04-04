@@ -1,275 +1,333 @@
-const { Pool } = require('pg');
+const mysql = require('mysql2/promise');
 
 const connectionString = process.env.DATABASE_URL || process.env.DB_URL;
 const pool = connectionString 
-  ? new Pool({ connectionString })
-  : new Pool({
+  ? mysql.createPool(connectionString)
+  : mysql.createPool({
       host: process.env.DB_HOST || 'localhost',
-      port: parseInt(process.env.DB_PORT || '5432'),
+      port: parseInt(process.env.DB_PORT || '3306'),
       database: process.env.DB_NAME || 'whatsapp_api',
       user: process.env.DB_USER || 'mdaqil',
       password: process.env.DB_PASSWORD || 'your_secure_password',
     });
 
 async function setupTables() {
-  const client = await pool.connect();
+  const connection = await pool.getConnection();
 
   try {
-    console.log('Connected to PostgreSQL database');
+    console.log('Connected to MySQL database');
 
     // Create integrations table
-    await client.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS integrations (
-        id SERIAL PRIMARY KEY,
-        "userId" TEXT NOT NULL DEFAULT 'default',
-        whatsapp JSONB,
-        shopify JSONB,
-        stripe JSONB,
-        "createdAt" TIMESTAMP DEFAULT NOW(),
-        "updatedAt" TIMESTAMP DEFAULT NOW()
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        userId VARCHAR(255) NOT NULL DEFAULT 'default',
+        whatsapp JSON,
+        shopify JSON,
+        stripe JSON,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       )
     `);
     console.log('Created integrations table');
 
     // Create messages table
-    await client.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS messages (
-        id TEXT PRIMARY KEY,
-        "userId" TEXT NOT NULL DEFAULT 'default',
-        "campaignId" TEXT,
-        recipient TEXT,
-        phone TEXT,
+        id VARCHAR(255) PRIMARY KEY,
+        userId VARCHAR(255) NOT NULL DEFAULT 'default',
+        campaignId VARCHAR(255),
+        recipient VARCHAR(255),
+        phone VARCHAR(255),
         message TEXT,
-        "isCustomer" BOOLEAN,
-        timestamp TIMESTAMP,
-        "whatsappMessageId" TEXT,
-        status TEXT,
-        "messageType" TEXT,
-        products JSONB,
-        template TEXT,
-        "orderId" TEXT,
-        "sentAt" TIMESTAMP,
-        "createdAt" TIMESTAMP DEFAULT NOW()
+        isCustomer BOOLEAN,
+        timestamp TIMESTAMP NULL,
+        whatsappMessageId VARCHAR(255),
+        status VARCHAR(255),
+        messageType VARCHAR(255),
+        products JSON,
+        template VARCHAR(255),
+        orderId VARCHAR(255),
+        sentAt TIMESTAMP NULL,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
     console.log('Created messages table');
 
     // Create chats table
-    await client.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS chats (
-        id TEXT PRIMARY KEY,
-        "userId" TEXT NOT NULL DEFAULT 'default',
-        phone TEXT NOT NULL,
-        name TEXT,
-        "lastMessage" TEXT,
-        timestamp TIMESTAMP,
-        unread INTEGER DEFAULT 0,
+        id VARCHAR(255) PRIMARY KEY,
+        userId VARCHAR(255) NOT NULL DEFAULT 'default',
+        phone VARCHAR(255) NOT NULL,
+        name VARCHAR(255),
+        lastMessage TEXT,
+        timestamp TIMESTAMP NULL,
+        unread INT DEFAULT 0,
         avatar TEXT,
-        "createdAt" TIMESTAMP DEFAULT NOW()
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
     console.log('Created chats table');
 
     // Create orders table
-    await client.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS orders (
-        id TEXT PRIMARY KEY,
-        "userId" TEXT NOT NULL DEFAULT 'default',
-        "shopifyOrderId" TEXT,
-        "orderNumber" TEXT,
-        "customerName" TEXT,
-        "customerEmail" TEXT,
-        "customerPhone" TEXT,
-        total TEXT,
-        currency TEXT,
-        status TEXT,
-        "lineItems" JSONB,
-        "createdAt" TIMESTAMP DEFAULT NOW(),
-        "updatedAt" TIMESTAMP DEFAULT NOW(),
-        "whatsappSent" BOOLEAN DEFAULT FALSE,
-        "whatsappMessageId" TEXT,
-        "whatsappSentAt" TIMESTAMP
+        id VARCHAR(255) PRIMARY KEY,
+        userId VARCHAR(255) NOT NULL DEFAULT 'default',
+        shopifyOrderId VARCHAR(255),
+        orderNumber VARCHAR(255),
+        customerName VARCHAR(255),
+        customerEmail VARCHAR(255),
+        customerPhone VARCHAR(255),
+        total VARCHAR(255),
+        currency VARCHAR(255),
+        status VARCHAR(255),
+        lineItems JSON,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        whatsappSent BOOLEAN DEFAULT FALSE,
+        whatsappMessageId VARCHAR(255),
+        whatsappSentAt TIMESTAMP NULL
       )
     `);
     console.log('Created orders table');
 
     // Create campaigns table
-    await client.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS campaigns (
-        id TEXT PRIMARY KEY,
-        "userId" TEXT NOT NULL DEFAULT 'default',
-        name TEXT,
-        template TEXT,
-        "templateLanguage" TEXT,
-        "templateCategory" TEXT,
-        "campaignType" TEXT DEFAULT 'template',
-        "productIds" JSONB DEFAULT '[]'::jsonb,
+        id VARCHAR(255) PRIMARY KEY,
+        userId VARCHAR(255) NOT NULL DEFAULT 'default',
+        name VARCHAR(255),
+        template VARCHAR(255),
+        templateLanguage VARCHAR(255),
+        templateCategory VARCHAR(255),
+        campaignType VARCHAR(255) DEFAULT 'template',
+        productIds JSON,
         message TEXT,
-        variables JSONB DEFAULT '[]'::jsonb,
-        audience TEXT,
-        recipients JSONB,
-        status TEXT,
-        results JSONB,
-        "sentAt" TIMESTAMP,
-        "failedAt" TIMESTAMP,
-        "createdAt" TIMESTAMP DEFAULT NOW()
+        variables JSON,
+        audience VARCHAR(255),
+        recipients JSON,
+        status VARCHAR(255),
+        results JSON,
+        sentAt TIMESTAMP NULL,
+        failedAt TIMESTAMP NULL,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
     console.log('Created campaigns table');
-    await client.query(`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS template TEXT`);
-    await client.query(`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS "templateLanguage" TEXT`);
-    await client.query(`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS "templateCategory" TEXT`);
-    await client.query(`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS "campaignType" TEXT DEFAULT 'template'`);
-    await client.query(`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS "productIds" JSONB DEFAULT '[]'::jsonb`);
-    await client.query(`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS variables JSONB DEFAULT '[]'::jsonb`);
+    
+    // Add columns if they don't exist (MySQL compatible)
+    try { await connection.execute(`ALTER TABLE campaigns ADD COLUMN template VARCHAR(255)`); } catch (e) { /* ignore if exists */ }
+    try { await connection.execute(`ALTER TABLE campaigns ADD COLUMN templateLanguage VARCHAR(255)`); } catch (e) { /* ignore if exists */ }
+    try { await connection.execute(`ALTER TABLE campaigns ADD COLUMN templateCategory VARCHAR(255)`); } catch (e) { /* ignore if exists */ }
+    try { await connection.execute(`ALTER TABLE campaigns ADD COLUMN campaignType VARCHAR(255) DEFAULT 'template'`); } catch (e) { /* ignore if exists */ }
+    try { await connection.execute(`ALTER TABLE campaigns ADD COLUMN productIds JSON`); } catch (e) { /* ignore if exists */ }
+    try { await connection.execute(`ALTER TABLE campaigns ADD COLUMN variables JSON`); } catch (e) { /* ignore if exists */ }
     console.log('Ensured campaigns.template column');
 
-    await client.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS automations (
-        id TEXT PRIMARY KEY,
-        "userId" TEXT NOT NULL DEFAULT 'default',
-        name TEXT,
+        id VARCHAR(255) PRIMARY KEY,
+        userId VARCHAR(255) NOT NULL DEFAULT 'default',
+        name VARCHAR(255),
         status BOOLEAN DEFAULT FALSE,
-        source TEXT,
+        source VARCHAR(255),
         summary TEXT,
-        steps JSONB,
-        metrics JSONB,
-        "createdAt" TIMESTAMP DEFAULT NOW(),
-        "updatedAt" TIMESTAMP DEFAULT NOW()
+        steps JSON,
+        metrics JSON,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       )
     `);
     console.log('Created automations table');
 
-    await client.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS automation_jobs (
-        id TEXT PRIMARY KEY,
-        "automationId" TEXT NOT NULL,
-        "userId" TEXT NOT NULL DEFAULT 'default',
-        recipient TEXT,
+        id VARCHAR(255) PRIMARY KEY,
+        automationId VARCHAR(255) NOT NULL,
+        userId VARCHAR(255) NOT NULL DEFAULT 'default',
+        recipient VARCHAR(255),
         message TEXT,
-        template TEXT,
-        payload JSONB,
-        status TEXT DEFAULT 'pending',
-        "runAt" TIMESTAMP,
-        "createdAt" TIMESTAMP DEFAULT NOW(),
-        "processedAt" TIMESTAMP
+        template VARCHAR(255),
+        payload JSON,
+        status VARCHAR(255) DEFAULT 'pending',
+        runAt TIMESTAMP NULL,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        processedAt TIMESTAMP NULL
       )
     `);
     console.log('Created automation_jobs table');
 
-    await client.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS automation_conversation_state (
-        id TEXT PRIMARY KEY,
-        "userId" TEXT NOT NULL DEFAULT 'default',
-        "automationId" TEXT NOT NULL,
-        recipient TEXT NOT NULL,
-        state TEXT,
-        "lastInboundAt" TIMESTAMP,
-        "lastMenuSentAt" TIMESTAMP,
-        "lastReplyKey" TEXT,
-        "lastReplyAt" TIMESTAMP,
-        "handoffUntil" TIMESTAMP,
-        payload JSONB DEFAULT '{}'::jsonb,
-        "createdAt" TIMESTAMP DEFAULT NOW(),
-        "updatedAt" TIMESTAMP DEFAULT NOW()
+        id VARCHAR(255) PRIMARY KEY,
+        userId VARCHAR(255) NOT NULL DEFAULT 'default',
+        automationId VARCHAR(255) NOT NULL,
+        recipient VARCHAR(255) NOT NULL,
+        state VARCHAR(255),
+        lastInboundAt TIMESTAMP NULL,
+        lastMenuSentAt TIMESTAMP NULL,
+        lastReplyKey VARCHAR(255),
+        lastReplyAt TIMESTAMP NULL,
+        handoffUntil TIMESTAMP NULL,
+        payload JSON,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       )
     `);
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS automation_conversation_state_lookup_idx
-      ON automation_conversation_state ("userId", "automationId", recipient)
-    `);
+    try {
+      await connection.execute(`
+        CREATE INDEX automation_conversation_state_lookup_idx
+        ON automation_conversation_state (userId, automationId, recipient)
+      `);
+    } catch (e) { /* ignore if exists */ }
     console.log('Created automation_conversation_state table');
 
     // Create products table
-    await client.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS products (
-        id SERIAL PRIMARY KEY,
-        "userId" TEXT NOT NULL DEFAULT 'default',
-        products JSONB,
-        "lastSync" TIMESTAMP,
-        "createdAt" TIMESTAMP DEFAULT NOW(),
-        "updatedAt" TIMESTAMP DEFAULT NOW()
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        userId VARCHAR(255) NOT NULL DEFAULT 'default',
+        products JSON,
+        lastSync TIMESTAMP NULL,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       )
     `);
     console.log('Created products table');
 
     // Create webhooks table
-    await client.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS webhooks (
-        id SERIAL PRIMARY KEY,
-        "userId" TEXT NOT NULL DEFAULT 'default',
-        type TEXT,
-        webhooks JSONB,
-        "createdAt" TIMESTAMP DEFAULT NOW()
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        userId VARCHAR(255) NOT NULL DEFAULT 'default',
+        type VARCHAR(255),
+        webhooks JSON,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
     console.log('Created webhooks table');
 
     // Create registered_webhooks table for user-added target URLs
-    await client.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS registered_webhooks (
-        id SERIAL PRIMARY KEY,
-        "userId" TEXT NOT NULL DEFAULT 'default',
-        name TEXT NOT NULL,
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        userId VARCHAR(255) NOT NULL DEFAULT 'default',
+        name VARCHAR(255) NOT NULL,
         target_url TEXT NOT NULL,
-        event_types TEXT[] DEFAULT '{}'::text[],
-        secret_key TEXT,
+        event_types JSON,
+        secret_key VARCHAR(255),
         is_active BOOLEAN DEFAULT true,
-        "createdAt" TIMESTAMP DEFAULT NOW(),
-        "updatedAt" TIMESTAMP DEFAULT NOW()
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       )
     `);
     console.log('Created registered_webhooks table');
 
     // Create wordpress_connections table for per-user WordPress site connections
-    await client.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS wordpress_connections (
-        id TEXT PRIMARY KEY,
-        "userId" TEXT NOT NULL DEFAULT 'default',
-        site_id TEXT NOT NULL,
-        site_name TEXT,
+        id VARCHAR(255) PRIMARY KEY,
+        userId VARCHAR(255) NOT NULL DEFAULT 'default',
+        site_id VARCHAR(255) NOT NULL,
+        site_name VARCHAR(255),
         site_url TEXT NOT NULL,
-        webhook_secret TEXT,
-        status TEXT NOT NULL DEFAULT 'pending',
-        plugin_version TEXT,
-        capabilities JSONB DEFAULT '{}'::jsonb,
-        metadata JSONB DEFAULT '{}'::jsonb,
-        "lastSeenAt" TIMESTAMP,
-        "createdAt" TIMESTAMP DEFAULT NOW(),
-        "updatedAt" TIMESTAMP DEFAULT NOW()
+        webhook_secret VARCHAR(255),
+        status VARCHAR(255) NOT NULL DEFAULT 'pending',
+        plugin_version VARCHAR(255),
+        capabilities JSON,
+        metadata JSON,
+        lastSeenAt TIMESTAMP NULL,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       )
     `);
-    await client.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS wordpress_connections_user_site_id_idx
-      ON wordpress_connections ("userId", site_id)
-    `);
-    await client.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS wordpress_connections_user_site_url_idx
-      ON wordpress_connections ("userId", site_url)
-    `);
+    try {
+      await connection.execute(`
+        CREATE UNIQUE INDEX wordpress_connections_user_site_id_idx
+        ON wordpress_connections (userId, site_id)
+      `);
+    } catch (e) { /* ignore if exists */ }
+    try {
+      await connection.execute(`
+        CREATE UNIQUE INDEX wordpress_connections_user_site_url_idx
+        ON wordpress_connections (userId, site_url(255))
+      `);
+    } catch (e) { /* ignore if exists */ }
     console.log('Created wordpress_connections table');
 
     // Create webhook_logs table
-    await client.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS webhook_logs (
-        id TEXT PRIMARY KEY,
-        type TEXT,
-        topic TEXT,
-        payload JSONB,
-        "receivedAt" TIMESTAMP,
-        "createdAt" TIMESTAMP DEFAULT NOW()
+        id VARCHAR(255) PRIMARY KEY,
+        type VARCHAR(255),
+        topic VARCHAR(255),
+        payload JSON,
+        receivedAt TIMESTAMP NULL,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
     console.log('Created webhook_logs table');
 
+    // Create cart recovery sessions table
+    await connection.execute(`
+      CREATE TABLE IF NOT EXISTS cart_recovery_sessions (
+        id VARCHAR(255) PRIMARY KEY,
+        userId VARCHAR(255) NOT NULL DEFAULT 'default',
+        platform VARCHAR(255) NOT NULL,
+        connection_id VARCHAR(255),
+        site_id VARCHAR(255),
+        external_cart_id VARCHAR(255) NOT NULL,
+        checkout_token VARCHAR(255),
+        customer_name VARCHAR(255),
+        customer_email VARCHAR(255),
+        customer_phone VARCHAR(255),
+        cart_total VARCHAR(255),
+        currency VARCHAR(255),
+        cart_item_count INT DEFAULT 0,
+        line_items JSON,
+        checkout_url TEXT,
+        discount_code VARCHAR(255),
+        discount_amount VARCHAR(255),
+        status VARCHAR(255) NOT NULL DEFAULT 'active',
+        recovered_order_id VARCHAR(255),
+        metadata JSON,
+        last_activity_at TIMESTAMP NULL,
+        abandoned_at TIMESTAMP NULL,
+        recovered_at TIMESTAMP NULL,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )
+    `);
+    try {
+      await connection.execute(`
+        CREATE UNIQUE INDEX cart_recovery_sessions_user_platform_external_idx
+        ON cart_recovery_sessions (userId, platform, external_cart_id)
+      `);
+    } catch (e) { /* ignore if exists */ }
+    try {
+      await connection.execute(`
+        CREATE INDEX cart_recovery_sessions_user_status_abandoned_idx
+        ON cart_recovery_sessions (userId, status, abandoned_at)
+      `);
+    } catch (e) { /* ignore if exists */ }
+    try {
+      await connection.execute(`
+        CREATE INDEX cart_recovery_sessions_user_phone_idx
+        ON cart_recovery_sessions (userId, customer_phone)
+      `);
+    } catch (e) { /* ignore if exists */ }
+    console.log('Created cart_recovery_sessions table');
+
     // Create shopify_customers table
-    await client.query(`
+    await connection.execute(`
       CREATE TABLE IF NOT EXISTS shopify_customers (
-        id SERIAL PRIMARY KEY,
-        "customerId" TEXT NOT NULL,
-        phone TEXT,
-        "createdAt" TIMESTAMP DEFAULT NOW(),
-        "updatedAt" TIMESTAMP DEFAULT NOW()
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        customerId VARCHAR(255) NOT NULL,
+        phone VARCHAR(255),
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       )
     `);
     console.log('Created shopify_customers table');
@@ -280,7 +338,7 @@ async function setupTables() {
     console.error('Error setting up tables:', error);
     throw error;
   } finally {
-    client.release();
+    connection.release();
     await pool.end();
   }
 }

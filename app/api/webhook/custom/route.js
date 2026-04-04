@@ -1,8 +1,9 @@
 import crypto from 'crypto'
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/postgres'
-import { Pool } from 'pg'
+import mysql from 'mysql2/promise'
 import { ensureSettingsTables } from '@/lib/settings-db'
+import { persistCartRecoveryEvent } from '@/lib/cart-recovery'
 
 // WordPress database pool (configured via environment variables)
 let wpPool
@@ -14,7 +15,7 @@ function getWordPressPool() {
         return null
     }
 
-    wpPool = new Pool({
+    wpPool = mysql.createPool({
         host: process.env.WP_DB_HOST,
         port: parseInt(process.env.WP_DB_PORT || '3306'),
         database: process.env.WP_DB_NAME,
@@ -31,7 +32,11 @@ const REQUIRED_FIELDS = {
     'custom.order_created': ['customer_phone', 'customer_name'],
     'custom.payment_received': ['customer_phone', 'order_total'],
     'woocommerce.order_created': ['customer_phone', 'order_number'],
-    'woocommerce.order_updated': ['customer_phone', 'order_number']
+    'woocommerce.order_updated': ['customer_phone', 'order_number'],
+    'woocommerce.cart_abandoned': ['customer_phone', 'checkout_url'],
+    'woocommerce.cart_recovered': ['customer_phone'],
+    'shopify.cart_abandoned': ['customer_phone', 'checkout_url'],
+    'shopify.cart_recovered': ['customer_phone']
 }
 
 // Field mappings for different data sources
@@ -149,13 +154,13 @@ export async function POST(request) {
         if (requestSiteId && requestSignature) {
             const connection = await query(
                 `SELECT webhook_secret FROM wordpress_connections
-                 WHERE site_id = $1 AND "userId" = $2
-                 ORDER BY "updatedAt" DESC NULLS LAST, "createdAt" DESC
+                 WHERE site_id = ? AND userId = ?
+                 ORDER BY updatedAt IS NULL, updatedAt DESC, createdAt IS NULL, createdAt DESC
                  LIMIT 1`,
                 [requestSiteId, 'default']
             )
 
-            const webhookSecret = connection?.rows?.[0]?.webhook_secret
+            const webhookSecret = connection?.[0]?.[0]?.webhook_secret
             if (webhookSecret) {
                 const expectedSignature = crypto
                     .createHmac('sha256', webhookSecret)
@@ -219,8 +224,8 @@ export async function POST(request) {
             const siteUrl = body.site_url || 'unknown'
 
             await query(
-                `INSERT INTO webhook_logs (id, type, topic, payload, "receivedAt", "createdAt")
-                 VALUES ($1, $2, $3, $4, NOW(), NOW())`,
+                `INSERT INTO webhook_logs (id, type, topic, payload, receivedAt, createdAt)
+                 VALUES (?, ?, ?, ?, NOW(), NOW())`,
                 [
                     `custom_${Date.now()}`,
                     'custom',
@@ -241,19 +246,19 @@ export async function POST(request) {
             if (requestSiteId) {
                 await query(
                     `UPDATE wordpress_connections
-                     SET "lastSeenAt" = NOW(),
-                         status = CASE WHEN $2 THEN 'active' ELSE status END,
-                         "updatedAt" = NOW(),
-                         metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb
-                     WHERE site_id = $3 AND "userId" = $4`,
+                     SET lastSeenAt = NOW(),
+                         status = CASE WHEN ? THEN 'active' ELSE status END,
+                         updatedAt = NOW(),
+                         metadata = JSON_MERGE_PATCH(COALESCE(metadata, '{}'), ?)
+                     WHERE site_id = ? AND userId = ?`,
                     [
+                        signatureVerified,
                         JSON.stringify({
                             last_webhook_at: new Date().toISOString(),
                             last_webhook_topic: eventType,
                             last_webhook_signature_verified: signatureVerified,
                             last_webhook_payload_source: 'custom-webhook'
                         }),
-                        signatureVerified,
                         requestSiteId,
                         'default'
                     ]
@@ -265,6 +270,44 @@ export async function POST(request) {
 
         const matchingAutomations = await getMatchingAutomations(eventType)
         const warnings = []
+        let allowAutomationExecution = true
+
+        if (eventType.includes('.cart_')) {
+            try {
+                const cartEvent = await persistCartRecoveryEvent({
+                    userId: 'default',
+                    eventType,
+                    payload: {
+                        ...body,
+                        ...context
+                    },
+                    platformHint: eventType
+                })
+
+                if (cartEvent?.context) {
+                    context = {
+                        ...context,
+                        ...cartEvent.context
+                    }
+                }
+
+                if (cartEvent?.session?.id) {
+                    context.cart_session_id = cartEvent.session.id
+                }
+
+                if (cartEvent?.cancelledJobs > 0) {
+                    warnings.push(`Cancelled ${cartEvent.cancelledJobs} pending cart reminder job(s) after recovery.`)
+                }
+
+                if (eventType.endsWith('.cart_recovered') && !cartEvent?.transitionedToRecovered) {
+                    allowAutomationExecution = false
+                }
+            } catch (cartError) {
+                console.error('Failed to persist cart recovery event:', cartError)
+                warnings.push(`Cart recovery state update failed: ${cartError.message}`)
+            }
+        }
+
         const validation = validateWebhookContext(eventType, context, matchingAutomations)
 
         if (validation.missingFields.length > 0) {
@@ -273,11 +316,11 @@ export async function POST(request) {
 
         // Get user integrations
         const integrations = await query(
-            `SELECT whatsapp FROM integrations WHERE "userId" = $1 ORDER BY "updatedAt" DESC NULLS LAST, id DESC LIMIT 1`,
+            `SELECT whatsapp FROM integrations WHERE userId = ? ORDER BY updatedAt IS NULL, updatedAt DESC, id DESC LIMIT 1`,
             ['default']
         )
 
-        if (!integrations?.rows?.[0]?.whatsapp) {
+        if (!integrations?.[0]?.[0]?.whatsapp) {
             return NextResponse.json({
                 success: true,
                 event: eventType,
@@ -289,13 +332,15 @@ export async function POST(request) {
         }
 
         // Find and execute automations for this event type
-        const automationResult = await executeCustomWebhookAutomations(
-            eventType,
-            context,
-            integrations.rows[0].whatsapp,
-            matchingAutomations,
-            body
-        )
+        const automationResult = allowAutomationExecution
+            ? await executeCustomWebhookAutomations(
+                eventType,
+                context,
+                integrations[0][0].whatsapp,
+                matchingAutomations,
+                body
+            )
+            : { processed: 0, matchedAutomations: matchingAutomations.length, warnings: [] }
 
         warnings.push(...automationResult.warnings)
 
@@ -331,21 +376,21 @@ async function fetchFromWordPressTable(tableName, recordId, eventType, fieldMap 
     try {
         // Try to find the record - check common ID column names
         const idColumns = ['id', 'ID', 'order_id', 'orderId', 'record_id', 'recordId']
-        let query = `SELECT * FROM ${tableName} WHERE `
+        let queryStr = `SELECT * FROM ${tableName} WHERE `
 
-        const whereClauses = idColumns.map(col => `${col} = $1`).join(' OR ')
-        query += whereClauses + ' LIMIT 1'
+        const whereClauses = idColumns.map(col => `${col} = ?`).join(' OR ')
+        queryStr += whereClauses + ' LIMIT 1'
 
-        const result = await pool.query(query, [recordId.toString()])
+        const [rows] = await pool.execute(queryStr, [recordId.toString()])
 
-        if (result.rows.length === 0) {
+        if (rows.length === 0) {
             return {
                 success: false,
                 error: `No record found in ${tableName} with id ${recordId}`
             }
         }
 
-        const row = result.rows[0]
+        const row = rows[0]
 
         // Infer event type based on table name if not provided
         let inferredEvent = eventType
@@ -706,7 +751,15 @@ function resolveCustomWebhookTrigger(eventType) {
         'custom.order_status': 'custom.webhook',
         'custom.payment_received': 'custom.webhook',
         'custom.woocommerce.order_created': 'woocommerce.order_created',
-        'custom.woocommerce.order_updated': 'woocommerce.order_updated'
+        'custom.woocommerce.order_updated': 'woocommerce.order_updated',
+        'custom.woocommerce.cart_abandoned': 'woocommerce.cart_abandoned',
+        'custom.woocommerce.cart_recovered': 'woocommerce.cart_recovered',
+        'custom.shopify.cart_abandoned': 'shopify.cart_abandoned',
+        'custom.shopify.cart_recovered': 'shopify.cart_recovered'
+    }
+
+    if (eventType.startsWith('shopify.')) {
+        return eventType
     }
 
     const isWooCommerceEvent = eventType.startsWith('woocommerce.')
@@ -750,13 +803,13 @@ function interpolateAutomationMessage(message = '', context = {}) {
 async function getMatchingAutomations(eventType) {
     const automations = await query(
         `SELECT id, name, status, steps FROM automations
-         WHERE "userId" = $1 AND status = true`,
+         WHERE userId = ? AND status = true`,
         ['default']
     )
 
     const mappedTrigger = resolveCustomWebhookTrigger(eventType)
 
-    return automations.rows?.filter(automation => {
+    return automations[0]?.filter(automation => {
         if (!Array.isArray(automation.steps)) return false
         const triggerStep = automation.steps.find(step => step.type === 'trigger')
         return triggerStep?.event === mappedTrigger || triggerStep?.event === 'custom.webhook'
@@ -807,12 +860,12 @@ async function executeCustomWebhookAutomations(eventType, context, whatsappConfi
 
                 await query(
                     `INSERT INTO automation_conversation_state
-                     (id, "userId", "automationId", recipient, state, "lastInboundAt", payload, "updatedAt")
-                     VALUES ($1, $2, $3, $4, $5, NOW(), $6::jsonb, NOW())
-                     ON CONFLICT (id) DO UPDATE SET
-                     payload = EXCLUDED.payload,
-                     "lastInboundAt" = NOW(),
-                     "updatedAt" = NOW()`,
+                     (id, userId, automationId, recipient, state, lastInboundAt, payload, updatedAt)
+                     VALUES (?, ?, ?, ?, ?, NOW(), ?, NOW())
+                     ON DUPLICATE KEY UPDATE
+                     payload = VALUES(payload),
+                     lastInboundAt = NOW(),
+                     updatedAt = NOW()`,
                     [stateId, 'default', automation.id, stateRecipient, 'active', JSON.stringify(automationContext)]
                 )
 
@@ -846,8 +899,8 @@ async function executeCustomWebhookAutomations(eventType, context, whatsappConfi
                         }
 
                         await query(
-                            `INSERT INTO automation_jobs (id, "automationId", "userId", recipient, message, template, payload, status, "runAt", "createdAt")
-                             VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, 'pending', $8, NOW())`,
+                            `INSERT INTO automation_jobs (id, automationId, userId, recipient, message, template, payload, status, runAt, createdAt)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, NOW())`,
                             [
                                 crypto.randomUUID(),
                                 automation.id,

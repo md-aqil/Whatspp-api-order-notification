@@ -1,18 +1,5 @@
 import './globals.css'
 import { ThemeProvider } from '@/components/theme-provider'
-import { Inter, Manrope } from 'next/font/google'
-
-const inter = Inter({
-  subsets: ['latin'],
-  variable: '--font-body',
-  display: 'swap',
-})
-
-const manrope = Manrope({
-  subsets: ['latin'],
-  variable: '--font-display',
-  display: 'swap',
-})
 
 export const metadata = {
   title: 'WhatsApp Commerce Hub',
@@ -21,8 +8,15 @@ export const metadata = {
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en" className={`${inter.variable} ${manrope.variable}`} suppressHydrationWarning>
-      <body className={inter.className}>
+    <html
+      lang="en"
+      style={{
+        '--font-body': 'system-ui',
+        '--font-display': 'system-ui'
+      }}
+      suppressHydrationWarning
+    >
+      <body>
         <ThemeProvider
           attribute="class"
           defaultTheme="light"

@@ -56,6 +56,8 @@ export default function SettingsPage() {
     { topic: 'orders/fulfilled', label: 'Order Fulfilled' },
     { topic: 'orders/cancelled', label: 'Order Cancelled' },
     { topic: 'orders/delivered', label: 'Order Delivered' },
+    { topic: 'checkouts/create', label: 'Checkout Created' },
+    { topic: 'checkouts/update', label: 'Checkout Updated' },
     { topic: 'customers/create', label: 'Customer Created' },
     { topic: 'customers/update', label: 'Customer Updated' },
   ]
@@ -749,7 +751,7 @@ export default function SettingsPage() {
             <div className="flex items-center justify-between mb-8">
               <div>
                 <h3 className="text-xl font-bold font-headline">WordPress Sites</h3>
-                <p className="text-sm text-[#3d618c] mt-1">Store each customer site in the database instead of asking for `.env` changes.</p>
+                <p className="text-sm text-[#3d618c] mt-1">Manage the WordPress connection, webhook endpoint, and the latest activity from the connected plugin in one place.</p>
               </div>
               <div className="flex gap-2">
                 <button
@@ -811,6 +813,57 @@ export default function SettingsPage() {
                     </div>
                   </DialogContent>
                 </Dialog>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-[#e5eeff] bg-[#f8f9ff] p-4 space-y-4 mb-6">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wide text-[#3d618c]">WordPress Webhook Endpoint</p>
+                  <p className="text-sm text-[#05345c] font-medium mt-1">Use this endpoint in the plugin after connecting a site.</p>
+                </div>
+                <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase ${customWebhookStatus?.status === 'ready' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
+                  {customWebhookStatus?.status === 'ready' ? 'Endpoint Ready' : 'Endpoint Inactive'}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Input readOnly value={buildWebhookUrl('/api/webhook/custom')} className="bg-white border-[#e5eeff]" />
+                <Button variant="outline" size="sm" onClick={() => copyToClipboard(buildWebhookUrl('/api/webhook/custom'))}>
+                  <Copy className="h-4 w-4 mr-2" />
+                  Copy
+                </Button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                <div className="bg-white rounded-lg border border-[#e5eeff] px-3 py-3">
+                  <div className="text-[10px] font-bold uppercase text-[#3d618c] mb-2">WooCommerce Triggers</div>
+                  {woocommerceTriggers.length > 0 ? (
+                    <div className="space-y-1">
+                      {woocommerceTriggers.map((trigger, idx) => (
+                        <div key={`${trigger.value || trigger.label}-${idx}`} className="flex items-center justify-between gap-2">
+                          <span className="text-[#05345c]">{trigger.label}</span>
+                          <span className="text-green-600 font-semibold">Active</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-[#3d618c]">No WooCommerce triggers loaded for the selected WordPress site yet.</p>
+                  )}
+                </div>
+                <div className="bg-white rounded-lg border border-[#e5eeff] px-3 py-3">
+                  <div className="text-[10px] font-bold uppercase text-[#3d618c] mb-2">Custom Tables</div>
+                  {customTables.length > 0 ? (
+                    <div className="space-y-1">
+                      {customTables.map((table, idx) => (
+                        <div key={`${table.name}-${idx}`} className="flex items-center justify-between gap-2">
+                          <span className="text-[#05345c]">{table.name}</span>
+                          {table.label ? <span className="text-[#3d618c]">{table.label}</span> : <span className="text-green-600 font-semibold">Mapped</span>}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-[#3d618c]">No custom tables loaded for the selected WordPress site yet.</p>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -944,6 +997,59 @@ export default function SettingsPage() {
               {wordpressConnections.length === 0 && (
                 <div className="p-4 text-center text-sm text-gray-500 border border-dashed border-[#e5eeff] rounded-xl">
                   No WordPress sites connected yet. Use "Connect WordPress" to save the first site.
+                </div>
+              )}
+            </div>
+
+            <div className="mt-6 pt-6 border-t border-[#e5eeff]">
+              <p className="font-semibold text-xs text-[#3d618c] uppercase mb-3 flex items-center gap-2">
+                <Clock className="w-3 h-3" /> Latest activity from WordPress
+              </p>
+              {lastCustomWebhook ? (
+                <div className="bg-[#f8f9ff] p-4 rounded-xl border border-[#e5eeff] space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {latestWordPressRows.map((row) => (
+                      <div key={row.label} className="flex justify-between items-center gap-4 text-xs bg-white rounded-lg px-3 py-2 border border-[#e5eeff]">
+                        <span className="text-gray-500">{row.label}:</span>
+                        {row.tone === 'badge' ? (
+                          <span className="font-bold text-[#005cc0] bg-[#eff4ff] px-2 py-0.5 rounded">{row.value}</span>
+                        ) : (
+                          <span
+                            className={[
+                              'font-medium text-right',
+                              row.monospace ? 'font-mono text-[11px]' : '',
+                              row.tone === 'success' ? 'font-bold text-green-600' : '',
+                              row.missing ? 'text-amber-600' : ''
+                            ].join(' ')}
+                          >
+                            {row.value}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="rounded-xl border border-[#e5eeff] overflow-hidden bg-white">
+                    <div className="flex items-center justify-between px-3 py-2 bg-[#f8f9ff] border-b border-[#e5eeff]">
+                      <p className="text-[11px] font-bold uppercase tracking-wide text-[#3d618c]">Raw Webhook Payload</p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => copyToClipboard(latestWordPressRawPayload)}
+                      >
+                        <Copy className="h-4 w-4 mr-2" />
+                        Copy JSON
+                      </Button>
+                    </div>
+                    <pre className="max-h-72 overflow-auto p-3 text-[11px] leading-5 bg-[#05345c] text-[#dff3ff] whitespace-pre-wrap break-words">
+                      {latestWordPressRawPayload}
+                    </pre>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-white/50 p-4 rounded-xl border border-dashed border-[#e5eeff] text-center">
+                  <p className="text-xs text-gray-500">Waiting for your first WordPress activity...</p>
+                  <p className="text-[10px] text-gray-400 mt-1">Send a test webhook or place a WooCommerce order to see it here.</p>
                 </div>
               )}
             </div>
@@ -1117,144 +1223,6 @@ export default function SettingsPage() {
                       <div className="mt-4 p-3 bg-white border border-[#e5eeff] rounded-lg text-xs">
                         <p className="font-semibold mb-1 flex items-center gap-2"><Clock className="w-3 h-3" /> Last Received</p>
                         <p className="text-[#3d618c]">{new Date(lastWebhook.receivedAt).toLocaleString()}</p>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Custom Webhook */}
-              <div className="border border-[#e5eeff] rounded-xl overflow-hidden transition-all duration-200">
-                <div onClick={() => toggleWebhook('custom')} className="flex items-center gap-4 py-4 px-4 hover:bg-[#eff4ff] cursor-pointer transition-colors">
-                  <div className="flex-shrink-0">
-                    <div className={`w-3 h-3 rounded-full ${customWebhookStatus?.status === 'ready' ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : 'bg-slate-300'}`}></div>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-sm font-bold">Custom Webhook</span>
-                      <span className="px-2 py-0.5 rounded text-[9px] font-black bg-[#e4ceff] text-[#53436c] uppercase">WordPress</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <code className="text-xs text-[#3d618c] truncate bg-[#eff4ff] px-2 py-0.5 rounded">{buildWebhookUrl('/api/webhook/custom')}</code>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <div className="text-right hidden sm:block">
-                      <div className="text-[10px] font-bold text-[#3d618c] uppercase">Status</div>
-                      <div className="text-xs font-semibold capitalize">{customWebhookStatus?.status === 'ready' ? 'Active' : 'Inactive'}</div>
-                    </div>
-                    <ChevronDown className={`w-5 h-5 text-[#3d618c] transition-transform ${expandedWebhook === 'custom' ? 'rotate-180' : ''}`} />
-                  </div>
-                </div>
-                {expandedWebhook === 'custom' && (
-                  <div className="px-11 py-4 bg-[#f8f9ff] border-t border-[#e5eeff] text-sm">
-                    <div className="flex justify-between items-start mb-4">
-                      <div>
-                        <p className="font-semibold mb-2">Configure in WordPress Plugin</p>
-                        <div className="flex items-center gap-2">
-                          <Input readOnly value={buildWebhookUrl('/api/webhook/custom')} className="w-[350px] bg-white border-[#e5eeff]" />
-                          <Button variant="outline" size="sm" onClick={() => copyToClipboard(buildWebhookUrl('/api/webhook/custom'))}>
-                            <Copy className="h-4 w-4 mr-2" />
-                            Copy
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* WooCommerce Triggers from Plugin */}
-                    {woocommerceTriggers && woocommerceTriggers.length > 0 && (
-                      <div className="space-y-2 mb-4">
-                        <p className="font-semibold text-xs text-[#3d618c] uppercase">WooCommerce Triggers (from Plugin)</p>
-                        <div className="grid grid-cols-2 gap-2">
-                          {woocommerceTriggers.map((trigger, idx) => (
-                            <div key={idx} className="flex justify-between p-2 bg-white rounded border border-[#e5eeff]">
-                              <span className="text-xs font-medium">{trigger.label}</span>
-                              <span className="text-[10px] flex items-center font-semibold text-green-600">
-                                <><CheckCircle className="w-3 h-3 mr-1" /> Active</>
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Custom Tables from Plugin */}
-                    {customTables && customTables.length > 0 && (
-                      <div className="space-y-2">
-                        <p className="font-semibold text-xs text-[#3d618c] uppercase">Custom Tables (from Plugin)</p>
-                        <div className="grid grid-cols-2 gap-2">
-                          {customTables.map((table, idx) => (
-                            <div key={idx} className="flex justify-between p-2 bg-white rounded border border-[#e5eeff]">
-                              <span className="text-xs font-medium">{table.name}</span>
-                              {table.label && <span className="text-[10px] text-gray-500">{table.label}</span>}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {(!woocommerceTriggers || woocommerceTriggers.length === 0) && (!customTables || customTables.length === 0) && (
-                      <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-xs text-yellow-800">
-                        <p className="font-semibold flex items-center gap-2"><AlertCircle className="w-3 h-3" /> No triggers configured</p>
-                        <p className="mt-1">Configure triggers in the WordPress plugin to receive webhooks.</p>
-                      </div>
-                    )}
-
-                    {lastCustomWebhook ? (
-                      <div className="mt-6 pt-4 border-t border-[#e5eeff]">
-                        <p className="font-semibold text-xs text-[#3d618c] uppercase mb-3 flex items-center gap-2">
-                          <Clock className="w-3 h-3" /> Latest activity from WordPress
-                        </p>
-                        <div className="bg-white p-4 rounded-xl border border-[#e5eeff] space-y-4">
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                            {latestWordPressRows.map((row) => (
-                              <div key={row.label} className="flex justify-between items-center gap-4 text-xs bg-[#f8f9ff] rounded-lg px-3 py-2">
-                                <span className="text-gray-500">{row.label}:</span>
-                                {row.tone === 'badge' ? (
-                                  <span className="font-bold text-[#005cc0] bg-[#eff4ff] px-2 py-0.5 rounded">{row.value}</span>
-                                ) : (
-                                  <span
-                                    className={[
-                                      'font-medium text-right',
-                                      row.monospace ? 'font-mono text-[11px]' : '',
-                                      row.tone === 'success' ? 'font-bold text-green-600' : '',
-                                      row.missing ? 'text-amber-600' : ''
-                                    ].join(' ')}
-                                  >
-                                    {row.value}
-                                  </span>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-
-                          <div className="rounded-xl border border-[#e5eeff] overflow-hidden">
-                            <div className="flex items-center justify-between px-3 py-2 bg-[#f8f9ff] border-b border-[#e5eeff]">
-                              <p className="text-[11px] font-bold uppercase tracking-wide text-[#3d618c]">Raw Webhook Payload</p>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => copyToClipboard(latestWordPressRawPayload)}
-                              >
-                                <Copy className="h-4 w-4 mr-2" />
-                                Copy JSON
-                              </Button>
-                            </div>
-                            <pre className="max-h-72 overflow-auto p-3 text-[11px] leading-5 bg-[#05345c] text-[#dff3ff] whitespace-pre-wrap break-words">
-                              {latestWordPressRawPayload}
-                            </pre>
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="mt-6 pt-4 border-t border-[#e5eeff]">
-                        <p className="font-semibold text-xs text-[#3d618c] uppercase mb-3 flex items-center gap-2">
-                          <Clock className="w-3 h-3" /> Activity Log
-                        </p>
-                        <div className="bg-white/50 p-4 rounded-xl border border-dashed border-[#e5eeff] text-center">
-                          <p className="text-xs text-gray-500">Waiting for your first WordPress activity...</p>
-                          <p className="text-[10px] text-gray-400 mt-1">Place a test order in WooCommerce to see it here.</p>
-                        </div>
                       </div>
                     )}
                   </div>

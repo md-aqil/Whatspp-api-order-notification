@@ -24,7 +24,7 @@ async function sendWhatsAppMessage(phoneNumberId, accessToken, to, messageData) 
 export async function POST() {
   try {
     const integrations = await queryOne(
-      'SELECT whatsapp FROM integrations WHERE "userId" = $1 ORDER BY "updatedAt" DESC NULLS LAST, id DESC LIMIT 1',
+      'SELECT whatsapp FROM integrations WHERE userId = ? ORDER BY updatedAt IS NULL, updatedAt DESC, id DESC LIMIT 1',
       ['default']
     )
 
@@ -33,10 +33,10 @@ export async function POST() {
     }
 
     const jobs = await queryMany(
-      `SELECT id, "automationId", recipient, message, template, payload
+      `SELECT id, automationId, recipient, message, template, payload
        FROM automation_jobs
-       WHERE status = 'pending' AND "runAt" <= NOW()
-       ORDER BY "runAt" ASC
+       WHERE status = 'pending' AND runAt <= NOW()
+       ORDER BY runAt ASC
        LIMIT 25`
     )
 
@@ -44,6 +44,39 @@ export async function POST() {
 
     for (const job of jobs) {
       try {
+        const cartSessionId = job.payload?.cart_session_id || null
+        const cartExternalId = job.payload?.external_cart_id || job.payload?.cart_id || null
+        const cartCheckoutToken = job.payload?.checkout_token || null
+        const cartPlatform = job.payload?.platform || null
+
+        if (cartSessionId || cartExternalId || cartCheckoutToken) {
+          const cartSession = await queryOne(
+            `SELECT id, status
+             FROM cart_recovery_sessions
+             WHERE (
+               (? IS NOT NULL AND id = ?)
+               OR (? IS NOT NULL AND external_cart_id = ?)
+               OR (? IS NOT NULL AND checkout_token = ?)
+             )
+             AND (? IS NULL OR platform = ?)
+             ORDER BY updatedAt IS NULL, updatedAt DESC
+             LIMIT 1`,
+            [cartSessionId, cartSessionId, cartExternalId, cartExternalId, cartCheckoutToken, cartCheckoutToken, cartPlatform, cartPlatform]
+          )
+
+          if (cartSession && cartSession.status !== 'abandoned') {
+            await query(
+              `UPDATE automation_jobs
+               SET status = 'cancelled',
+                   processedAt = NOW(),
+                   payload = JSON_SET(COALESCE(payload, '{}'), '$.cancelled_reason', ?)
+               WHERE id = ?`,
+              ['cart_not_abandoned', job.id]
+            )
+            continue
+          }
+        }
+
         const templateComponents = buildAutomationTemplateComponents(job.payload?.templateComponents, job.payload?.variableMappings, job.payload || {})
         const messageData = job.template
           ? {
@@ -75,8 +108,8 @@ export async function POST() {
         )
 
         await query(
-          `INSERT INTO messages (id, "userId", recipient, phone, message, "isCustomer", timestamp, "whatsappMessageId", status, template, "createdAt")
-           VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, $8, $9, NOW())`,
+          `INSERT INTO messages (id, userId, recipient, phone, message, isCustomer, timestamp, whatsappMessageId, status, template, createdAt)
+           VALUES (?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, NOW())`,
           [
             crypto.randomUUID(),
             'default',
@@ -92,16 +125,16 @@ export async function POST() {
 
         await query(
           `UPDATE automation_jobs
-           SET status = 'sent', "processedAt" = NOW()
-           WHERE id = $1`,
+           SET status = 'sent', processedAt = NOW()
+           WHERE id = ?`,
           [job.id]
         )
 
         await query(
           `UPDATE automations
-           SET metrics = jsonb_set(COALESCE(metrics, '{}'::jsonb), '{sent}', to_jsonb(COALESCE((metrics->>'sent')::int, 0) + 1), true),
-               "updatedAt" = NOW()
-           WHERE id = $1`,
+           SET metrics = JSON_SET(COALESCE(metrics, '$.sent', 0), '$.sent', COALESCE(JSON_UNQUOTE(JSON_EXTRACT(metrics, '$.sent')), 0) + 1),
+               updatedAt = NOW()
+           WHERE id = ?`,
           [job.automationId]
         )
 
@@ -109,9 +142,9 @@ export async function POST() {
       } catch (error) {
         await query(
           `UPDATE automation_jobs
-           SET status = 'failed', "processedAt" = NOW(), payload = jsonb_set(COALESCE(payload, '{}'::jsonb), '{error}', to_jsonb($2::text), true)
-           WHERE id = $1`,
-          [job.id, error.message]
+           SET status = 'failed', processedAt = NOW(), payload = JSON_SET(COALESCE(payload, '{}'), '$.error', ?)
+           WHERE id = ?`,
+          [error.message, job.id]
         )
       }
     }

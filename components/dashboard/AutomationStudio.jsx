@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
-import { BellRing, Clock3, CopyPlus, Copy, HelpCircle, History, MessageSquareText, PackageCheck, PlayCircle, Plus, Settings, Sparkles, Square, Trash2, Truck, Workflow, X, Zap, ZoomIn, ZoomOut, Maximize2, ArrowLeft } from 'lucide-react'
+import { BellRing, CheckCircle2, Clock3, CopyPlus, Copy, HelpCircle, History, MessageSquareText, PackageCheck, PlayCircle, Plus, Settings, Sparkles, Square, Trash2, Truck, Workflow, X, Zap, ZoomIn, ZoomOut, Maximize2, ArrowLeft } from 'lucide-react'
 import { toast, Toaster } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -16,6 +16,14 @@ const TRIGGERS = [
   { value: 'shopify.order_created', label: 'Shopify Order', icon: PackageCheck, description: 'When an order is placed' },
   { value: 'shopify.fulfillment_created', label: 'Fulfillment Created', icon: Truck, description: 'When tracking is created' },
   { value: 'shopify.order_delivered', label: 'Order Delivered', icon: BellRing, description: 'When delivery is confirmed' },
+  { value: 'shopify.cart_created', label: 'Shopify Cart Created', icon: PackageCheck, description: 'When a Shopify checkout is created' },
+  { value: 'shopify.cart_updated', label: 'Shopify Cart Updated', icon: PackageCheck, description: 'When a Shopify checkout changes' },
+  { value: 'shopify.cart_abandoned', label: 'Shopify Cart Abandoned', icon: Clock3, description: 'When a Shopify checkout becomes abandoned' },
+  { value: 'shopify.cart_recovered', label: 'Shopify Cart Recovered', icon: CheckCircle2, description: 'When an abandoned Shopify checkout is recovered' },
+  { value: 'woocommerce.cart_created', label: 'WooCommerce Cart Created', icon: PackageCheck, description: 'When a WooCommerce cart is created' },
+  { value: 'woocommerce.cart_updated', label: 'WooCommerce Cart Updated', icon: PackageCheck, description: 'When a WooCommerce cart is updated' },
+  { value: 'woocommerce.cart_abandoned', label: 'WooCommerce Cart Abandoned', icon: Clock3, description: 'When a WooCommerce cart becomes abandoned' },
+  { value: 'woocommerce.cart_recovered', label: 'WooCommerce Cart Recovered', icon: CheckCircle2, description: 'When an abandoned WooCommerce cart is recovered' },
   { value: 'whatsapp.message_received', label: 'WhatsApp Message', icon: MessageSquareText, description: 'When a customer sends a WhatsApp message' },
   { value: 'custom.webhook', label: 'Custom Webhook', icon: Workflow, description: 'When a webhook is received from any source' },
   { value: 'custom.order_created', label: 'Custom Order', icon: Workflow, description: 'When a custom order is created' },
@@ -41,9 +49,11 @@ const DEFAULT_FLOW_IDS_BY_EVENT = {
   'shopify.order_created': 'default-order-confirmation',
   'shopify.fulfillment_created': 'default-tracking-update',
   'shopify.order_delivered': 'default-feedback-flow',
+  'shopify.cart_abandoned': 'default-shopify-cart-recovery',
   'whatsapp.message_received': 'default-whatsapp-reply',
   'woocommerce.order_created': 'default-woocommerce-order',
   'woocommerce.order_updated': 'default-woocommerce-order',
+  'woocommerce.cart_abandoned': 'default-woocommerce-cart-recovery',
   'custom.webhook': 'default-custom-webhook',
   'custom.order_created': 'default-custom-webhook',
   'custom.payment_received': 'default-custom-webhook'

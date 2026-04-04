@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { buildMetaAuthHeaders, mapMetaAccessTokenError } from '@/lib/meta-auth'
 import { buildAutomationTemplateComponents } from '@/lib/automation-template'
 import { queryOne } from '@/lib/postgres'
+import { ensureSettingsTables } from '@/lib/settings-db'
 
 function interpolateTemplateText(template, context) {
   if (!template) return ''
@@ -76,10 +77,10 @@ async function sendWhatsAppMessage(phoneNumberId, accessToken, messageData) {
 
 async function getLatestOrderContext() {
   const order = await queryOne(
-    `SELECT "orderNumber", "customerName", "customerPhone", total, currency, status, "lineItems"
+    `SELECT orderNumber, customerName, customerPhone, total, currency, status, lineItems
      FROM orders
-     WHERE "userId" = $1
-     ORDER BY "createdAt" DESC NULLS LAST
+     WHERE userId = ?
+     ORDER BY createdAt IS NULL, createdAt DESC
      LIMIT 1`,
     ['default']
   )
@@ -110,8 +111,8 @@ async function getLatestIncomingMessageContext() {
   const message = await queryOne(
     `SELECT recipient, message, timestamp
      FROM messages
-     WHERE "userId" = $1 AND "isCustomer" = true
-     ORDER BY timestamp DESC NULLS LAST, "createdAt" DESC NULLS LAST
+     WHERE userId = ? AND isCustomer = true
+     ORDER BY timestamp IS NULL, timestamp DESC, createdAt IS NULL, createdAt DESC
      LIMIT 1`,
     ['default']
   )
@@ -135,7 +136,77 @@ async function getLatestIncomingMessageContext() {
   }
 }
 
-function getDummyContext() {
+async function getLatestCartRecoveryContext(triggerEvent = '') {
+  await ensureSettingsTables()
+
+  const platform = triggerEvent.startsWith('woocommerce.') ? 'woocommerce' : 'shopify'
+  const cart = await queryOne(
+    `SELECT id, platform, external_cart_id, checkout_token, checkout_url, customer_name, customer_email, customer_phone,
+            cart_total, currency, cart_item_count, line_items, discount_code, discount_amount, status
+     FROM cart_recovery_sessions
+     WHERE userId = ? AND platform = ?
+     ORDER BY COALESCE(last_activity_at, updatedAt, createdAt) IS NULL, COALESCE(last_activity_at, updatedAt, createdAt) DESC
+     LIMIT 1`,
+    ['default', platform]
+  )
+
+  if (!cart) return null
+
+  const lineItems = Array.isArray(cart.line_items) ? cart.line_items : []
+  const productNames = lineItems
+    .map((item) => String(item?.title || item?.name || item?.product_title || '').trim())
+    .filter(Boolean)
+  const customerPhone = cart.customer_phone || ''
+
+  return {
+    cart_session_id: cart.id,
+    cart_id: cart.external_cart_id || '',
+    external_cart_id: cart.external_cart_id || '',
+    checkout_token: cart.checkout_token || '',
+    checkout_url: cart.checkout_url || '',
+    customer_name: cart.customer_name || 'Customer',
+    customer_phone: customerPhone,
+    customerPhone,
+    customer_email: cart.customer_email || '',
+    cart_total: cart.cart_total || '',
+    order_total: cart.cart_total || '',
+    currency: cart.currency || 'INR',
+    cart_item_count: cart.cart_item_count || 0,
+    cart_first_product: productNames[0] || '',
+    cart_product_names: productNames.slice(0, 5).join(', '),
+    order_product_name: productNames[0] || '',
+    order_product_names: productNames.slice(0, 5).join(', '),
+    discount_code: cart.discount_code || '',
+    discount_amount: cart.discount_amount || '',
+    status: cart.status || 'active'
+  }
+}
+
+function getDummyContext(triggerEvent = '') {
+  if (triggerEvent.includes('.cart_')) {
+    return {
+      cart_id: 'CART-TEST-001',
+      external_cart_id: 'CART-TEST-001',
+      checkout_token: 'CHK-TEST-001',
+      checkout_url: 'https://example.com/checkout/CART-TEST-001',
+      customer_name: 'Test Customer',
+      customer_phone: '919999999999',
+      customerPhone: '919999999999',
+      customer_email: 'test@example.com',
+      cart_total: '1499',
+      order_total: '1499',
+      currency: 'INR',
+      cart_item_count: 2,
+      cart_first_product: 'Test Product',
+      cart_product_names: 'Test Product, Backup Product',
+      order_product_name: 'Test Product',
+      order_product_names: 'Test Product, Backup Product',
+      discount_code: 'SAVE10',
+      discount_amount: '10',
+      status: triggerEvent.endsWith('.cart_abandoned') ? 'abandoned' : 'active'
+    }
+  }
+
   return {
     customer_name: 'Test Customer',
     customer_phone: '',
@@ -164,7 +235,7 @@ export async function POST(request) {
     const automation = await queryOne(
       `SELECT id, name, steps
        FROM automations
-       WHERE id = $1 AND "userId" = $2
+       WHERE id = ? AND userId = ?
        LIMIT 1`,
       [automationId, 'default']
     )
@@ -182,7 +253,7 @@ export async function POST(request) {
     }
 
     const integrations = await queryOne(
-      'SELECT whatsapp FROM integrations WHERE "userId" = $1 ORDER BY "updatedAt" DESC NULLS LAST, id DESC LIMIT 1',
+      'SELECT whatsapp FROM integrations WHERE userId = ? ORDER BY updatedAt IS NULL, updatedAt DESC, id DESC LIMIT 1',
       ['default']
     )
 
@@ -190,19 +261,21 @@ export async function POST(request) {
       return NextResponse.json({ error: 'WhatsApp not configured' }, { status: 400 })
     }
 
+    const isCartEvent = String(testNode.event || '').includes('.cart_')
+
     const context = testNode.testSource === 'latest_order'
       ? (
           testNode.event === 'whatsapp.message_received'
             ? await getLatestIncomingMessageContext()
-            : await getLatestOrderContext()
+            : (isCartEvent ? await getLatestCartRecoveryContext(testNode.event) : await getLatestOrderContext())
         )
-      : getDummyContext()
+      : getDummyContext(testNode.event || '')
 
     if (!context) {
       return NextResponse.json({
         error: testNode.event === 'whatsapp.message_received'
           ? 'No saved customer WhatsApp messages found for latest-message testing'
-          : 'No saved orders found for latest-order testing'
+          : (isCartEvent ? 'No cart recovery sessions found for latest-order testing' : 'No saved orders found for latest-order testing')
       }, { status: 400 })
     }
 

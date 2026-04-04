@@ -9,6 +9,8 @@ const SHOPIFY_WEBHOOK_TOPICS = [
   { value: 'shopify.fulfillment_created', label: 'Fulfillment Created', topic: 'orders/fulfilled', description: 'When tracking is created' },
   { value: 'shopify.order_cancelled', label: 'Order Cancelled', topic: 'orders/cancelled', description: 'When an order is cancelled' },
   { value: 'shopify.order_delivered', label: 'Order Delivered', topic: 'orders/delivered', description: 'When delivery is confirmed' },
+  { value: 'shopify.cart_created', label: 'Checkout Created', topic: 'checkouts/create', description: 'When a checkout/cart is created' },
+  { value: 'shopify.cart_updated', label: 'Checkout Updated', topic: 'checkouts/update', description: 'When a checkout/cart is updated' },
   { value: 'shopify.customer_created', label: 'Customer Created', topic: 'customers/create', description: 'When a new customer registers' },
   { value: 'shopify.customer_updated', label: 'Customer Updated', topic: 'customers/update', description: 'When customer information is updated' },
 ]

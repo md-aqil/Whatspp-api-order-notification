@@ -1,12 +1,21 @@
-import { Pool } from 'pg'
+import mysql from 'mysql2/promise'
 import { v4 as uuidv4 } from 'uuid'
 import { NextResponse } from 'next/server'
 import { buildMetaAuthHeaders, mapMetaAccessTokenError, sanitizeMetaAccessToken } from '@/lib/meta-auth'
 import { buildAutomationTemplateComponents as buildAutomationTemplateComponentsShared } from '@/lib/automation-template'
+import {
+  buildCartRecoveryContext,
+  cancelPendingCartRecoveryJobs,
+  findCartSessionsReadyForAbandonment,
+  mapCartSessionToContext,
+  markCartSessionAbandoned,
+  markCartSessionsRecovered,
+  persistCartRecoveryEvent
+} from '@/lib/cart-recovery'
 import { getLocalIntegrationRecord, saveLocalIntegrationRecord } from '@/lib/local-settings-store'
 import { ensureSettingsTables } from '@/lib/settings-db'
 
-let pgPool
+let mysqlPool
 const shopifyTokenCache = new Map()
 let automationConversationStateReadyPromise = null
 
@@ -16,17 +25,17 @@ const WHATSAPP_SUPPORT_HANDOFF_MS = 2 * 60 * 60 * 1000
 const WHATSAPP_MENU_STEP_IDS = new Set(['step-message-4', 'step-message-6'])
 const WHATSAPP_SUPPORT_STEP_IDS = new Set(['step-message-11'])
 
-function getPostgresPool() {
-  if (!pgPool) {
+function getMysqlPool() {
+  if (!mysqlPool) {
     const connectionString = process.env.DATABASE_URL || process.env.DB_URL
     if (connectionString) {
-      pgPool = new Pool({
-        connectionString
+      mysqlPool = mysql.createPool({
+        uri: connectionString
       })
     } else {
-      pgPool = new Pool({
+      mysqlPool = mysql.createPool({
         host: process.env.DB_HOST || 'localhost',
-        port: parseInt(process.env.DB_PORT || '5432', 10),
+        port: parseInt(process.env.DB_PORT || '3306', 10),
         database: process.env.DB_NAME || 'whatsapp_api',
         user: process.env.DB_USER || 'mdaqil',
         password: process.env.DB_PASSWORD || ''
@@ -34,43 +43,42 @@ function getPostgresPool() {
     }
   }
 
-  return pgPool
+  return mysqlPool
 }
 
 async function queryOne(sql, params = []) {
-  const result = await getPostgresPool().query(sql, params)
-  return result.rows[0] || null
+  const [rows] = await getMysqlPool().execute(sql, params)
+  return rows[0] || null
 }
 
 async function queryMany(sql, params = []) {
-  const result = await getPostgresPool().query(sql, params)
-  return result.rows
+  const [rows] = await getMysqlPool().execute(sql, params)
+  return rows
 }
 
 async function query(sql, params = []) {
-  return getPostgresPool().query(sql, params)
+  return getMysqlPool().execute(sql, params)
 }
 
 async function ensureAutomationConversationStateTable() {
   if (!automationConversationStateReadyPromise) {
-    automationConversationStateReadyPromise = getPostgresPool().query(`
+    automationConversationStateReadyPromise = getMysqlPool().query(`
       CREATE TABLE IF NOT EXISTS automation_conversation_state (
-        id TEXT PRIMARY KEY,
-        "userId" TEXT NOT NULL DEFAULT 'default',
-        "automationId" TEXT NOT NULL,
-        recipient TEXT NOT NULL,
+        id VARCHAR(255) PRIMARY KEY,
+        userId VARCHAR(255) NOT NULL DEFAULT 'default',
+        automationId VARCHAR(255) NOT NULL,
+        recipient VARCHAR(255) NOT NULL,
         state TEXT,
-        "lastInboundAt" TIMESTAMP,
-        "lastMenuSentAt" TIMESTAMP,
-        "lastReplyKey" TEXT,
-        "lastReplyAt" TIMESTAMP,
-        "handoffUntil" TIMESTAMP,
-        payload JSONB DEFAULT '{}'::jsonb,
-        "createdAt" TIMESTAMP DEFAULT NOW(),
-        "updatedAt" TIMESTAMP DEFAULT NOW()
+        lastInboundAt DATETIME,
+        lastMenuSentAt DATETIME,
+        lastReplyKey TEXT,
+        lastReplyAt DATETIME,
+        handoffUntil DATETIME,
+        payload JSON DEFAULT '{}',
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX automation_conversation_state_lookup_idx (userId, automationId, recipient)
       );
-      CREATE INDEX IF NOT EXISTS automation_conversation_state_lookup_idx
-      ON automation_conversation_state ("userId", "automationId", recipient);
     `)
   }
 
@@ -117,9 +125,9 @@ async function getAutomationConversationState(automationId, recipient) {
   await ensureAutomationConversationStateTable()
 
   return queryOne(
-    `SELECT id, "automationId", recipient, state, "lastInboundAt", "lastMenuSentAt", "lastReplyKey", "lastReplyAt", "handoffUntil", payload
+    `SELECT id, automationId, recipient, state, lastInboundAt, lastMenuSentAt, lastReplyKey, lastReplyAt, handoffUntil, payload
      FROM automation_conversation_state
-     WHERE "userId" = $1 AND "automationId" = $2 AND recipient = $3
+     WHERE userId = ? AND automationId = ? AND recipient = ?
      LIMIT 1`,
     ['default', automationId, recipient]
   )
@@ -142,21 +150,20 @@ async function saveAutomationConversationState(automationId, recipient, currentS
     payload: patch.payload ?? currentState?.payload ?? {}
   }
 
-  await getPostgresPool().query(
+  await getMysqlPool().execute(
     `INSERT INTO automation_conversation_state
-      (id, "userId", "automationId", recipient, state, "lastInboundAt", "lastMenuSentAt", "lastReplyKey", "lastReplyAt", "handoffUntil", payload, "createdAt", "updatedAt")
+      (id, userId, automationId, recipient, state, lastInboundAt, lastMenuSentAt, lastReplyKey, lastReplyAt, handoffUntil, payload, createdAt, updatedAt)
      VALUES
-      ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, NOW(), NOW())
-     ON CONFLICT (id)
-     DO UPDATE SET
-      state = EXCLUDED.state,
-      "lastInboundAt" = EXCLUDED."lastInboundAt",
-      "lastMenuSentAt" = EXCLUDED."lastMenuSentAt",
-      "lastReplyKey" = EXCLUDED."lastReplyKey",
-      "lastReplyAt" = EXCLUDED."lastReplyAt",
-      "handoffUntil" = EXCLUDED."handoffUntil",
-      payload = EXCLUDED.payload,
-      "updatedAt" = NOW()`,
+      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+     ON DUPLICATE KEY UPDATE
+      state = VALUES(state),
+      lastInboundAt = VALUES(lastInboundAt),
+      lastMenuSentAt = VALUES(lastMenuSentAt),
+      lastReplyKey = VALUES(lastReplyKey),
+      lastReplyAt = VALUES(lastReplyAt),
+      handoffUntil = VALUES(handoffUntil),
+      payload = VALUES(payload),
+      updatedAt = NOW()`,
     [
       nextState.id,
       nextState.userId,
@@ -246,12 +253,12 @@ async function getStoredIntegrations() {
   try {
     await ensureSettingsTables()
 
-    const result = await getPostgresPool().query(
-      'SELECT whatsapp, shopify, stripe FROM integrations WHERE "userId" = $1 ORDER BY "updatedAt" DESC NULLS LAST, id DESC LIMIT 1',
+    const result = await getMysqlPool().execute(
+      'SELECT whatsapp, shopify, stripe FROM integrations WHERE userId = ? ORDER BY updatedAt IS NULL, updatedAt DESC, id DESC LIMIT 1',
       ['default']
     )
 
-    return result.rows[0] || await getLocalIntegrationRecord()
+    return result[0][0] || await getLocalIntegrationRecord()
   } catch (error) {
     console.error('Falling back to local integration store:', error)
     return getLocalIntegrationRecord()
@@ -262,27 +269,27 @@ async function saveStoredIntegration(type, data) {
   try {
     await ensureSettingsTables()
 
-    const pool = getPostgresPool()
-    const existing = await pool.query(
-      'SELECT id FROM integrations WHERE "userId" = $1 ORDER BY "updatedAt" DESC NULLS LAST, id DESC LIMIT 1',
+    const pool = getMysqlPool()
+    const existing = await pool.execute(
+      'SELECT id FROM integrations WHERE userId = ? ORDER BY updatedAt IS NULL, updatedAt DESC, id DESC LIMIT 1',
       ['default']
     )
 
-    if (existing.rows[0]) {
-      await pool.query(
+    if (existing[0][0]) {
+      await pool.execute(
         `UPDATE integrations
-         SET "${type}" = $1::jsonb, "updatedAt" = NOW()
-         WHERE id = $2`,
-        [JSON.stringify(data), existing.rows[0].id]
+         SET ?? = ?, updatedAt = NOW()
+         WHERE id = ?`,
+        [type, JSON.stringify(data), existing[0][0].id]
       )
       await saveLocalIntegrationRecord(type, data)
       return
     }
 
-    await pool.query(
-      `INSERT INTO integrations ("userId", "${type}", "createdAt", "updatedAt")
-       VALUES ($1, $2::jsonb, NOW(), NOW())`,
-      ['default', JSON.stringify(data)]
+    await pool.execute(
+      `INSERT INTO integrations (userId, ??, createdAt, updatedAt)
+       VALUES (?, ?, NOW(), NOW())`,
+      [type, 'default', JSON.stringify(data)]
     )
 
     await saveLocalIntegrationRecord(type, data)
@@ -302,29 +309,29 @@ async function saveStoredIntegration(type, data) {
 
 async function getStoredProducts() {
   const row = await queryOne(
-    'SELECT products FROM products WHERE "userId" = $1 ORDER BY "updatedAt" DESC NULLS LAST, id DESC LIMIT 1',
+    'SELECT products FROM products WHERE userId = ? ORDER BY updatedAt IS NULL, updatedAt DESC, id DESC LIMIT 1',
     ['default']
   )
   return row?.products || []
 }
 
 async function saveStoredProducts(products) {
-  const pool = getPostgresPool()
+  const pool = getMysqlPool()
   const existing = await queryOne(
-    'SELECT id FROM products WHERE "userId" = $1 ORDER BY "updatedAt" DESC NULLS LAST, id DESC LIMIT 1',
+    'SELECT id FROM products WHERE userId = ? ORDER BY updatedAt IS NULL, updatedAt DESC, id DESC LIMIT 1',
     ['default']
   )
 
   if (existing) {
-    await pool.query(
-      'UPDATE products SET products = $1::jsonb, "lastSync" = NOW(), "updatedAt" = NOW() WHERE id = $2',
+    await pool.execute(
+      'UPDATE products SET products = ?, lastSync = NOW(), updatedAt = NOW() WHERE id = ?',
       [JSON.stringify(products), existing.id]
     )
     return
   }
 
-  await pool.query(
-    'INSERT INTO products ("userId", products, "lastSync", "createdAt", "updatedAt") VALUES ($1, $2::jsonb, NOW(), NOW(), NOW())',
+  await pool.execute(
+    'INSERT INTO products (userId, products, lastSync, createdAt, updatedAt) VALUES (?, ?, NOW(), NOW(), NOW())',
     ['default', JSON.stringify(products)]
   )
 }
@@ -561,7 +568,7 @@ function mergeShopifyProductsWithMetaCatalog(shopifyProducts = [], metaProducts 
 
 async function getStoredOrders(limit = 100) {
   return queryMany(
-    'SELECT id, "userId", "shopifyOrderId", "orderNumber", "customerName", "customerEmail", "customerPhone", total, currency, status, "lineItems", "createdAt", "updatedAt", "whatsappSent", "whatsappMessageId", "whatsappSentAt" FROM orders WHERE "userId" = $1 ORDER BY "createdAt" DESC NULLS LAST LIMIT $2',
+    'SELECT id, userId, shopifyOrderId, orderNumber, customerName, customerEmail, customerPhone, total, currency, status, lineItems, createdAt, updatedAt, whatsappSent, whatsappMessageId, whatsappSentAt FROM orders WHERE userId = ? ORDER BY createdAt IS NULL, createdAt DESC LIMIT ?',
     ['default', limit]
   )
 }
@@ -571,10 +578,10 @@ async function getLatestStoredOrderByPhone(phone) {
   if (!normalizedPhone) return null
 
   return queryOne(
-    `SELECT id, "userId", "shopifyOrderId", "orderNumber", "customerName", "customerEmail", "customerPhone", total, currency, status, "lineItems", "createdAt", "updatedAt", "whatsappSent", "whatsappMessageId", "whatsappSentAt"
+    `SELECT id, userId, shopifyOrderId, orderNumber, customerName, customerEmail, customerPhone, total, currency, status, lineItems, createdAt, updatedAt, whatsappSent, whatsappMessageId, whatsappSentAt
      FROM orders
-     WHERE "userId" = $1 AND regexp_replace(COALESCE("customerPhone", ''), '\D', '', 'g') = $2
-     ORDER BY "createdAt" DESC NULLS LAST, "updatedAt" DESC NULLS LAST
+     WHERE userId = ? AND REGEXP_REPLACE(COALESCE(customerPhone, ''), '[^0-9]', '') = ?
+     ORDER BY createdAt IS NULL, createdAt DESC, updatedAt IS NULL, updatedAt DESC
      LIMIT 1`,
     ['default', normalizedPhone]
   )
@@ -582,32 +589,32 @@ async function getLatestStoredOrderByPhone(phone) {
 
 async function getStoredChats() {
   return queryMany(
-    'SELECT id, "userId", phone, name, "lastMessage", timestamp, unread, avatar FROM chats WHERE "userId" = $1 ORDER BY timestamp DESC NULLS LAST, "createdAt" DESC NULLS LAST',
+    'SELECT id, userId, phone, name, lastMessage, timestamp, unread, avatar FROM chats WHERE userId = ? ORDER BY timestamp IS NULL, timestamp DESC, createdAt IS NULL, createdAt DESC',
     ['default']
   )
 }
 
 async function getStoredMessagesByPhone(phone) {
   return queryMany(
-    'SELECT id, "userId", recipient, phone, message, "isCustomer", timestamp, "whatsappMessageId", status, "messageType", products, template FROM messages WHERE "userId" = $1 AND (recipient = $2 OR phone = $2) ORDER BY timestamp ASC NULLS LAST, "createdAt" ASC NULLS LAST',
-    ['default', phone]
+    'SELECT id, userId, recipient, phone, message, isCustomer, timestamp, whatsappMessageId, status, messageType, products, template FROM messages WHERE userId = ? AND (recipient = ? OR phone = ?) ORDER BY timestamp IS NULL, timestamp ASC, createdAt IS NULL, createdAt ASC',
+    ['default', phone, phone]
   )
 }
 
 async function getStoredChatByPhone(phone) {
   return queryOne(
-    'SELECT id, "userId", phone, name, "lastMessage", timestamp, unread, avatar FROM chats WHERE "userId" = $1 AND phone = $2 LIMIT 1',
+    'SELECT id, userId, phone, name, lastMessage, timestamp, unread, avatar FROM chats WHERE userId = ? AND phone = ? LIMIT 1',
     ['default', phone]
   )
 }
 
 async function upsertStoredChat({ phone, name, lastMessage, timestamp, unread }) {
-  const pool = getPostgresPool()
+  const pool = getMysqlPool()
   const existing = await getStoredChatByPhone(phone)
 
   if (existing) {
-    await pool.query(
-      'UPDATE chats SET name = $1, "lastMessage" = $2, timestamp = $3, unread = $4, avatar = $5 WHERE id = $6',
+    await pool.execute(
+      'UPDATE chats SET name = ?, lastMessage = ?, timestamp = ?, unread = ?, avatar = ? WHERE id = ?',
       [
         name ?? existing.name,
         lastMessage ?? existing.lastMessage,
@@ -631,16 +638,16 @@ async function upsertStoredChat({ phone, name, lastMessage, timestamp, unread })
     avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(name || 'Customer')}&background=random`
   }
 
-  await pool.query(
-    'INSERT INTO chats (id, "userId", phone, name, "lastMessage", timestamp, unread, avatar, "createdAt") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())',
+  await pool.execute(
+    'INSERT INTO chats (id, userId, phone, name, lastMessage, timestamp, unread, avatar, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())',
     [newChat.id, newChat.userId, newChat.phone, newChat.name, newChat.lastMessage, newChat.timestamp, newChat.unread, newChat.avatar]
   )
   return newChat
 }
 
 async function insertStoredMessage(message) {
-  await getPostgresPool().query(
-    'INSERT INTO messages (id, "userId", "campaignId", recipient, phone, message, "isCustomer", timestamp, "whatsappMessageId", status, "messageType", products, template, "orderId", "sentAt", "createdAt") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15, NOW())',
+  await getMysqlPool().execute(
+    'INSERT INTO messages (id, userId, campaignId, recipient, phone, message, isCustomer, timestamp, whatsappMessageId, status, messageType, products, template, orderId, sentAt, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())',
     [
       message.id,
       message.userId || 'default',
@@ -664,22 +671,22 @@ async function insertStoredMessage(message) {
 async function saveStoredWebhooks(webhooks) {
   await ensureSettingsTables()
 
-  const pool = getPostgresPool()
+  const pool = getMysqlPool()
   const existing = await queryOne(
-    'SELECT id FROM webhooks WHERE "userId" = $1 AND type = $2 ORDER BY "createdAt" DESC NULLS LAST, id DESC LIMIT 1',
+    'SELECT id FROM webhooks WHERE userId = ? AND type = ? ORDER BY createdAt IS NULL, createdAt DESC, id DESC LIMIT 1',
     ['default', 'shopify']
   )
 
   if (existing) {
-    await pool.query(
-      'UPDATE webhooks SET webhooks = $1::jsonb, "createdAt" = NOW() WHERE id = $2',
+    await pool.execute(
+      'UPDATE webhooks SET webhooks = ?, createdAt = NOW() WHERE id = ?',
       [JSON.stringify(webhooks), existing.id]
     )
     return
   }
 
-  await pool.query(
-    'INSERT INTO webhooks ("userId", type, webhooks, "createdAt") VALUES ($1, $2, $3::jsonb, NOW())',
+  await pool.execute(
+    'INSERT INTO webhooks (userId, type, webhooks, createdAt) VALUES (?, ?, ?, NOW())',
     ['default', 'shopify', JSON.stringify(webhooks)]
   )
 }
@@ -687,19 +694,19 @@ async function saveStoredWebhooks(webhooks) {
 async function getStoredWebhooks(type = 'shopify') {
   await ensureSettingsTables()
 
-  const result = await getPostgresPool().query(
-    'SELECT id, type, webhooks, "createdAt" FROM webhooks WHERE "userId" = $1 AND type = $2 ORDER BY "createdAt" DESC NULLS LAST, id DESC LIMIT 1',
+  const result = await getMysqlPool().execute(
+    'SELECT id, type, webhooks, createdAt FROM webhooks WHERE userId = ? AND type = ? ORDER BY createdAt IS NULL, createdAt DESC, id DESC LIMIT 1',
     ['default', type]
   )
-  return result.rows[0] || null
+  return result[0][0] || null
 }
 
 async function insertWebhookLog(type, topic, payload) {
   await ensureSettingsTables()
 
-  await getPostgresPool().query(
-    `INSERT INTO webhook_logs (id, type, topic, payload, "receivedAt", "createdAt")
-     VALUES ($1, $2, $3, $4::jsonb, NOW(), NOW())`,
+  await getMysqlPool().execute(
+    `INSERT INTO webhook_logs (id, type, topic, payload, receivedAt, createdAt)
+     VALUES (?, ?, ?, ?, NOW(), NOW())`,
     [uuidv4(), type, topic || null, JSON.stringify(payload || {})]
   )
 }
@@ -707,51 +714,51 @@ async function insertWebhookLog(type, topic, payload) {
 async function getWebhookLogs(limit = 10) {
   await ensureSettingsTables()
 
-  const result = await getPostgresPool().query(
-    `SELECT id, type, topic, payload, "receivedAt", "createdAt"
+  const result = await getMysqlPool().execute(
+    `SELECT id, type, topic, payload, receivedAt, createdAt
      FROM webhook_logs
-     ORDER BY "receivedAt" DESC
-     LIMIT $1`,
+     ORDER BY receivedAt DESC
+     LIMIT ?`,
     [limit]
   )
-  return result.rows
+  return result[0]
 }
 
 async function getStoredShopifyCustomer(customerId) {
   return queryOne(
-    `SELECT id, "customerId", phone
+    `SELECT id, customerId, phone
      FROM shopify_customers
-     WHERE "customerId" = $1
-     ORDER BY "updatedAt" DESC NULLS LAST, id DESC
+     WHERE customerId = ?
+     ORDER BY updatedAt IS NULL, updatedAt DESC, id DESC
      LIMIT 1`,
     [customerId]
   )
 }
 
 async function upsertStoredShopifyCustomer(customerId, phone) {
-  const pool = getPostgresPool()
+  const pool = getMysqlPool()
   const existing = await getStoredShopifyCustomer(customerId)
   if (existing) {
-    await pool.query(
+    await pool.execute(
       `UPDATE shopify_customers
-       SET phone = $1, "updatedAt" = NOW()
-       WHERE id = $2`,
+       SET phone = ?, updatedAt = NOW()
+       WHERE id = ?`,
       [phone, existing.id]
     )
     return
   }
 
-  await pool.query(
-    `INSERT INTO shopify_customers ("customerId", phone, "createdAt", "updatedAt")
-     VALUES ($1, $2, NOW(), NOW())`,
+  await pool.execute(
+    `INSERT INTO shopify_customers (customerId, phone, createdAt, updatedAt)
+     VALUES (?, ?, NOW(), NOW())`,
     [customerId, phone]
   )
 }
 
 async function insertStoredOrder(order) {
-  await getPostgresPool().query(
-    `INSERT INTO orders (id, "userId", "shopifyOrderId", "orderNumber", "customerName", "customerEmail", "customerPhone", total, currency, status, "lineItems", "createdAt", "updatedAt", "whatsappSent", "whatsappMessageId", "whatsappSentAt")
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14, $15, $16)`,
+  await getMysqlPool().execute(
+    `INSERT INTO orders (id, userId, shopifyOrderId, orderNumber, customerName, customerEmail, customerPhone, total, currency, status, lineItems, createdAt, updatedAt, whatsappSent, whatsappMessageId, whatsappSentAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       order.id,
       order.userId || 'default',
@@ -775,42 +782,40 @@ async function insertStoredOrder(order) {
 
 async function getStoredOrderByShopifyOrderId(shopifyOrderId) {
   return queryOne(
-    `SELECT id, "userId", "shopifyOrderId", "orderNumber", "customerName", "customerEmail", "customerPhone", total, currency, status, "lineItems", "createdAt", "updatedAt", "whatsappSent", "whatsappMessageId", "whatsappSentAt"
+    `SELECT id, userId, shopifyOrderId, orderNumber, customerName, customerEmail, customerPhone, total, currency, status, lineItems, createdAt, updatedAt, whatsappSent, whatsappMessageId, whatsappSentAt
      FROM orders
-     WHERE "shopifyOrderId" = $1
+     WHERE shopifyOrderId = ?
      LIMIT 1`,
     [shopifyOrderId]
   )
 }
 
 async function updateStoredOrderByShopifyOrderId(shopifyOrderId, patch) {
-  const pool = getPostgresPool()
+  const pool = getMysqlPool()
   const fields = []
   const values = []
-  let index = 1
 
   const map = {
     status: 'status',
-    updatedAt: '"updatedAt"',
-    whatsappSent: '"whatsappSent"',
-    whatsappMessageId: '"whatsappMessageId"',
-    whatsappSentAt: '"whatsappSentAt"'
+    updatedAt: 'updatedAt',
+    whatsappSent: 'whatsappSent',
+    whatsappMessageId: 'whatsappMessageId',
+    whatsappSentAt: 'whatsappSentAt'
   }
 
   Object.entries(patch).forEach(([key, value]) => {
     if (!(key in map)) return
-    fields.push(`${map[key]} = $${index}`)
+    fields.push(`${map[key]} = ?`)
     values.push(value)
-    index += 1
   })
 
   if (fields.length === 0) return
 
   values.push(shopifyOrderId)
-  await pool.query(
+  await pool.execute(
     `UPDATE orders
      SET ${fields.join(', ')}
-     WHERE "shopifyOrderId" = $${index}`,
+     WHERE shopifyOrderId = ?`,
     values
   )
 }
@@ -877,6 +882,29 @@ function buildOrderProductContext(order = null) {
   return {
     order_product_name: itemNames[0] || '',
     order_product_names: itemNames.slice(0, 3).join(', ')
+  }
+}
+
+function extractShopifyOrderCartIdentifiers(orderPayload = {}) {
+  const checkoutToken = String(
+    orderPayload.checkout_token ||
+    orderPayload.checkoutToken ||
+    orderPayload.token ||
+    ''
+  ).trim()
+
+  const externalCartId = String(
+    orderPayload.checkout_id ||
+    orderPayload.checkoutId ||
+    orderPayload.cart_token ||
+    orderPayload.cartToken ||
+    orderPayload.token ||
+    ''
+  ).trim()
+
+  return {
+    checkoutToken,
+    externalCartId
   }
 }
 
@@ -1270,25 +1298,25 @@ function buildIncomingWhatsAppAutomationContext(messageData, savedMessage, conta
 }
 
 async function queueAutomationJob(automationId, recipient, message, template, payload, runAt) {
-  const pool = getPostgresPool()
+  const pool = getMysqlPool()
   if (!pool) return
 
-  await pool.query(
-    `INSERT INTO automation_jobs (id, "automationId", "userId", recipient, message, template, payload, status, "runAt", "createdAt")
-     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, 'pending', $8, NOW())`,
+  await pool.execute(
+    `INSERT INTO automation_jobs (id, automationId, userId, recipient, message, template, payload, status, runAt, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, NOW())`,
     [uuidv4(), automationId, 'default', recipient, message, template || null, JSON.stringify(payload || {}), runAt]
   )
 }
 
 async function incrementAutomationSentMetric(automationId) {
-  const pool = getPostgresPool()
+  const pool = getMysqlPool()
   if (!pool) return
 
-  await pool.query(
+  await pool.execute(
     `UPDATE automations
-     SET metrics = jsonb_set(COALESCE(metrics, '{}'::jsonb), '{sent}', to_jsonb(COALESCE((metrics->>'sent')::int, 0) + 1), true),
-         "updatedAt" = NOW()
-     WHERE id = $1`,
+     SET metrics = JSON_SET(COALESCE(metrics, '{}'), '$.sent', COALESCE(JSON_UNQUOTE(JSON_EXTRACT(metrics, '$.sent')), 0) + 1),
+         updatedAt = NOW()
+     WHERE id = ?`,
     [automationId]
   )
 }
@@ -1304,7 +1332,7 @@ function resolveAutomationRecipient(step, context) {
 }
 
 async function executeAutomationsForEvent(eventType, context, integrations) {
-  const pool = getPostgresPool()
+  const pool = getMysqlPool()
   if (!pool || !integrations?.whatsapp?.phoneNumberId || !integrations?.whatsapp?.accessToken) {
     return
   }
@@ -1312,7 +1340,7 @@ async function executeAutomationsForEvent(eventType, context, integrations) {
   const automations = await queryMany(
     `SELECT id, name, steps, metrics
      FROM automations
-     WHERE "userId" = $1 AND status = true`,
+     WHERE userId = ? AND status = true`,
     ['default']
   )
 
@@ -1494,22 +1522,55 @@ async function executeAutomationsForEvent(eventType, context, integrations) {
 }
 
 async function processDueAutomationJobs() {
-  const pool = getPostgresPool()
+  const pool = getMysqlPool()
   if (!pool) return
 
   const integrations = await getStoredIntegrations()
   if (!integrations?.whatsapp?.phoneNumberId || !integrations?.whatsapp?.accessToken) return
 
   const jobs = await queryMany(
-    `SELECT id, "automationId", recipient, message, template, payload
+    `SELECT id, automationId, recipient, message, template, payload
      FROM automation_jobs
-     WHERE status = 'pending' AND "runAt" <= NOW()
-     ORDER BY "runAt" ASC
+     WHERE status = 'pending' AND runAt <= NOW()
+     ORDER BY runAt ASC
      LIMIT 10`
   )
 
   for (const job of jobs) {
     try {
+      const cartSessionId = job.payload?.cart_session_id || null
+      const cartExternalId = job.payload?.external_cart_id || job.payload?.cart_id || null
+      const cartCheckoutToken = job.payload?.checkout_token || null
+      const cartPlatform = job.payload?.platform || null
+
+      if (cartSessionId || cartExternalId || cartCheckoutToken) {
+        const cartSession = await queryOne(
+          `SELECT id, status
+           FROM cart_recovery_sessions
+           WHERE (
+             (? IS NOT NULL AND id = ?)
+             OR (? IS NOT NULL AND external_cart_id = ?)
+             OR (? IS NOT NULL AND checkout_token = ?)
+           )
+           AND (? IS NULL OR platform = ?)
+           ORDER BY updatedAt DESC
+           LIMIT 1`,
+          [cartSessionId, cartSessionId, cartExternalId, cartExternalId, cartCheckoutToken, cartCheckoutToken, cartPlatform, cartPlatform]
+        )
+
+        if (cartSession && cartSession.status !== 'abandoned') {
+          await query(
+            `UPDATE automation_jobs
+             SET status = 'cancelled',
+                 processedAt = NOW(),
+                 payload = JSON_SET(COALESCE(payload, '{}'), '$.cancelled_reason', ?)
+             WHERE id = ?`,
+            ['cart_not_abandoned', job.id]
+          )
+          continue
+        }
+      }
+
       const templateComponents = buildAutomationTemplateComponents(job.payload?.templateComponents, job.payload?.variableMappings, job.payload || {})
       const result = await sendWhatsAppMessage(
         integrations.whatsapp.phoneNumberId,
@@ -1551,8 +1612,8 @@ async function processDueAutomationJobs() {
 
       await query(
         `UPDATE automation_jobs
-         SET status = 'sent', "processedAt" = NOW()
-         WHERE id = $1`,
+         SET status = 'sent', processedAt = NOW()
+         WHERE id = ?`,
         [job.id]
       )
 
@@ -1560,9 +1621,9 @@ async function processDueAutomationJobs() {
     } catch (error) {
       await query(
         `UPDATE automation_jobs
-         SET status = 'failed', "processedAt" = NOW(), payload = jsonb_set(COALESCE(payload, '{}'::jsonb), '{error}', to_jsonb($2::text), true)
-         WHERE id = $1`,
-        [job.id, error.message]
+         SET status = 'failed', processedAt = NOW(), payload = JSON_SET(COALESCE(payload, '{}'), '$.error', ?)
+         WHERE id = ?`,
+        [error.message, job.id]
       )
     }
   }
@@ -2060,6 +2121,8 @@ async function handleRoute(request, { params }) {
           { topic: 'orders/paid', address: webhookUrl },
           { topic: 'orders/fulfilled', address: webhookUrl },
           { topic: 'orders/cancelled', address: webhookUrl },
+          { topic: 'checkouts/create', address: webhookUrl },
+          { topic: 'checkouts/update', address: webhookUrl },
           // NEW: Add customer webhooks to capture phone numbers
           { topic: 'customers/create', address: webhookUrl },
           { topic: 'customers/update', address: webhookUrl }
@@ -2188,6 +2251,158 @@ async function handleRoute(request, { params }) {
         console.error('Failed to fetch orders:', error)
         return handleCORS(NextResponse.json(
           { error: 'Failed to fetch orders' },
+          { status: 500 }
+        ))
+      }
+    }
+
+    if (route === '/cart-recovery/capture' && method === 'POST') {
+      try {
+        const body = await request.json()
+        const eventType = typeof body.event === 'string'
+          ? body.event
+          : (typeof body.event_type === 'string' ? body.event_type : '')
+
+        if (!eventType || !eventType.includes('.cart_')) {
+          return handleCORS(NextResponse.json(
+            { error: 'event or event_type is required and must look like shopify.cart_updated' },
+            { status: 400 }
+          ))
+        }
+
+        const persistedCart = await persistCartRecoveryEvent({
+          userId: 'default',
+          eventType,
+          payload: body,
+          platformHint: body.platform || eventType,
+          metadata: {
+            source: 'cart-recovery-capture-api'
+          }
+        })
+
+        const context = {
+          ...buildCartRecoveryContext(body, body.platform || eventType),
+          ...(persistedCart?.context || {})
+        }
+
+        if (persistedCart?.session?.id) {
+          context.cart_session_id = persistedCart.session.id
+        }
+
+        const shouldTriggerAutomation = (
+          body.triggerAutomation !== false &&
+          (eventType !== 'shopify.cart_recovered' && eventType !== 'woocommerce.cart_recovered'
+            ? true
+            : Boolean(persistedCart?.transitionedToRecovered))
+        )
+
+        if (shouldTriggerAutomation) {
+          const integrations = await getStoredIntegrations()
+          await executeAutomationsForEvent(eventType, context, integrations)
+        }
+
+        return handleCORS(NextResponse.json({
+          success: true,
+          event: eventType,
+          session: persistedCart?.session || null,
+          cancelledJobs: persistedCart?.cancelledJobs || 0,
+          context
+        }))
+      } catch (error) {
+        return handleCORS(NextResponse.json(
+          { error: `Failed to capture cart recovery event: ${error.message}` },
+          { status: 500 }
+        ))
+      }
+    }
+
+    if (route === '/cart-recovery/process' && method === 'POST') {
+      try {
+        const body = await request.json().catch(() => ({}))
+        const thresholdMinutes = parseInt(String(body.thresholdMinutes || 60), 10) || 60
+        const limit = parseInt(String(body.limit || 25), 10) || 25
+        const dryRun = Boolean(body.dryRun)
+        const platform = typeof body.platform === 'string' ? body.platform : ''
+
+        const sessions = await findCartSessionsReadyForAbandonment({
+          userId: 'default',
+          thresholdMinutes,
+          limit,
+          platform
+        })
+
+        if (dryRun) {
+          return handleCORS(NextResponse.json({
+            success: true,
+            dryRun: true,
+            thresholdMinutes,
+            limit,
+            ready: sessions.length,
+            sessions: sessions.map((session) => ({
+              id: session.id,
+              platform: session.platform,
+              external_cart_id: session.external_cart_id,
+              customer_phone: session.customer_phone,
+              last_activity_at: session.last_activity_at
+            }))
+          }))
+        }
+
+        if (sessions.length === 0) {
+          return handleCORS(NextResponse.json({
+            success: true,
+            processed: 0,
+            failed: 0,
+            message: 'No cart sessions are ready for abandonment processing.'
+          }))
+        }
+
+        const integrations = await getStoredIntegrations()
+        let processed = 0
+        let failed = 0
+        const errors = []
+
+        for (const session of sessions) {
+          try {
+            const abandonedSession = await markCartSessionAbandoned(session.id)
+            const activeSession = abandonedSession || session
+            const eventPlatform = String(activeSession.platform || '').toLowerCase()
+
+            if (eventPlatform !== 'shopify' && eventPlatform !== 'woocommerce') {
+              continue
+            }
+
+            const context = {
+              ...mapCartSessionToContext(activeSession),
+              cart_session_id: activeSession.id,
+              status: 'abandoned'
+            }
+
+            await executeAutomationsForEvent(
+              `${eventPlatform}.cart_abandoned`,
+              context,
+              integrations
+            )
+
+            processed += 1
+          } catch (error) {
+            failed += 1
+            errors.push({
+              sessionId: session.id,
+              error: error.message
+            })
+          }
+        }
+
+        return handleCORS(NextResponse.json({
+          success: true,
+          processed,
+          failed,
+          errors
+        }))
+      } catch (error) {
+        return handleCORS(NextResponse.json(
+          { error: `Failed to process cart recovery sessions: ${error.message}` },
           { status: 500 }
         ))
       }
@@ -2480,10 +2695,10 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
         }
 
         const states = await queryMany(
-          `SELECT id, recipient, state, payload, "updatedAt"
+          `SELECT id, recipient, state, payload, updatedAt
            FROM automation_conversation_state
-           WHERE "automationId" = $1
-           ORDER BY "updatedAt" DESC
+           WHERE automationId = ?
+           ORDER BY updatedAt DESC
            LIMIT 10`,
           [automationId]
         )
@@ -2712,6 +2927,52 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
           if (discoveredPhone) {
             await upsertStoredShopifyCustomer(body.id.toString(), discoveredPhone)
             await upsertStoredShopifyCustomer(`guest-${body.id.toString()}`, discoveredPhone)
+          }
+        }
+
+        if ((topic === 'checkouts/create' || topic === 'checkouts/update') && body?.id) {
+          const checkoutRecovered = Boolean(
+            body.completed_at ||
+            body.completedAt ||
+            body.order_id ||
+            body.orderId ||
+            body.closed_at ||
+            body.closedAt
+          )
+          const checkoutEvent = topic === 'checkouts/create'
+            ? 'shopify.cart_created'
+            : (checkoutRecovered ? 'shopify.cart_recovered' : 'shopify.cart_updated')
+
+          const persistedCart = await persistCartRecoveryEvent({
+            userId: 'default',
+            eventType: checkoutEvent,
+            payload: body,
+            platformHint: 'shopify',
+            metadata: {
+              webhook_topic: topic
+            }
+          })
+
+          const cartContext = {
+            ...buildCartRecoveryContext(body, 'shopify'),
+            ...(persistedCart?.context || {})
+          }
+
+          if (persistedCart?.session?.id) {
+            cartContext.cart_session_id = persistedCart.session.id
+          }
+
+          if (persistedCart?.cancelledJobs > 0) {
+            console.log(`Cancelled ${persistedCart.cancelledJobs} pending cart reminder job(s) after checkout recovery`)
+          }
+
+          if (checkoutEvent !== 'shopify.cart_recovered' || persistedCart?.transitionedToRecovered) {
+            const automationIntegrations = await getStoredIntegrations()
+            await executeAutomationsForEvent(
+              checkoutEvent,
+              cartContext,
+              automationIntegrations
+            )
           }
         }
 
@@ -2991,6 +3252,41 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
 
           // Save order to database
           await insertStoredOrder(order)
+
+          const { checkoutToken, externalCartId } = extractShopifyOrderCartIdentifiers(body)
+          if (checkoutToken || externalCartId) {
+            const recoveredSessions = await markCartSessionsRecovered({
+              userId: 'default',
+              platform: 'shopify',
+              checkoutToken,
+              externalCartId,
+              recoveredOrderId: order.shopifyOrderId
+            })
+
+            if (recoveredSessions.length > 0) {
+              await cancelPendingCartRecoveryJobs({
+                userId: 'default',
+                sessionIds: recoveredSessions.map((session) => session.id),
+                externalCartIds: recoveredSessions.map((session) => session.external_cart_id),
+                checkoutTokens: recoveredSessions.map((session) => session.checkout_token),
+                reason: 'cart_recovered_order_created'
+              })
+
+              const cartAutomationIntegrations = await getStoredIntegrations()
+              for (const session of recoveredSessions) {
+                await executeAutomationsForEvent(
+                  'shopify.cart_recovered',
+                  {
+                    ...mapCartSessionToContext(session),
+                    cart_session_id: session.id,
+                    recovered_order_id: order.shopifyOrderId,
+                    status: 'recovered'
+                  },
+                  cartAutomationIntegrations
+                )
+              }
+            }
+          }
 
           console.log(`=== ORDER PROCESSING COMPLETE ===`);
           console.log(`Order ${order.orderNumber} saved.`);
