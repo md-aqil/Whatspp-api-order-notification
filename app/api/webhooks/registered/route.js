@@ -10,12 +10,12 @@ export async function GET(request) {
         const url = new URL(request.url)
         const userId = url.searchParams.get('userId') || 'default'
 
-        const result = await query(
-            'SELECT * FROM registered_webhooks WHERE "userId" = $1 ORDER BY "createdAt" DESC',
+        const [rows] = await query(
+            'SELECT * FROM registered_webhooks WHERE userId = ? ORDER BY createdAt DESC',
             [userId]
         )
 
-        return NextResponse.json(result.rows)
+        return NextResponse.json(rows || [])
     } catch (error) {
         console.error('Error fetching registered webhooks:', error)
         return NextResponse.json([])
@@ -54,14 +54,18 @@ export async function POST(request) {
             )
         }
 
-        const result = await query(
-            `INSERT INTO registered_webhooks (name, target_url, event_types, secret_key, "userId") 
-       VALUES ($1, $2, $3, $4, $5) 
-       RETURNING *`,
-            [name, target_url, event_types, secret_key || null, userId]
+        await query(
+            `INSERT INTO registered_webhooks (name, target_url, event_types, secret_key, userId, createdAt, updatedAt) 
+       VALUES (?, ?, ?, ?, ?, NOW(), NOW())`,
+            [name, target_url, JSON.stringify(event_types), secret_key || null, userId]
         )
 
-        return NextResponse.json(result.rows[0], { status: 201 })
+        const [rows] = await query(
+            'SELECT * FROM registered_webhooks WHERE name = ? AND userId = ? ORDER BY createdAt DESC LIMIT 1',
+            [name, userId]
+        )
+
+        return NextResponse.json(rows[0], { status: 201 })
     } catch (error) {
         console.error('Error creating registered webhook:', error)
         return NextResponse.json({ error: 'Failed to create webhook' }, { status: 500 })
@@ -84,7 +88,7 @@ export async function DELETE(request) {
         }
 
         await query(
-            'DELETE FROM registered_webhooks WHERE id = $1',
+            'DELETE FROM registered_webhooks WHERE id = ?',
             [id]
         )
 
@@ -113,26 +117,25 @@ export async function PUT(request) {
         // Build dynamic update query
         const updates = []
         const values = []
-        let paramIndex = 1
 
         if (name !== undefined) {
-            updates.push(`name = $${paramIndex++}`)
+            updates.push('name = ?')
             values.push(name)
         }
         if (target_url !== undefined) {
-            updates.push(`target_url = $${paramIndex++}`)
+            updates.push('target_url = ?')
             values.push(target_url)
         }
         if (event_types !== undefined) {
-            updates.push(`event_types = $${paramIndex++}`)
-            values.push(event_types)
+            updates.push('event_types = ?')
+            values.push(JSON.stringify(event_types))
         }
         if (secret_key !== undefined) {
-            updates.push(`secret_key = $${paramIndex++}`)
+            updates.push('secret_key = ?')
             values.push(secret_key)
         }
         if (is_active !== undefined) {
-            updates.push(`is_active = $${paramIndex++}`)
+            updates.push('is_active = ?')
             values.push(is_active)
         }
 
@@ -143,22 +146,27 @@ export async function PUT(request) {
             )
         }
 
-        updates.push(`"updatedAt" = NOW()`)
+        updates.push('updatedAt = NOW()')
         values.push(id)
 
-        const result = await query(
-            `UPDATE registered_webhooks SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
+        await query(
+            `UPDATE registered_webhooks SET ${updates.join(', ')} WHERE id = ?`,
             values
         )
 
-        if (result.rows.length === 0) {
+        const [rows] = await query(
+            'SELECT * FROM registered_webhooks WHERE id = ?',
+            [id]
+        )
+
+        if (!rows[0]) {
             return NextResponse.json(
                 { error: 'Webhook not found' },
                 { status: 404 }
             )
         }
 
-        return NextResponse.json(result.rows[0])
+        return NextResponse.json(rows[0])
     } catch (error) {
         console.error('Error updating registered webhook:', error)
         return NextResponse.json({ error: 'Failed to update webhook' }, { status: 500 })

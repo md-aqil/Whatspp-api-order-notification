@@ -26,12 +26,12 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Connection ID is required' }, { status: 400 })
     }
 
-    const result = await query(
-      'SELECT id FROM wordpress_connections WHERE id = $1 AND "userId" = $2 LIMIT 1',
+    const [rows] = await query(
+      'SELECT id FROM wordpress_connections WHERE id = ? AND userId = ? LIMIT 1',
       [connectionId, userId]
     )
 
-    if (!result?.rows?.[0]) {
+    if (!rows[0]) {
       return NextResponse.json({ error: 'WordPress connection not found' }, { status: 404 })
     }
 
@@ -40,9 +40,9 @@ export async function POST(request) {
 
     await query(
       `UPDATE wordpress_connections
-       SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
-           "updatedAt" = NOW()
-       WHERE id = $2`,
+       SET metadata = JSON_MERGE_PATCH(COALESCE(metadata, '{}'), ?),
+           updatedAt = NOW()
+       WHERE id = ?`,
       [
         JSON.stringify({
           connect_token: token,

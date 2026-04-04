@@ -34,6 +34,10 @@ const EMPTY_CONFIG = {
     connected: false,
     triggers: []
   },
+  whatsapp: {
+    enabled: false,
+    connected: false
+  },
   connection: null,
   selected_wordpress_connection_id: null
 }
@@ -79,13 +83,13 @@ async function getShopifyConfig(userId) {
   let shopifyConfig = { enabled: false, connected: false, triggers: [] }
 
   try {
-    const shopifyIntegration = await query(
-      `SELECT shopify FROM integrations WHERE "userId" = $1 ORDER BY "updatedAt" DESC NULLS LAST, id DESC LIMIT 1`,
+    const [shopifyRows] = await query(
+      `SELECT shopify FROM integrations WHERE userId = ? ORDER BY updatedAt IS NULL, updatedAt DESC, id DESC LIMIT 1`,
       [userId]
     )
 
-    if (shopifyIntegration?.rows?.[0]?.shopify) {
-      const shopify = shopifyIntegration.rows[0].shopify
+    if (shopifyRows[0]?.shopify) {
+      const shopify = shopifyRows[0].shopify
       const isConnected = !!(shopify.shopDomain && shopify.clientId && shopify.clientSecret)
       shopifyConfig = {
         enabled: true,
@@ -101,51 +105,76 @@ async function getShopifyConfig(userId) {
   return shopifyConfig
 }
 
+async function getWhatsAppConfig(userId) {
+  let waConfig = { enabled: false, connected: false }
+
+  try {
+    const [waRows] = await query(
+      `SELECT whatsapp FROM integrations WHERE userId = ? ORDER BY updatedAt IS NULL, updatedAt DESC, id DESC LIMIT 1`,
+      [userId]
+    )
+
+    if (waRows[0]?.whatsapp) {
+      const wa = waRows[0].whatsapp
+      waConfig = {
+        enabled: true,
+        connected: !!(wa.phoneNumberId && wa.accessToken),
+        phoneNumberId: wa.phoneNumberId || '',
+        businessAccountId: wa.businessAccountId || ''
+      }
+    }
+  } catch (error) {
+    console.log('WhatsApp integration check skipped:', error.message)
+  }
+
+  return waConfig
+}
+
 async function getStoredWaConfig(userId) {
-  const result = await query(
-    `SELECT id, config FROM wa_config WHERE "userId" = $1 ORDER BY "updatedAt" DESC LIMIT 1`,
+  const [rows] = await query(
+    `SELECT id, config FROM wa_config WHERE userId = ? ORDER BY updatedAt IS NULL, updatedAt DESC LIMIT 1`,
     [userId]
   )
 
-  return result?.rows?.[0] || null
+  return rows[0] || null
 }
 
 async function getPreferredWordPressConnection({ userId, connectionId, siteId, selectedConnectionId }) {
   if (connectionId) {
-    const result = await query(
-      'SELECT * FROM wordpress_connections WHERE id = $1 AND "userId" = $2 LIMIT 1',
+    const [rows] = await query(
+      'SELECT * FROM wordpress_connections WHERE id = ? AND userId = ? LIMIT 1',
       [connectionId, userId]
     )
-    return result?.rows?.[0] || null
+    return rows[0] || null
   }
 
   if (siteId) {
-    const result = await query(
-      'SELECT * FROM wordpress_connections WHERE site_id = $1 AND "userId" = $2 LIMIT 1',
+    const [rows] = await query(
+      'SELECT * FROM wordpress_connections WHERE site_id = ? AND userId = ? LIMIT 1',
       [siteId, userId]
     )
-    return result?.rows?.[0] || null
+    return rows[0] || null
   }
 
   if (selectedConnectionId) {
-    const result = await query(
-      'SELECT * FROM wordpress_connections WHERE id = $1 AND "userId" = $2 LIMIT 1',
+    const [rows] = await query(
+      'SELECT * FROM wordpress_connections WHERE id = ? AND userId = ? LIMIT 1',
       [selectedConnectionId, userId]
     )
-    if (result?.rows?.[0]) {
-      return result.rows[0]
+    if (rows[0]) {
+      return rows[0]
     }
   }
 
-  const result = await query(
+  const [rows] = await query(
     `SELECT * FROM wordpress_connections
-     WHERE "userId" = $1
-     ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END, "updatedAt" DESC, "createdAt" DESC
+     WHERE userId = ?
+     ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END, updatedAt DESC, createdAt DESC
      LIMIT 1`,
     [userId]
   )
 
-  return result?.rows?.[0] || null
+  return rows[0] || null
 }
 
 async function upsertWaConfig(userId, config) {
@@ -153,20 +182,19 @@ async function upsertWaConfig(userId, config) {
 
   if (existing?.id) {
     await query(
-      `UPDATE wa_config SET config = $1::jsonb, "updatedAt" = NOW() WHERE id = $2`,
+      `UPDATE wa_config SET config = ?, updatedAt = NOW() WHERE id = ?`,
       [JSON.stringify(config), existing.id]
     )
     return existing.id
   }
 
-  const inserted = await query(
-    `INSERT INTO wa_config ("userId", config, "createdAt", "updatedAt")
-     VALUES ($1, $2::jsonb, NOW(), NOW())
-     RETURNING id`,
+  await query(
+    `INSERT INTO wa_config (userId, config, createdAt, updatedAt)
+     VALUES (?, ?, NOW(), NOW())`,
     [userId, JSON.stringify(config)]
   )
 
-  return inserted?.rows?.[0]?.id || null
+  return null
 }
 
 async function cacheConnectionConfig(connectionId, config, status = 'active') {
@@ -177,19 +205,20 @@ async function cacheConnectionConfig(connectionId, config, status = 'active') {
 
   await query(
     `UPDATE wordpress_connections
-     SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
-         status = $2,
-         "lastSeenAt" = NOW(),
-         "updatedAt" = NOW()
-     WHERE id = $3`,
+     SET metadata = JSON_MERGE_PATCH(COALESCE(metadata, '{}'), ?),
+         status = ?,
+         lastSeenAt = NOW(),
+         updatedAt = NOW()
+     WHERE id = ?`,
     [JSON.stringify(metadataPatch), status, connectionId]
   )
 }
 
-function buildResponse({ wordpressConfig, shopifyConfig, connection, selectedConnectionId }) {
+function buildResponse({ wordpressConfig, shopifyConfig, whatsappConfig, connection, selectedConnectionId }) {
   return {
     ...wordpressConfig,
     shopify: shopifyConfig,
+    whatsapp: whatsappConfig,
     connection,
     selected_wordpress_connection_id: selectedConnectionId || null
   }
@@ -204,8 +233,9 @@ export async function GET(request) {
     const connectionId = url.searchParams.get('connectionId') || url.searchParams.get('connection_id')
     const siteId = url.searchParams.get('siteId') || url.searchParams.get('site_id')
 
-    const [shopifyConfig, storedConfigRow] = await Promise.all([
+    const [shopifyConfig, whatsappConfig, storedConfigRow] = await Promise.all([
       getShopifyConfig(userId),
+      getWhatsAppConfig(userId),
       getStoredWaConfig(userId)
     ])
 
@@ -232,6 +262,7 @@ export async function GET(request) {
         buildResponse({
           wordpressConfig: normalizeWordPressConfig(storedConfig),
           shopifyConfig,
+          whatsappConfig,
           connection: preferredConnection,
           selectedConnectionId: preferredConnection?.id || storedConfig.selected_wordpress_connection_id || null
         })
@@ -269,6 +300,7 @@ export async function GET(request) {
           buildResponse({
             wordpressConfig: normalizedConfig,
             shopifyConfig,
+            whatsappConfig,
             connection: preferredConnection,
             selectedConnectionId
           })
@@ -288,6 +320,7 @@ export async function GET(request) {
       buildResponse({
         wordpressConfig: fallbackConfig,
         shopifyConfig,
+        whatsappConfig,
         connection: preferredConnection,
         selectedConnectionId: preferredConnection?.id || storedConfig.selected_wordpress_connection_id || null
       })
@@ -370,11 +403,13 @@ export async function POST(request) {
     }
 
     const shopifyConfig = await getShopifyConfig(userId)
+    const whatsappConfig = await getWhatsAppConfig(userId)
 
     return NextResponse.json(
       buildResponse({
         wordpressConfig: nextConfig,
         shopifyConfig,
+        whatsappConfig,
         connection: selectedConnection,
         selectedConnectionId: selectedConnection?.id || null
       })

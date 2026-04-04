@@ -24,12 +24,12 @@ function normalizeSiteUrl(siteUrl) {
 }
 
 async function getStoredWaConfig(userId) {
-  const result = await query(
-    `SELECT id, config FROM wa_config WHERE "userId" = $1 ORDER BY "updatedAt" DESC LIMIT 1`,
+  const [rows] = await query(
+    `SELECT id, config FROM wa_config WHERE userId = ? ORDER BY updatedAt IS NULL, updatedAt DESC LIMIT 1`,
     [userId]
   )
 
-  return result?.rows?.[0] || null
+  return rows[0] || null
 }
 
 export async function POST(request) {
@@ -44,14 +44,14 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Connection token is required' }, { status: 400 })
     }
 
-    const connectionResult = await query(
+    const [rows] = await query(
       `SELECT * FROM wordpress_connections
-       WHERE metadata->>'connect_token' = $1
+       WHERE JSON_EXTRACT(metadata, '$.connect_token') = ?
        LIMIT 1`,
       [token]
     )
 
-    const connection = connectionResult?.rows?.[0]
+    const connection = rows[0]
     if (!connection) {
       return NextResponse.json({ error: 'Connection token is invalid or already used' }, { status: 404 })
     }
@@ -82,28 +82,31 @@ export async function POST(request) {
       }
     }
 
-    const updated = await query(
+    await query(
       `UPDATE wordpress_connections
-       SET site_name = $1,
-           site_url = $2,
-           webhook_secret = $3,
-           plugin_version = $4,
+       SET site_name = ?,
+           site_url = ?,
+           webhook_secret = ?,
+           plugin_version = ?,
            status = 'active',
-           "updatedAt" = NOW(),
-           metadata = (COALESCE(metadata, '{}'::jsonb) - 'connect_token' - 'connect_token_expires_at') || $5::jsonb
-       WHERE id = $6
-       RETURNING *`,
+           updatedAt = NOW(),
+           metadata = JSON_REMOVE(JSON_SET(COALESCE(metadata, '{}'), '$.connect_token', NULL, '$.connect_token_expires_at', NULL), 'connect_token', 'connect_token_expires_at')
+       WHERE id = ?`,
       [
         body.site_name || connection.site_name || null,
         normalizedSiteUrl || connection.site_url,
         webhookSecret,
         body.plugin_version || connection.plugin_version || null,
-        JSON.stringify(metadataPatch),
         connection.id
       ]
     )
 
-    const updatedConnection = updated?.rows?.[0]
+    const [updatedRows] = await query(
+      'SELECT * FROM wordpress_connections WHERE id = ?',
+      [connection.id]
+    )
+
+    const updatedConnection = updatedRows[0]
     const storedWaConfig = await getStoredWaConfig(connection.userId || 'default')
     const currentConfig = storedWaConfig?.config && typeof storedWaConfig.config === 'object'
       ? storedWaConfig.config
@@ -118,13 +121,13 @@ export async function POST(request) {
 
       if (storedWaConfig?.id) {
         await query(
-          `UPDATE wa_config SET config = $1::jsonb, "updatedAt" = NOW() WHERE id = $2`,
+          `UPDATE wa_config SET config = ?, updatedAt = NOW() WHERE id = ?`,
           [JSON.stringify(nextConfig), storedWaConfig.id]
         )
       } else {
         await query(
-          `INSERT INTO wa_config ("userId", config, "createdAt", "updatedAt")
-           VALUES ($1, $2::jsonb, NOW(), NOW())`,
+          `INSERT INTO wa_config (userId, config, createdAt, updatedAt)
+           VALUES (?, ?, NOW(), NOW())`,
           [connection.userId || 'default', JSON.stringify(nextConfig)]
         )
       }

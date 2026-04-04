@@ -1,16 +1,17 @@
 import { NextResponse } from 'next/server'
 import { buildMetaAuthHeaders, mapMetaAccessTokenError } from '@/lib/meta-auth'
-import { queryOne } from '@/lib/postgres'
+import { query } from '@/lib/postgres'
 
 async function getStoredIntegrations() {
-  return queryOne(
+  const [rows] = await query(
     `SELECT whatsapp
      FROM integrations
-     WHERE "userId" = $1
-     ORDER BY "updatedAt" DESC NULLS LAST, id DESC
+     WHERE userId = ?
+     ORDER BY updatedAt DESC, id DESC
      LIMIT 1`,
     ['default']
   )
+  return rows[0] || null
 }
 
 export async function GET() {

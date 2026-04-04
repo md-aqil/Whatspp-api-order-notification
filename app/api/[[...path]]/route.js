@@ -276,21 +276,24 @@ async function saveStoredIntegration(type, data) {
     )
 
     if (existing[0][0]) {
+      const columnMap = { whatsapp: 'whatsapp', shopify: 'shopify', stripe: 'stripe' }
+      const column = columnMap[type] || 'whatsapp'
       await pool.execute(
-        `UPDATE integrations
-         SET ?? = ?, updatedAt = NOW()
-         WHERE id = ?`,
-        [type, JSON.stringify(data), existing[0][0].id]
+        `UPDATE integrations SET ${column} = ?, updatedAt = NOW() WHERE id = ?`,
+        [JSON.stringify(data), existing[0][0].id]
       )
       await saveLocalIntegrationRecord(type, data)
       return
     }
 
-    await pool.execute(
-      `INSERT INTO integrations (userId, ??, createdAt, updatedAt)
-       VALUES (?, ?, NOW(), NOW())`,
-      [type, 'default', JSON.stringify(data)]
-    )
+    // Insert with only the relevant column
+    const insertSql = type === 'whatsapp' 
+      ? `INSERT INTO integrations (userId, whatsapp, createdAt, updatedAt) VALUES (?, ?, NOW(), NOW())`
+      : type === 'shopify'
+      ? `INSERT INTO integrations (userId, shopify, createdAt, updatedAt) VALUES (?, ?, NOW(), NOW())`
+      : `INSERT INTO integrations (userId, stripe, createdAt, updatedAt) VALUES (?, ?, NOW(), NOW())`
+    
+    await pool.execute(insertSql, ['default', JSON.stringify(data)])
 
     await saveLocalIntegrationRecord(type, data)
   } catch (error) {

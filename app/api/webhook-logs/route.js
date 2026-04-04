@@ -22,15 +22,15 @@ export async function GET(request) {
     const rawLimit = parseInt(searchParams.get('limit') || '10', 10)
     const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 100) : 10
 
-    const result = await query(
-      `SELECT id, type, topic, payload, "receivedAt", "createdAt"
+    const [rows] = await query(
+      `SELECT id, type, topic, payload, receivedAt, createdAt
        FROM webhook_logs
-       ORDER BY "receivedAt" DESC
-       LIMIT $1`,
+       ORDER BY receivedAt DESC
+       LIMIT ?`,
       [limit]
     )
 
-    return withCors(NextResponse.json({ logs: result.rows || [] }))
+    return withCors(NextResponse.json({ logs: rows || [] }))
   } catch (error) {
     console.error('Failed to get webhook logs:', error)
     return withCors(NextResponse.json({ logs: [] }))

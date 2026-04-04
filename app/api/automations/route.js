@@ -115,34 +115,50 @@ function stepHasOwnTemplateSelection(step) {
 }
 
 async function upsertAutomationRow(automation) {
-  await query(
-    `INSERT INTO automations (id, "userId", name, status, source, summary, steps, metrics, "createdAt", "updatedAt")
-     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, NOW(), NOW())
-     ON CONFLICT (id)
-     DO UPDATE SET
-       name = EXCLUDED.name,
-       status = EXCLUDED.status,
-       source = EXCLUDED.source,
-       summary = EXCLUDED.summary,
-       steps = EXCLUDED.steps,
-       metrics = EXCLUDED.metrics,
-       "updatedAt" = NOW()`,
-    [
-      automation.id,
-      'default',
-      automation.name,
-      !!automation.status,
-      automation.source || 'Shopify',
-      automation.summary || '',
-      JSON.stringify(automation.steps || []),
-      JSON.stringify(automation.metrics || {})
-    ]
-  )
+  const [existing] = await query('SELECT id FROM automations WHERE id = ?', [automation.id])
+
+  if (existing[0]) {
+    await query(
+      `UPDATE automations SET
+        name = ?,
+        status = ?,
+        source = ?,
+        summary = ?,
+        steps = ?,
+        metrics = ?,
+        updatedAt = NOW()
+      WHERE id = ?`,
+      [
+        automation.name,
+        !!automation.status,
+        automation.source || 'Shopify',
+        automation.summary || '',
+        JSON.stringify(automation.steps || []),
+        JSON.stringify(automation.metrics || {}),
+        automation.id
+      ]
+    )
+  } else {
+    await query(
+      `INSERT INTO automations (id, userId, name, status, source, summary, steps, metrics, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+      [
+        automation.id,
+        'default',
+        automation.name,
+        !!automation.status,
+        automation.source || 'Shopify',
+        automation.summary || '',
+        JSON.stringify(automation.steps || []),
+        JSON.stringify(automation.metrics || {})
+      ]
+    )
+  }
 }
 
 async function ensureAutomationsSeeded() {
-  const existing = await queryOne('SELECT id FROM automations LIMIT 1')
-  if (existing) return
+  const [rows] = await query('SELECT id FROM automations LIMIT 1')
+  if (rows[0]) return
 
   for (const automation of defaultAutomations) {
     await upsertAutomationRow(automation)
@@ -243,25 +259,25 @@ export async function GET() {
   try {
     await ensureAutomationsSeeded()
 
-    const rows = await queryMany(
-      `SELECT id, name, status, source, summary, steps, metrics, "createdAt", "updatedAt"
+    const [rows] = await query(
+      `SELECT id, name, status, source, summary, steps, metrics, createdAt, updatedAt
        FROM automations
-       WHERE "userId" = $1
-       ORDER BY "updatedAt" DESC NULLS LAST, "createdAt" DESC NULLS LAST`,
+       WHERE userId = ?
+       ORDER BY updatedAt DESC, createdAt DESC`,
       ['default']
     )
 
-    await syncDefaultAutomations(rows)
+    await syncDefaultAutomations(rows || [])
 
-    const refreshedRows = await queryMany(
-      `SELECT id, name, status, source, summary, steps, metrics, "createdAt", "updatedAt"
+    const [refreshedRows] = await query(
+      `SELECT id, name, status, source, summary, steps, metrics, createdAt, updatedAt
        FROM automations
-       WHERE "userId" = $1
-       ORDER BY "updatedAt" DESC NULLS LAST, "createdAt" DESC NULLS LAST`,
+       WHERE userId = ?
+       ORDER BY updatedAt DESC, createdAt DESC`,
       ['default']
     )
 
-    return NextResponse.json(sortAutomations(refreshedRows))
+    return NextResponse.json(sortAutomations(refreshedRows || []))
   } catch (error) {
     console.error('Error fetching automations:', error)
     return NextResponse.json({ error: 'Failed to fetch automations' }, { status: 500 })
@@ -277,7 +293,7 @@ export async function PUT(request) {
       return NextResponse.json({ error: 'Automations array is required' }, { status: 400 })
     }
 
-    await query('DELETE FROM automations WHERE "userId" = $1', ['default'])
+    await query('DELETE FROM automations WHERE userId = ?', ['default'])
 
     for (const automation of automations) {
       await upsertAutomationRow(sanitizeAutomation(automation))

@@ -3,12 +3,16 @@ import { buildMetaAuthHeaders, mapMetaAccessTokenError } from '@/lib/meta-auth'
 import { query, queryMany, queryOne } from '@/lib/postgres'
 
 async function ensureCampaignSchema() {
-  await query('ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS "templateLanguage" TEXT')
-  await query('ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS "templateCategory" TEXT')
-  await query('ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS "templateHeaderImageUrl" TEXT')
-  await query('ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS "campaignType" TEXT DEFAULT \'template\'')
-  await query('ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS "productIds" JSONB DEFAULT \'[]\'::jsonb')
-  await query('ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS variables JSONB DEFAULT \'[]\'::jsonb')
+  try {
+    await query('ALTER TABLE campaigns ADD COLUMN templateLanguage TEXT')
+    await query('ALTER TABLE campaigns ADD COLUMN templateCategory TEXT')
+    await query('ALTER TABLE campaigns ADD COLUMN templateHeaderImageUrl TEXT')
+    await query('ALTER TABLE campaigns ADD COLUMN campaignType TEXT DEFAULT "template"')
+    await query('ALTER TABLE campaigns ADD COLUMN productIds JSON DEFAULT "[]"')
+    await query('ALTER TABLE campaigns ADD COLUMN variables JSON DEFAULT "[]"')
+  } catch (e) {
+    // Column might already exist
+  }
 }
 
 async function sendWhatsAppMessage(phoneNumberId, accessToken, to, messageData) {
@@ -59,16 +63,16 @@ async function getRecipientContext(recipient) {
     queryOne(
       `SELECT name
        FROM chats
-       WHERE "userId" = $1 AND regexp_replace(phone, '\D', '', 'g') = $2
-       ORDER BY timestamp DESC NULLS LAST, "createdAt" DESC NULLS LAST
+       WHERE userId = ? AND REPLACE(REPLACE(REPLACE(phone, '+', ''), '-', ''), ' ', '') = ?
+       ORDER BY timestamp DESC, createdAt DESC
        LIMIT 1`,
       ['default', phone]
     ),
     queryOne(
-      `SELECT "customerName", "orderNumber"
+      `SELECT customerName, orderNumber
        FROM orders
-       WHERE "userId" = $1 AND regexp_replace("customerPhone", '\D', '', 'g') = $2
-       ORDER BY "createdAt" DESC NULLS LAST
+       WHERE userId = ? AND REPLACE(REPLACE(REPLACE(customerPhone, '+', ''), '-', ''), ' ', '') = ?
+       ORDER BY createdAt DESC
        LIMIT 1`,
       ['default', phone]
     )
@@ -84,12 +88,12 @@ async function getRecipientContext(recipient) {
 async function getSelectedProducts(productIds) {
   if (!Array.isArray(productIds) || productIds.length === 0) return []
 
-  const row = await queryOne(
-    'SELECT products FROM products WHERE "userId" = $1 ORDER BY "updatedAt" DESC NULLS LAST, id DESC LIMIT 1',
+  const [rows] = await query(
+    'SELECT products FROM products WHERE userId = ? ORDER BY updatedAt DESC, id DESC LIMIT 1',
     ['default']
   )
 
-  const products = Array.isArray(row?.products) ? row.products : []
+  const products = Array.isArray(rows[0]?.products) ? rows[0].products : []
   return products.filter((product) => productIds.includes(product.id))
 }
 
@@ -387,36 +391,38 @@ async function getRecipients(campaign) {
   }
 
   if (campaign.audience === 'recent_buyers') {
-    const rows = await queryMany(
-      `SELECT DISTINCT "customerPhone"
+    const [rows] = await query(
+      `SELECT DISTINCT customerPhone
        FROM orders
-       WHERE "userId" = $1
-         AND "customerPhone" IS NOT NULL
-         AND "createdAt" >= NOW() - INTERVAL '30 days'`,
+       WHERE userId = ?
+         AND customerPhone IS NOT NULL
+         AND createdAt >= DATE_SUB(NOW(), INTERVAL 30 DAY)`,
       ['default']
     )
-    return rows.map((row) => row.customerPhone).filter(Boolean)
+    return (rows || []).map((row) => row.customerPhone).filter(Boolean)
   }
 
-  const rows = await queryMany(
+  const [rows] = await query(
     `SELECT DISTINCT phone
      FROM chats
-     WHERE "userId" = $1 AND phone IS NOT NULL`,
+     WHERE userId = ? AND phone IS NOT NULL`,
     ['default']
   )
 
-  return rows.map((row) => row.phone).filter(Boolean)
+  return (rows || []).map((row) => row.phone).filter(Boolean)
 }
 
 export async function POST(request, { params }) {
   try {
     await ensureCampaignSchema()
-    const campaign = await queryOne(
-      `SELECT id, name, template, "templateLanguage", "templateCategory", "templateHeaderImageUrl", "campaignType", "productIds", message, variables, audience, recipients, status
+    const [campaignRows] = await query(
+      `SELECT id, name, template, templateLanguage, templateCategory, templateHeaderImageUrl, campaignType, productIds, message, variables, audience, recipients, status
        FROM campaigns
-       WHERE id = $1 AND "userId" = $2`,
+       WHERE id = ? AND userId = ?`,
       [params.id, 'default']
     )
+
+    const campaign = campaignRows[0]
 
     if (!campaign) {
       return NextResponse.json({ error: 'Campaign not found' }, { status: 404 })
@@ -429,13 +435,15 @@ export async function POST(request, { params }) {
       )
     }
 
-    const integrations = await queryOne(
+    const [integrationsRows] = await query(
       `SELECT whatsapp, shopify FROM integrations
-       WHERE "userId" = $1
-       ORDER BY "updatedAt" DESC NULLS LAST, id DESC
+       WHERE userId = ?
+       ORDER BY updatedAt DESC, id DESC
        LIMIT 1`,
       ['default']
     )
+
+    const integrations = integrationsRows[0]
 
     if (!integrations?.whatsapp?.phoneNumberId || !integrations?.whatsapp?.accessToken) {
       return NextResponse.json({ error: 'WhatsApp not configured' }, { status: 400 })
@@ -493,8 +501,8 @@ export async function POST(request, { params }) {
         )
 
         await query(
-          `INSERT INTO messages (id, "userId", "campaignId", recipient, phone, message, "isCustomer", timestamp, "whatsappMessageId", status, template, "sentAt", "createdAt")
-           VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8, $9, $10, NOW(), NOW())`,
+          `INSERT INTO messages (id, userId, campaignId, recipient, phone, message, isCustomer, timestamp, whatsappMessageId, status, template, sentAt, createdAt)
+           VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, NOW(), NOW())`,
           [
             crypto.randomUUID(),
             'default',
@@ -519,10 +527,10 @@ export async function POST(request, { params }) {
 
     await query(
       `UPDATE campaigns
-       SET status = $2, results = $3::jsonb, "sentAt" = CASE WHEN $2 = 'sent' THEN NOW() ELSE "sentAt" END,
-           "failedAt" = CASE WHEN $2 = 'failed' THEN NOW() ELSE "failedAt" END
-       WHERE id = $1`,
-      [campaign.id, anySuccess ? 'sent' : 'failed', JSON.stringify(results)]
+       SET status = ?, results = ?, sentAt = CASE WHEN ? = 'sent' THEN NOW() ELSE sentAt END,
+           failedAt = CASE WHEN ? = 'failed' THEN NOW() ELSE failedAt END
+       WHERE id = ?`,
+      [anySuccess ? 'sent' : 'failed', JSON.stringify(results), anySuccess ? 'sent' : 'failed', anySuccess ? 'sent' : 'failed', campaign.id]
     )
 
     return NextResponse.json({

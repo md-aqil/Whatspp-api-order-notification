@@ -124,24 +124,24 @@ export async function GET(request) {
     const id = url.searchParams.get('id')
 
     if (id) {
-      const result = await query(
-        'SELECT * FROM wordpress_connections WHERE id = $1 AND "userId" = $2 LIMIT 1',
+      const [rows] = await query(
+        'SELECT * FROM wordpress_connections WHERE id = ? AND userId = ? LIMIT 1',
         [id, userId]
       )
 
-      if (!result.rows[0]) {
+      if (!rows[0]) {
         return NextResponse.json({ error: 'WordPress connection not found' }, { status: 404 })
       }
 
-      return NextResponse.json(mapConnection(result.rows[0]))
+      return NextResponse.json(mapConnection(rows[0]))
     }
 
-    const result = await query(
-      'SELECT * FROM wordpress_connections WHERE "userId" = $1 ORDER BY "createdAt" DESC',
+    const [rows] = await query(
+      'SELECT * FROM wordpress_connections WHERE userId = ? ORDER BY createdAt DESC',
       [userId]
     )
 
-    return NextResponse.json(result.rows.map(mapConnection))
+    return NextResponse.json(rows.map(mapConnection))
   } catch (error) {
     console.error('Error fetching WordPress connections:', error)
     return NextResponse.json([])
@@ -182,10 +182,10 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Site ID is required' }, { status: 400 })
     }
 
-    const result = await query(
+    const [result] = await query(
       `INSERT INTO wordpress_connections (
         id,
-        "userId",
+        userId,
         site_id,
         site_name,
         site_url,
@@ -193,10 +193,11 @@ export async function POST(request) {
         status,
         plugin_version,
         capabilities,
-        metadata
+        metadata,
+        createdAt,
+        updatedAt
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb)
-      RETURNING *`,
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
       [
         crypto.randomUUID(),
         userId,
@@ -211,11 +212,16 @@ export async function POST(request) {
       ]
     )
 
-    return NextResponse.json(mapConnection(result.rows[0]), { status: 201 })
+    const [insertedRow] = await query(
+      'SELECT * FROM wordpress_connections WHERE id = ?',
+      [crypto.randomUUID()]
+    )
+
+    return NextResponse.json(mapConnection(insertedRow[0]), { status: 201 })
   } catch (error) {
     console.error('Error creating WordPress connection:', error)
 
-    if (error?.code === '23505') {
+    if (error?.code === 'ER_DUP_ENTRY') {
       return NextResponse.json(
         { error: 'A WordPress connection with this site ID or site URL already exists' },
         { status: 409 }
@@ -252,14 +258,13 @@ export async function PUT(request) {
 
     const updates = []
     const values = []
-    let index = 1
 
     if (site_id !== undefined) {
-      updates.push(`site_id = $${index++}`)
+      updates.push('site_id = ?')
       values.push(site_id?.trim() || null)
     }
     if (site_name !== undefined) {
-      updates.push(`site_name = $${index++}`)
+      updates.push('site_name = ?')
       values.push(site_name?.trim() || null)
     }
     if (site_url !== undefined) {
@@ -270,31 +275,31 @@ export async function PUT(request) {
         return NextResponse.json({ error: 'Invalid site URL format' }, { status: 400 })
       }
 
-      updates.push(`site_url = $${index++}`)
+      updates.push('site_url = ?')
       values.push(normalizedSiteUrl)
     }
     if (webhook_secret !== undefined) {
-      updates.push(`webhook_secret = $${index++}`)
+      updates.push('webhook_secret = ?')
       values.push(webhook_secret?.trim() || null)
     }
     if (status !== undefined) {
-      updates.push(`status = $${index++}`)
+      updates.push('status = ?')
       values.push(status)
     }
     if (plugin_version !== undefined) {
-      updates.push(`plugin_version = $${index++}`)
+      updates.push('plugin_version = ?')
       values.push(plugin_version?.trim() || null)
     }
     if (capabilities !== undefined) {
-      updates.push(`capabilities = $${index++}::jsonb`)
+      updates.push('capabilities = ?')
       values.push(JSON.stringify(normalizeJsonObject(capabilities)))
     }
     if (metadata !== undefined) {
-      updates.push(`metadata = $${index++}::jsonb`)
+      updates.push('metadata = ?')
       values.push(JSON.stringify(normalizeJsonObject(metadata)))
     }
     if (lastSeenAt !== undefined) {
-      updates.push(`"lastSeenAt" = $${index++}`)
+      updates.push('lastSeenAt = ?')
       values.push(lastSeenAt)
     }
 
@@ -302,26 +307,30 @@ export async function PUT(request) {
       return NextResponse.json({ error: 'No fields to update' }, { status: 400 })
     }
 
-    updates.push(`"updatedAt" = NOW()`)
+    updates.push('updatedAt = NOW()')
     values.push(id, userId)
 
-    const result = await query(
+    await query(
       `UPDATE wordpress_connections
        SET ${updates.join(', ')}
-       WHERE id = $${index++} AND "userId" = $${index}
-       RETURNING *`,
+       WHERE id = ? AND userId = ?`,
       values
     )
 
-    if (!result.rows[0]) {
+    const [rows] = await query(
+      'SELECT * FROM wordpress_connections WHERE id = ?',
+      [id]
+    )
+
+    if (!rows[0]) {
       return NextResponse.json({ error: 'WordPress connection not found' }, { status: 404 })
     }
 
-    return NextResponse.json(mapConnection(result.rows[0]))
+    return NextResponse.json(mapConnection(rows[0]))
   } catch (error) {
     console.error('Error updating WordPress connection:', error)
 
-    if (error?.code === '23505') {
+    if (error?.code === 'ER_DUP_ENTRY') {
       return NextResponse.json(
         { error: 'A WordPress connection with this site ID or site URL already exists' },
         { status: 409 }
@@ -346,7 +355,7 @@ export async function DELETE(request) {
     }
 
     await query(
-      'DELETE FROM wordpress_connections WHERE id = $1 AND "userId" = $2',
+      'DELETE FROM wordpress_connections WHERE id = ? AND userId = ?',
       [id, userId]
     )
 
