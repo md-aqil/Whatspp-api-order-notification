@@ -1731,45 +1731,23 @@ async function executeAutomationsForEvent(eventType, context, integrations) {
           }
 
           const options = Array.isArray(step.options) ? step.options : []
-          let menuData
-
-          if (options.length <= 3) {
-            // Use reply buttons (max 3)
-            menuData = {
-              messaging_product: 'whatsapp',
-              to: recipient,
-              type: 'interactive',
-              interactive: {
-                type: 'button',
-                body: { text: interpolateMessage(step.message, context) },
-                action: {
-                  buttons: options.map((opt, idx) => ({
-                    type: 'reply',
-                    reply: { id: opt.id || `opt${idx}`, title: String(opt.label || `Option ${idx + 1}`).substring(0, 20) }
+          const menuData = {
+            messaging_product: 'whatsapp',
+            to: recipient,
+            type: 'interactive',
+            interactive: {
+              type: 'list',
+              body: { text: interpolateMessage(step.message, context) },
+              action: {
+                button: 'Choose an option',
+                sections: [{
+                  title: 'Options',
+                  rows: options.map((opt, idx) => ({
+                    id: opt.id || `opt${idx}`,
+                    title: String(opt.label || `Option ${idx + 1}`).substring(0, 24),
+                    description: ''
                   }))
-                }
-              }
-            }
-          } else {
-            // Use list message (up to 10 items)
-            menuData = {
-              messaging_product: 'whatsapp',
-              to: recipient,
-              type: 'interactive',
-              interactive: {
-                type: 'list',
-                body: { text: interpolateMessage(step.message, context) },
-                action: {
-                  button: 'Choose an option',
-                  sections: [{
-                    title: 'Options',
-                    rows: options.map((opt, idx) => ({
-                      id: opt.id || `opt${idx}`,
-                      title: String(opt.label || `Option ${idx + 1}`).substring(0, 24),
-                      description: ''
-                    }))
-                  }]
-                }
+                }]
               }
             }
           }
@@ -3058,13 +3036,36 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
     // Automations GET handler
     if (route === '/automations' && method === 'GET') {
       try {
-        await ensureSettingsTables()
+        // First check if the table exists
+        const [tableCheck] = await query("SHOW TABLES LIKE 'automations'")
+        console.log('Automations table exists:', tableCheck.length > 0)
+        
+        if (tableCheck.length === 0) {
+          // Create the table if it doesn't exist
+          await query(`
+            CREATE TABLE IF NOT EXISTS automations (
+              id VARCHAR(255) PRIMARY KEY,
+              userId VARCHAR(255) NOT NULL DEFAULT 'default',
+              name VARCHAR(255),
+              status BOOLEAN DEFAULT FALSE,
+              source VARCHAR(255),
+              summary TEXT,
+              steps JSON,
+              metrics JSON,
+              createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            )
+          `)
+          console.log('Created automations table')
+        }
         
         // Ensure default automations exist
         const [existing] = await query('SELECT id FROM automations LIMIT 1')
+        console.log('Automations existing check:', existing)
         if (!existing || existing.length === 0) {
           // Import and seed defaults
           const { defaultAutomations } = await import('@/lib/automation-defaults')
+          console.log('Seeding default automations:', defaultAutomations.map(a => a.id))
           for (const auto of defaultAutomations) {
             await query(
               `INSERT INTO automations (id, userId, name, status, source, summary, steps, metrics, createdAt, updatedAt)
@@ -3092,6 +3093,7 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
           steps: typeof row.steps === 'string' ? JSON.parse(row.steps) : row.steps,
           metrics: typeof row.metrics === 'string' ? JSON.parse(row.metrics) : row.metrics
         }))
+        console.log('Returning automations:', parsedRows.map(a => ({ id: a.id, stepsCount: a.steps?.length })))
 
         return handleCORS(NextResponse.json(parsedRows || []))
       } catch (error) {

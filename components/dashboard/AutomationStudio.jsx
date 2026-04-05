@@ -472,6 +472,7 @@ export function AutomationStudio() {
 
   useEffect(() => {
     fetch('/api/automations').then(r => r.json()).then(d => {
+      console.log('API automations response:', d)
       if (Array.isArray(d) && d.length > 0) { const n = sortAutomations(d.map(item => normalize(alignDefaultAutomationLayout(item)))); setAutomations(n); setActiveId(n[0].id); setSelId(n[0].steps?.[0]?.id || null) }
     }).catch(console.error).finally(() => setHydrated(true))
   }, [])
@@ -504,6 +505,7 @@ export function AutomationStudio() {
     try {
       setSaveState('saving')
       const payload = sortAutomations(list).map(a => ({ ...a, steps: reorder(a) }))
+      console.log('Saving automations:', payload.map(a => ({ id: a.id, stepsCount: a.steps?.length, hasOptions: a.steps?.some(s => s.type === 'interactive' && s.options) })))
       const r = await fetch('/api/automations', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ automations: payload }) })
       if (!r.ok) throw new Error('Save failed')
       setSaveState('saved')
