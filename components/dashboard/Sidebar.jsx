@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { 
   MessageCircle, 
   Store, 
@@ -16,12 +16,27 @@ import { usePathname } from 'next/navigation'
 
 export function Sidebar({ sidebarOpen, setSidebarOpen }) {
   const pathname = usePathname()
+  const [activeCount, setActiveCount] = useState(0)
+  const [loading, setLoading] = useState(true)
+  
+  useEffect(() => {
+    fetch('/api/automations')
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          const active = data.filter(a => a.status === 1 || a.status === true).length
+          setActiveCount(active)
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [])
   
   const navigation = [
     { name: 'Dashboard', href: '/dashboard', icon: Store },
     { name: 'Chat', href: '/dashboard/chat', icon: MessageCircle },
     { name: 'Campaigns', href: '/dashboard/campaigns', icon: Megaphone },
-    { name: 'Automations', href: '/dashboard/automations', icon: Workflow },
+    { name: 'Automations', href: '/dashboard/automations', icon: Workflow, badge: activeCount },
     { name: 'Send Catalog', href: '/dashboard/send-catalog', icon: Send },
     { name: 'Orders', href: '/dashboard/orders', icon: CreditCard },
     { name: 'Settings', href: '/dashboard/settings', icon: Settings },
@@ -88,7 +103,12 @@ export function Sidebar({ sidebarOpen, setSidebarOpen }) {
                   }`}>
                     <Icon className="h-4 w-4" />
                   </span>
-                  {item.name}
+                  <span className="flex-1">{item.name}</span>
+                  {item.badge !== undefined && item.badge > 0 && (
+                    <span className="flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-emerald-500 text-[10px] font-medium text-white px-1.5">
+                      {item.badge}
+                    </span>
+                  )}
                 </Link>
               )
             })}

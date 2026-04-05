@@ -50,8 +50,13 @@ export async function GET() {
     if (!response.ok) {
       console.error('WhatsApp Templates API Error:', data)
 
+      let errorMsg = data.error?.message || 'Failed to fetch templates from Meta.'
       let guidance = 'Check your access token, business account ID, and Meta app permissions.'
-      if (data.error?.code === 200) {
+      
+      if (response.status === 401 || errorMsg.includes('expired') || errorMsg.includes('valid access token')) {
+        errorMsg = 'Your WhatsApp access token has expired. Please refresh it in Integrations settings.'
+        guidance = 'Go to Dashboard > Settings > Integrations, copy your Meta access token again, and save it. Tokens expire after ~24 hours unless extended.'
+      } else if (data.error?.code === 200) {
         guidance = 'Your token is missing required Meta permissions for template access.'
       } else if (data.error?.code === 100) {
         guidance = 'The WhatsApp business account ID appears invalid or inaccessible for this token.'
@@ -59,7 +64,7 @@ export async function GET() {
 
       return NextResponse.json(
         {
-          error: mapMetaAccessTokenError(data.error?.message || 'Failed to fetch templates from Meta.'),
+          error: errorMsg,
           guidance
         },
         { status: response.status }
