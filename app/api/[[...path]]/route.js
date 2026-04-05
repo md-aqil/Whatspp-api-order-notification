@@ -276,9 +276,25 @@ async function getStoredIntegrations() {
       ['default']
     )
 
-    return result[0][0] || await getLocalIntegrationRecord()
+    const row = result[0][0]
+    console.log('[getStoredIntegrations] DB row:', JSON.stringify(row))
+    
+    if (row && (row.whatsapp || row.shopify || row.stripe)) {
+      console.log('[getStoredIntegrations] Returning DB data')
+      return row
+    }
+    
+    console.log('[getStoredIntegrations] DB empty, checking local...')
+    const localRecord = await getLocalIntegrationRecord()
+    console.log('[getStoredIntegrations] Local record:', JSON.stringify(localRecord))
+    
+    if (localRecord) {
+      return localRecord
+    }
+    
+    return null
   } catch (error) {
-    console.error('Falling back to local integration store:', error)
+    console.error('[getStoredIntegrations] Error:', error.message)
     return getLocalIntegrationRecord()
   }
 }
@@ -2247,17 +2263,32 @@ async function handleRoute(request, { params }) {
       }
 
       if (integrations) {
+        // Parse JSON columns from MySQL if they're strings
+        const parsedIntegrations = {
+          whatsapp: typeof integrations.whatsapp === 'string' 
+            ? JSON.parse(integrations.whatsapp) 
+            : integrations.whatsapp,
+          shopify: typeof integrations.shopify === 'string' 
+            ? JSON.parse(integrations.shopify) 
+            : integrations.shopify,
+          stripe: typeof integrations.stripe === 'string' 
+            ? JSON.parse(integrations.stripe) 
+            : integrations.stripe
+        }
+        
+        console.log('[GET /integrations] Parsed integrations:', JSON.stringify(parsedIntegrations))
+
         // Check if integrations are properly configured
-        defaultIntegrations.whatsapp.connected = !!(integrations.whatsapp?.phoneNumberId && integrations.whatsapp?.accessToken)
+        defaultIntegrations.whatsapp.connected = !!(parsedIntegrations.whatsapp?.phoneNumberId && parsedIntegrations.whatsapp?.accessToken)
         defaultIntegrations.shopify.connected = !!(
-          integrations.shopify?.shopDomain &&
-          integrations.shopify?.clientId &&
-          integrations.shopify?.clientSecret
+          parsedIntegrations.shopify?.shopDomain &&
+          parsedIntegrations.shopify?.clientId &&
+          parsedIntegrations.shopify?.clientSecret
         )
-        defaultIntegrations.stripe.connected = !!(integrations.stripe?.secretKey)
+        defaultIntegrations.stripe.connected = !!(parsedIntegrations.stripe?.secretKey)
 
         // Return data without sensitive fields
-        const normalizedWhatsApp = normalizeWhatsAppIntegrationData(integrations.whatsapp || {})
+        const normalizedWhatsApp = normalizeWhatsAppIntegrationData(parsedIntegrations.whatsapp || {})
         defaultIntegrations.whatsapp.data = {
           phoneNumberId: normalizedWhatsApp.phoneNumberId,
           businessAccountId: normalizedWhatsApp.businessAccountId,
@@ -2265,11 +2296,11 @@ async function handleRoute(request, { params }) {
           webhookVerifyToken: normalizedWhatsApp.webhookVerifyToken || process.env.WHATSAPP_VERIFY_TOKEN || ''
         }
         defaultIntegrations.shopify.data = {
-          shopDomain: integrations.shopify?.shopDomain || '',
-          clientId: integrations.shopify?.clientId || ''
+          shopDomain: parsedIntegrations.shopify?.shopDomain || '',
+          clientId: parsedIntegrations.shopify?.clientId || ''
         }
         defaultIntegrations.stripe.data = {
-          publishableKey: integrations.stripe?.publishableKey || ''
+          publishableKey: parsedIntegrations.stripe?.publishableKey || ''
         }
       }
 
