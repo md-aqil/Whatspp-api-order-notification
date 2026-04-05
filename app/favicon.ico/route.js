@@ -1,6 +1,6 @@
 export async function GET() {
-  return new Response(null, {
-    status: 204,
+  return new Response('', {
+    status: 200,
     headers: {
       'Cache-Control': 'public, max-age=86400'
     }

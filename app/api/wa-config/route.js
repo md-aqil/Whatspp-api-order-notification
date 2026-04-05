@@ -280,7 +280,7 @@ export async function GET(request) {
         cache: 'no-store'
       })
 
-      if (response.ok) {
+      if (response.ok && response.status !== 204) {
         const fetchedConfig = await response.json()
         const normalizedConfig = normalizeWordPressConfig(fetchedConfig, fallbackWordPressUrl)
         const selectedConnectionId = preferredConnection?.id || storedConfig.selected_wordpress_connection_id || null

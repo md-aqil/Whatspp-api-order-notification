@@ -11,7 +11,7 @@ function withCors(response) {
 }
 
 export async function OPTIONS() {
-  return withCors(new NextResponse(null, { status: 200 }))
+  return withCors(new NextResponse('', { status: 200 }))
 }
 
 export async function GET(request) {

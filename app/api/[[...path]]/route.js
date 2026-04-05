@@ -1904,7 +1904,7 @@ function handleCORS(response) {
 
 // OPTIONS handler for CORS
 export async function OPTIONS() {
-  return handleCORS(new NextResponse(null, { status: 200 }))
+  return handleCORS(new NextResponse('', { status: 200 }))
 }
 
 // WhatsApp API functions
