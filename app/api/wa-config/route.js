@@ -89,7 +89,9 @@ async function getShopifyConfig(userId) {
     )
 
     if (shopifyRows[0]?.shopify) {
-      const shopify = shopifyRows[0].shopify
+      const shopify = typeof shopifyRows[0].shopify === 'string' 
+        ? JSON.parse(shopifyRows[0].shopify) 
+        : shopifyRows[0].shopify
       const isConnected = !!(shopify.shopDomain && shopify.clientId && shopify.clientSecret)
       shopifyConfig = {
         enabled: true,
@@ -115,7 +117,9 @@ async function getWhatsAppConfig(userId) {
     )
 
     if (waRows[0]?.whatsapp) {
-      const wa = waRows[0].whatsapp
+      const wa = typeof waRows[0].whatsapp === 'string' 
+        ? JSON.parse(waRows[0].whatsapp) 
+        : waRows[0].whatsapp
       waConfig = {
         enabled: true,
         connected: !!(wa.phoneNumberId && wa.accessToken),

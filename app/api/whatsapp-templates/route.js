@@ -11,7 +11,12 @@ async function getStoredIntegrations() {
      LIMIT 1`,
     ['default']
   )
-  return rows[0] || null
+  const row = rows[0]
+  if (!row) return null
+  // Parse JSON string from MySQL
+  return {
+    whatsapp: typeof row.whatsapp === 'string' ? JSON.parse(row.whatsapp) : row.whatsapp
+  }
 }
 
 export async function GET() {

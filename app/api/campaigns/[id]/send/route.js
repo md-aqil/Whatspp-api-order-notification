@@ -93,7 +93,8 @@ async function getSelectedProducts(productIds) {
     ['default']
   )
 
-  const products = Array.isArray(rows[0]?.products) ? rows[0].products : []
+  const rawProducts = rows[0]?.products
+  const products = typeof rawProducts === 'string' ? JSON.parse(rawProducts) : (Array.isArray(rawProducts) ? rawProducts : [])
   return products.filter((product) => productIds.includes(product.id))
 }
 
@@ -443,7 +444,11 @@ export async function POST(request, { params }) {
       ['default']
     )
 
-    const integrations = integrationsRows[0]
+    const rawIntegrations = integrationsRows[0]
+    const integrations = {
+      whatsapp: typeof rawIntegrations?.whatsapp === 'string' ? JSON.parse(rawIntegrations.whatsapp) : rawIntegrations?.whatsapp,
+      shopify: typeof rawIntegrations?.shopify === 'string' ? JSON.parse(rawIntegrations.shopify) : rawIntegrations?.shopify
+    }
 
     if (!integrations?.whatsapp?.phoneNumberId || !integrations?.whatsapp?.accessToken) {
       return NextResponse.json({ error: 'WhatsApp not configured' }, { status: 400 })

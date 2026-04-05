@@ -273,7 +273,14 @@ export async function GET() {
       ['default']
     )
 
-    await syncDefaultAutomations(rows || [])
+    console.log('[automations] Rows fetched:', rows?.length)
+    console.log('[automations] First row steps:', rows?.[0]?.steps)
+
+    try {
+      await syncDefaultAutomations(rows || [])
+    } catch (syncError) {
+      console.error('[automations] Sync error:', syncError.message)
+    }
 
     const [refreshedRows] = await query(
       `SELECT id, name, status, source, summary, steps, metrics, createdAt, updatedAt
@@ -283,7 +290,14 @@ export async function GET() {
       ['default']
     )
 
-    return NextResponse.json(sortAutomations(refreshedRows || []))
+    // Parse JSON columns from MySQL
+    const parsedRows = (refreshedRows || []).map(row => ({
+      ...row,
+      steps: typeof row.steps === 'string' ? JSON.parse(row.steps) : row.steps,
+      metrics: typeof row.metrics === 'string' ? JSON.parse(row.metrics) : row.metrics
+    }))
+
+    return NextResponse.json(sortAutomations(parsedRows))
   } catch (error) {
     console.error('Error fetching automations:', error)
     return NextResponse.json({ error: 'Failed to fetch automations' }, { status: 500 })

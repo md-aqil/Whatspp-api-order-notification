@@ -244,7 +244,8 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Automation not found' }, { status: 404 })
     }
 
-    const steps = Array.isArray(automation.steps) ? automation.steps : []
+    const rawSteps = automation.steps
+    const steps = typeof rawSteps === 'string' ? JSON.parse(rawSteps) : (Array.isArray(rawSteps) ? rawSteps : [])
     const stepMap = new Map(steps.map(step => [step.id, step]))
     const testNode = nodeId ? stepMap.get(nodeId) : steps.find(step => step.type === 'test')
 
@@ -257,7 +258,9 @@ export async function POST(request) {
       ['default']
     )
 
-    if (!integrations?.whatsapp?.phoneNumberId || !integrations?.whatsapp?.accessToken) {
+    const waConfig = typeof integrations?.whatsapp === 'string' ? JSON.parse(integrations.whatsapp) : integrations?.whatsapp
+
+    if (!waConfig?.phoneNumberId || !waConfig?.accessToken) {
       return NextResponse.json({ error: 'WhatsApp not configured' }, { status: 400 })
     }
 

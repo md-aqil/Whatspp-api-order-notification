@@ -318,12 +318,16 @@ export async function POST(request) {
         }
 
         // Get user integrations
-        const integrations = await query(
+        const [intRows] = await query(
             `SELECT whatsapp FROM integrations WHERE userId = ? ORDER BY updatedAt IS NULL, updatedAt DESC, id DESC LIMIT 1`,
             ['default']
         )
 
-        if (!integrations?.[0]?.[0]?.whatsapp) {
+        const whatsappConfig = intRows[0]?.whatsapp 
+          ? (typeof intRows[0].whatsapp === 'string' ? JSON.parse(intRows[0].whatsapp) : intRows[0].whatsapp)
+          : null
+
+        if (!whatsappConfig) {
             return NextResponse.json({
                 success: true,
                 event: eventType,
@@ -339,7 +343,7 @@ export async function POST(request) {
             ? await executeCustomWebhookAutomations(
                 eventType,
                 context,
-                integrations[0][0].whatsapp,
+                whatsappConfig,
                 matchingAutomations,
                 body
             )
@@ -804,15 +808,20 @@ function interpolateAutomationMessage(message = '', context = {}) {
 }
 
 async function getMatchingAutomations(eventType) {
-    const automations = await query(
+    const [rows] = await query(
         `SELECT id, name, status, steps FROM automations
          WHERE userId = ? AND status = true`,
         ['default']
     )
 
+    const automations = rows?.map(row => ({
+        ...row,
+        steps: typeof row.steps === 'string' ? JSON.parse(row.steps) : row.steps
+    })) || []
+
     const mappedTrigger = resolveCustomWebhookTrigger(eventType)
 
-    return automations[0]?.filter(automation => {
+    return automations.filter(automation => {
         if (!Array.isArray(automation.steps)) return false
         const triggerStep = automation.steps.find(step => step.type === 'trigger')
         return triggerStep?.event === mappedTrigger || triggerStep?.event === 'custom.webhook'

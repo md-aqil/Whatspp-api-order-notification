@@ -280,8 +280,14 @@ async function getStoredIntegrations() {
     console.log('[getStoredIntegrations] DB row:', JSON.stringify(row))
     
     if (row && (row.whatsapp || row.shopify || row.stripe)) {
-      console.log('[getStoredIntegrations] Returning DB data')
-      return row
+      // Parse JSON strings from MySQL
+      const parsed = {
+        whatsapp: typeof row.whatsapp === 'string' ? JSON.parse(row.whatsapp) : row.whatsapp,
+        shopify: typeof row.shopify === 'string' ? JSON.parse(row.shopify) : row.shopify,
+        stripe: typeof row.stripe === 'string' ? JSON.parse(row.stripe) : row.stripe
+      }
+      console.log('[getStoredIntegrations] Returning parsed DB data')
+      return parsed
     }
     
     console.log('[getStoredIntegrations] DB empty, checking local...')
@@ -1434,7 +1440,12 @@ async function executeAutomationsForEvent(eventType, context, integrations) {
      WHERE userId = ? AND status = 1`,
     ['default']
   )
-  const automations = rows || []
+  
+  // Parse JSON columns from MySQL
+  const automations = (rows || []).map(row => ({
+    ...row,
+    steps: typeof row.steps === 'string' ? JSON.parse(row.steps) : row.steps
+  }))
 
   console.log('Found automations:', automations.map(a => a.id).join(', '))
 
@@ -1682,6 +1693,11 @@ async function executeAutomationsForEvent(eventType, context, integrations) {
       // ── Interactive Menu step ─────────────────────────────────────────────
       if (step.type === 'interactive') {
         const recipient = resolveAutomationRecipient({ recipientMode: 'customer' }, context)
+        console.log('[Interactive Step] recipient:', recipient, 'conversationRecipient:', conversationRecipient, 'isReply:', context._isInteractiveReply, 'option:', context._chosenOptionId)
+        
+        // Check if this is a reply to a previous menu
+        console.log('[Interactive Step] awaitingInteractiveStepId:', conversationState?.awaitingInteractiveStepId, 'step.id:', step.id)
+        
         if (!recipient) break
 
         // If this is a button reply that matches the step we're waiting on, route to the chosen branch
@@ -2263,32 +2279,20 @@ async function handleRoute(request, { params }) {
       }
 
       if (integrations) {
-        // Parse JSON columns from MySQL if they're strings
-        const parsedIntegrations = {
-          whatsapp: typeof integrations.whatsapp === 'string' 
-            ? JSON.parse(integrations.whatsapp) 
-            : integrations.whatsapp,
-          shopify: typeof integrations.shopify === 'string' 
-            ? JSON.parse(integrations.shopify) 
-            : integrations.shopify,
-          stripe: typeof integrations.stripe === 'string' 
-            ? JSON.parse(integrations.stripe) 
-            : integrations.stripe
-        }
-        
-        console.log('[GET /integrations] Parsed integrations:', JSON.stringify(parsedIntegrations))
+        // getStoredIntegrations now returns parsed objects
+        console.log('[GET /integrations] Integrations:', JSON.stringify(integrations))
 
         // Check if integrations are properly configured
-        defaultIntegrations.whatsapp.connected = !!(parsedIntegrations.whatsapp?.phoneNumberId && parsedIntegrations.whatsapp?.accessToken)
+        defaultIntegrations.whatsapp.connected = !!(integrations.whatsapp?.phoneNumberId && integrations.whatsapp?.accessToken)
         defaultIntegrations.shopify.connected = !!(
-          parsedIntegrations.shopify?.shopDomain &&
-          parsedIntegrations.shopify?.clientId &&
-          parsedIntegrations.shopify?.clientSecret
+          integrations.shopify?.shopDomain &&
+          integrations.shopify?.clientId &&
+          integrations.shopify?.clientSecret
         )
-        defaultIntegrations.stripe.connected = !!(parsedIntegrations.stripe?.secretKey)
+        defaultIntegrations.stripe.connected = !!(integrations.stripe?.secretKey)
 
         // Return data without sensitive fields
-        const normalizedWhatsApp = normalizeWhatsAppIntegrationData(parsedIntegrations.whatsapp || {})
+        const normalizedWhatsApp = normalizeWhatsAppIntegrationData(integrations.whatsapp || {})
         defaultIntegrations.whatsapp.data = {
           phoneNumberId: normalizedWhatsApp.phoneNumberId,
           businessAccountId: normalizedWhatsApp.businessAccountId,
@@ -2296,11 +2300,11 @@ async function handleRoute(request, { params }) {
           webhookVerifyToken: normalizedWhatsApp.webhookVerifyToken || process.env.WHATSAPP_VERIFY_TOKEN || ''
         }
         defaultIntegrations.shopify.data = {
-          shopDomain: parsedIntegrations.shopify?.shopDomain || '',
-          clientId: parsedIntegrations.shopify?.clientId || ''
+          shopDomain: integrations.shopify?.shopDomain || '',
+          clientId: integrations.shopify?.clientId || ''
         }
         defaultIntegrations.stripe.data = {
-          publishableKey: parsedIntegrations.stripe?.publishableKey || ''
+          publishableKey: integrations.stripe?.publishableKey || ''
         }
       }
 
@@ -3161,23 +3165,30 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
                       .map((contact) => [contact.wa_id, contact])
                   )
 
-                  // Check for actual messages
-                  if (change.value?.messages && Array.isArray(change.value.messages)) {
-                    console.log('Processing incoming messages, count:', change.value.messages.length);
-                    const automationIntegrations = await getStoredIntegrations()
-                    console.log('Got integrations:', automationIntegrations?.whatsapp?.connected);
-                    for (const message of change.value.messages) {
-                      console.log('Saving incoming message:', JSON.stringify(message, null, 2));
-                      // Save incoming message to database
-                      const contact = contactsByWaId.get(message.from)
-                      const savedMessage = await saveIncomingMessage(message)
-                      console.log('Saved message, id:', savedMessage?.id);
-                      await executeAutomationsForEvent(
-                        'whatsapp.message_received',
-                        buildIncomingWhatsAppAutomationContext(message, savedMessage, contact),
-                        automationIntegrations
-                      )
-                    }
+                    // Check for actual messages
+                    if (change.value?.messages && Array.isArray(change.value.messages)) {
+                      console.log('Processing incoming messages, count:', change.value.messages.length);
+                      
+                      console.log('[Webhook] Getting integrations...');
+                      const automationIntegrations = await getStoredIntegrations()
+                      console.log('[Webhook] Got integrations:', JSON.stringify(automationIntegrations));
+                      
+                      for (const message of change.value.messages) {
+                        console.log('[Webhook] Saving incoming message:', JSON.stringify(message, null, 2));
+                        // Save incoming message to database
+                        const contact = contactsByWaId.get(message.from)
+                        const savedMessage = await saveIncomingMessage(message)
+                        console.log('[Webhook] Saved message, id:', savedMessage?.id);
+                        
+                        const context = buildIncomingWhatsAppAutomationContext(message, savedMessage, contact)
+                        console.log('[Webhook] Automation context:', JSON.stringify(context));
+                        
+                        await executeAutomationsForEvent(
+                          'whatsapp.message_received',
+                          context,
+                          automationIntegrations
+                        )
+                      }
                   } else {
                     console.log('No messages in change.value');
                   }
@@ -3794,8 +3805,13 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
 
         // Get WhatsApp integration details
         const integrations = await getStoredIntegrations()
+        
+        // Parse JSON string if needed
+        const waIntegration = typeof integrations?.whatsapp === 'string' 
+          ? JSON.parse(integrations.whatsapp) 
+          : integrations?.whatsapp
 
-        if (!integrations?.whatsapp?.phoneNumberId || !integrations?.whatsapp?.accessToken) {
+        if (!waIntegration?.phoneNumberId || !waIntegration?.accessToken) {
           return handleCORS(NextResponse.json(
             { error: "WhatsApp not configured" },
             { status: 400 }
@@ -3814,8 +3830,8 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
 
         // Send message via WhatsApp API
         const result = await sendWhatsAppMessage(
-          integrations.whatsapp.phoneNumberId,
-          integrations.whatsapp.accessToken,
+          waIntegration.phoneNumberId,
+          waIntegration.accessToken,
           to,
           messageData
         )

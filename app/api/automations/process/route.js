@@ -23,12 +23,16 @@ async function sendWhatsAppMessage(phoneNumberId, accessToken, to, messageData) 
 
 export async function POST() {
   try {
-    const integrations = await queryOne(
+    const [intRows] = await query(
       'SELECT whatsapp FROM integrations WHERE userId = ? ORDER BY updatedAt IS NULL, updatedAt DESC, id DESC LIMIT 1',
       ['default']
     )
 
-    if (!integrations?.whatsapp?.phoneNumberId || !integrations?.whatsapp?.accessToken) {
+    const whatsappConfig = intRows[0]?.whatsapp 
+      ? (typeof intRows[0].whatsapp === 'string' ? JSON.parse(intRows[0].whatsapp) : intRows[0].whatsapp)
+      : null
+
+    if (!whatsappConfig?.phoneNumberId || !whatsappConfig?.accessToken) {
       return NextResponse.json({ error: 'WhatsApp not configured' }, { status: 400 })
     }
 
