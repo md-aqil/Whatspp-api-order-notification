@@ -3012,6 +3012,94 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
       }
     }
 
+    // Automations PUT handler - delegate to separate route file or handle here
+    if (route === '/automations' && method === 'PUT') {
+      try {
+        const body = await request.json()
+        const automations = Array.isArray(body) ? body : body.automations
+
+        if (!Array.isArray(automations)) {
+          return handleCORS(NextResponse.json({ error: 'Automations array is required' }, { status: 400 }))
+        }
+
+        await query('DELETE FROM automations WHERE userId = ?', ['default'])
+
+        for (const automation of automations) {
+          const steps = typeof automation.steps === 'string' ? JSON.parse(automation.steps) : automation.steps
+          const metrics = typeof automation.metrics === 'string' ? JSON.parse(automation.metrics) : (automation.metrics || { sent: 0, openRate: 0, conversions: 0 })
+          
+          await query(
+            `INSERT INTO automations (id, userId, name, status, source, summary, steps, metrics, createdAt, updatedAt)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE name = VALUES(name), status = VALUES(status), source = VALUES(source),
+             summary = VALUES(summary), steps = VALUES(steps), metrics = VALUES(metrics), updatedAt = VALUES(updatedAt)`,
+            [
+              automation.id || `auto-${Date.now()}`,
+              'default',
+              automation.name || 'Unnamed',
+              automation.status !== undefined ? (automation.status ? 1 : 0) : 0,
+              automation.source || 'Custom',
+              automation.summary || '',
+              JSON.stringify(steps || []),
+              JSON.stringify(metrics),
+              automation.createdAt || new Date().toISOString(),
+              new Date().toISOString()
+            ]
+          )
+        }
+
+        return handleCORS(NextResponse.json({ success: true }))
+      } catch (error) {
+        console.error('Error saving automations:', error)
+        return handleCORS(NextResponse.json({ error: 'Failed to save automations', details: error.message }, { status: 500 }))
+      }
+    }
+
+    // Automations GET handler
+    if (route === '/automations' && method === 'GET') {
+      try {
+        await ensureSettingsTables()
+        
+        // Ensure default automations exist
+        const [existing] = await query('SELECT id FROM automations LIMIT 1')
+        if (!existing || existing.length === 0) {
+          // Import and seed defaults
+          const { defaultAutomations } = await import('@/lib/automation-defaults')
+          for (const auto of defaultAutomations) {
+            await query(
+              `INSERT INTO automations (id, userId, name, status, source, summary, steps, metrics, createdAt, updatedAt)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                auto.id, 'default', auto.name, auto.status ? 1 : 0, auto.source || 'System',
+                auto.summary || '', JSON.stringify(auto.steps || []), JSON.stringify(auto.metrics || { sent: 0, openRate: 0, conversions: 0 }),
+                auto.createdAt || new Date().toISOString(), new Date().toISOString()
+              ]
+            )
+          }
+        }
+
+        const [rows] = await query(
+          `SELECT id, name, status, source, summary, steps, metrics, createdAt, updatedAt
+           FROM automations
+           WHERE userId = ?
+           ORDER BY updatedAt DESC, createdAt DESC`,
+          ['default']
+        )
+
+        // Parse JSON columns
+        const parsedRows = (rows || []).map(row => ({
+          ...row,
+          steps: typeof row.steps === 'string' ? JSON.parse(row.steps) : row.steps,
+          metrics: typeof row.metrics === 'string' ? JSON.parse(row.metrics) : row.metrics
+        }))
+
+        return handleCORS(NextResponse.json(parsedRows || []))
+      } catch (error) {
+        console.error('Error fetching automations:', error)
+        return handleCORS(NextResponse.json({ error: 'Failed to fetch automations' }, { status: 500 }))
+      }
+    }
+
     // New endpoint to fetch WhatsApp templates
     if (route === '/whatsapp-templates' && method === 'GET') {
       try {
