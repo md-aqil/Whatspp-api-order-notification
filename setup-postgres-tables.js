@@ -1,14 +1,22 @@
 const mysql = require('mysql2/promise');
 
 const connectionString = process.env.DATABASE_URL || process.env.DB_URL;
+const poolConfig = {
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0,
+  enableKeepAlive: true,
+  keepAliveInitialDelay: 0
+}
 const pool = connectionString 
-  ? mysql.createPool(connectionString)
+  ? mysql.createPool({ uri: connectionString, ...poolConfig })
   : mysql.createPool({
       host: process.env.DB_HOST || 'localhost',
       port: parseInt(process.env.DB_PORT || '3306'),
       database: process.env.DB_NAME || 'whatsapp_api',
       user: process.env.DB_USER || 'mdaqil',
       password: process.env.DB_PASSWORD || 'your_secure_password',
+      ...poolConfig
     });
 
 async function setupTables() {
@@ -135,9 +143,14 @@ async function setupTables() {
         source VARCHAR(255),
         summary TEXT,
         steps JSON,
+        triggerEvent VARCHAR(100) GENERATED ALWAYS AS (
+          JSON_UNQUOTE(JSON_EXTRACT(steps, '$[0].event'))
+        ) STORED,
         metrics JSON,
         createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_trigger_event (triggerEvent),
+        INDEX idx_automation_status (userId, status, triggerEvent)
       )
     `);
     console.log('Created automations table');

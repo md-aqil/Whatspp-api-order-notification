@@ -16,12 +16,20 @@ function getWordPressPool() {
     }
 
     if (!wpPool) {
+        const poolConfig = {
+            waitForConnections: true,
+            connectionLimit: 10,
+            queueLimit: 0,
+            enableKeepAlive: true,
+            keepAliveInitialDelay: 0
+        }
         wpPool = mysql.createPool({
             host: process.env.WP_DB_HOST,
             port: parseInt(process.env.WP_DB_PORT || '3306'),
             database: process.env.WP_DB_NAME,
             user: process.env.WP_DB_USER,
-            password: process.env.WP_DB_PASSWORD
+            password: process.env.WP_DB_PASSWORD,
+            ...poolConfig
         })
         globalThis.wpPoolRoute = wpPool
     }

@@ -30,15 +30,23 @@ function getMysqlPool() {
 
   if (!mysqlPool) {
     const connectionString = process.env.DATABASE_URL || process.env.DB_URL
+    const poolConfig = {
+      waitForConnections: true,
+      connectionLimit: 10,
+      queueLimit: 0,
+      enableKeepAlive: true,
+      keepAliveInitialDelay: 0
+    }
     if (connectionString) {
-      mysqlPool = mysql.createPool(connectionString)
+      mysqlPool = mysql.createPool({ uri: connectionString, ...poolConfig })
     } else {
       mysqlPool = mysql.createPool({
         host: process.env.DB_HOST || '127.0.0.1',
         port: parseInt(process.env.DB_PORT || '3306', 10),
         database: process.env.DB_NAME || 'whatsapp_api',
         user: process.env.DB_USER || 'root',
-        password: process.env.DB_PASSWORD || ''
+        password: process.env.DB_PASSWORD || '',
+        ...poolConfig
       })
     }
     globalThis.mysqlPoolRoute = mysqlPool
@@ -1434,11 +1442,12 @@ async function executeAutomationsForEvent(eventType, context, integrations) {
     return
   }
 
+  // Only fetch automations matching this event type
   const [rows] = await query(
     `SELECT id, name, steps, metrics
      FROM automations
-     WHERE userId = ? AND status = 1`,
-    ['default']
+     WHERE userId = ? AND status = 1 AND triggerEvent = ?`,
+    ['default', eventType]
   )
   
   // Parse JSON columns from MySQL
