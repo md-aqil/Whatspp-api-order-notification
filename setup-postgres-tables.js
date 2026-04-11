@@ -25,6 +25,52 @@ async function setupTables() {
   try {
     console.log('Connected to MySQL database');
 
+    // Create users table
+    await connection.execute(`
+      CREATE TABLE IF NOT EXISTS users (
+        id VARCHAR(255) PRIMARY KEY,
+        email VARCHAR(255) UNIQUE NOT NULL,
+        password_hash VARCHAR(255) NOT NULL,
+        name VARCHAR(255),
+        role ENUM('owner', 'admin', 'member', 'viewer') DEFAULT 'member',
+        plan VARCHAR(50) DEFAULT 'free',
+        isActive BOOLEAN DEFAULT TRUE,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_user_email (email),
+        INDEX idx_user_role (role)
+      )
+    `);
+    console.log('Created users table');
+
+    // Create sessions table for JWT refresh tokens
+    await connection.execute(`
+      CREATE TABLE IF NOT EXISTS sessions (
+        id VARCHAR(255) PRIMARY KEY,
+        userId VARCHAR(255) NOT NULL,
+        token_hash VARCHAR(255) NOT NULL,
+        expiresAt TIMESTAMP NOT NULL,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_user_sessions (userId),
+        INDEX idx_session_expiry (expiresAt)
+      )
+    `);
+    console.log('Created sessions table');
+
+    // Create API keys table for programmatic access
+    await connection.execute(`
+      CREATE TABLE IF NOT EXISTS api_keys (
+        id VARCHAR(255) PRIMARY KEY,
+        userId VARCHAR(255) NOT NULL,
+        name VARCHAR(255),
+        key_hash VARCHAR(255) NOT NULL,
+        lastUsedAt TIMESTAMP NULL,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_api_key_user (userId)
+      )
+    `);
+    console.log('Created api_keys table');
+
     // Create integrations table
     await connection.execute(`
       CREATE TABLE IF NOT EXISTS integrations (

@@ -3017,9 +3017,9 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
           
           await query(
             `INSERT INTO automations (id, userId, name, status, source, summary, steps, metrics, createdAt, updatedAt)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
              ON DUPLICATE KEY UPDATE name = VALUES(name), status = VALUES(status), source = VALUES(source),
-             summary = VALUES(summary), steps = VALUES(steps), metrics = VALUES(metrics), updatedAt = VALUES(updatedAt)`,
+             summary = VALUES(summary), steps = VALUES(steps), metrics = VALUES(metrics), updatedAt = NOW()`,
             [
               automation.id || `auto-${Date.now()}`,
               'default',
@@ -3028,9 +3028,7 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
               automation.source || 'Custom',
               automation.summary || '',
               JSON.stringify(steps || []),
-              JSON.stringify(metrics),
-              automation.createdAt || new Date().toISOString(),
-              new Date().toISOString()
+              JSON.stringify(metrics)
             ]
           )
         }
@@ -3078,11 +3076,10 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
           for (const auto of defaultAutomations) {
             await query(
               `INSERT INTO automations (id, userId, name, status, source, summary, steps, metrics, createdAt, updatedAt)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
               [
                 auto.id, 'default', auto.name, auto.status ? 1 : 0, auto.source || 'System',
-                auto.summary || '', JSON.stringify(auto.steps || []), JSON.stringify(auto.metrics || { sent: 0, openRate: 0, conversions: 0 }),
-                auto.createdAt || new Date().toISOString(), new Date().toISOString()
+                auto.summary || '', JSON.stringify(auto.steps || []), JSON.stringify(auto.metrics || { sent: 0, openRate: 0, conversions: 0 })
               ]
             )
           }
