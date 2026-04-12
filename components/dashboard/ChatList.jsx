@@ -5,12 +5,13 @@ import { format } from 'date-fns'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
-import { Plus } from 'lucide-react'
+import { Plus, Search, MoreVertical, MessageSquare } from 'lucide-react'
 
 export function ChatList({ chats, activeChatId, onSelectChat }) {
   const [showNewChatDialog, setShowNewChatDialog] = useState(false)
   const [newPhoneNumber, setNewPhoneNumber] = useState('')
   const [newContactName, setNewContactName] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
 
   const formatTime = (date) => {
     return format(new Date(date), 'h:mm a')
@@ -25,7 +26,7 @@ export function ChatList({ chats, activeChatId, onSelectChat }) {
     } else if (messageDate > new Date(today.setDate(today.getDate() - 1))) {
       return 'Yesterday'
     } else {
-      return format(messageDate, 'MMM d')
+      return format(messageDate, 'dd/MM/yy')
     }
   }
 
@@ -33,15 +34,8 @@ export function ChatList({ chats, activeChatId, onSelectChat }) {
     if (!newPhoneNumber.trim()) return
 
     try {
-      // Create a new chat via API
-      const requestBody = {
-        phone: newPhoneNumber
-      }
-      
-      // Only add name to request if it's provided
-      if (newContactName.trim()) {
-        requestBody.name = newContactName.trim()
-      }
+      const requestBody = { phone: newPhoneNumber }
+      if (newContactName.trim()) requestBody.name = newContactName.trim()
 
       const response = await fetch('/api/chats', {
         method: 'POST',
@@ -49,9 +43,7 @@ export function ChatList({ chats, activeChatId, onSelectChat }) {
         body: JSON.stringify(requestBody)
       })
 
-      if (!response.ok) {
-        throw new Error('Failed to create chat')
-      }
+      if (!response.ok) throw new Error('Failed to create chat')
 
       const newChat = await response.json()
       onSelectChat(newChat)
@@ -63,98 +55,105 @@ export function ChatList({ chats, activeChatId, onSelectChat }) {
     }
   }
 
+  const filteredChats = chats.filter(chat => 
+    chat.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    chat.phone.includes(searchQuery)
+  )
+
   return (
-    <div className="flex h-full flex-col rounded-[1.5rem] border border-slate-200/70 bg-white/90 shadow-[0_24px_50px_-36px_rgba(5,52,92,0.45)] dark:border-white/[0.06] dark:bg-[#0d0f17] dark:shadow-none">
-      <div className="flex items-center justify-between border-b border-slate-200/70 bg-slate-50/80 p-3 dark:border-white/[0.06] dark:bg-white/[0.03]">
-        <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.28em] text-slate-400 dark:text-white/25">Inbox</p>
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Chats</h2>
+    <div className="flex h-full flex-col bg-white dark:bg-[#111b21] border-r border-gray-200 dark:border-white/5">
+      {/* List Header */}
+      <div className="flex items-center justify-between bg-[#f0f2f5] dark:bg-[#202c33] px-4 py-2">
+        <div className="w-10 h-10 rounded-full bg-slate-200 overflow-hidden cursor-pointer hover:bg-slate-300 transition-colors">
+          <img src="https://i.pravatar.cc/150?u=me" alt="Me" className="w-full h-full object-cover" />
         </div>
-        <Dialog open={showNewChatDialog} onOpenChange={setShowNewChatDialog}>
-          <DialogTrigger asChild>
-            <Button size="sm" variant="ghost" className="rounded-full border border-slate-200/70 bg-white/80 p-2 text-slate-700 shadow-sm hover:bg-slate-100 dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-white/70 dark:hover:bg-white/[0.08]" onClick={() => setShowNewChatDialog(true)}>
-              <Plus className="w-5 h-5" />
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Create New Chat</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div>
-                <label htmlFor="name" className="mb-1 block text-sm font-medium text-slate-700 dark:text-white/70">
-                  Contact Name (Optional)
-                </label>
+        <div className="flex items-center space-x-5 text-[#54656f] dark:text-[#aebac1]">
+          <Dialog open={showNewChatDialog} onOpenChange={setShowNewChatDialog}>
+            <DialogTrigger asChild>
+              <button className="p-1 hover:bg-gray-200 dark:hover:bg-white/10 rounded-full transition-colors">
+                <MessageSquare className="w-6 h-6" />
+              </button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-[425px] dark:bg-[#202c33] dark:text-white border-none">
+              <DialogHeader>
+                <DialogTitle className="text-xl">New Chat</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
                 <Input
-                  id="name"
-                  type="text"
-                  placeholder="Customer Name"
+                  placeholder="Contact Name (Optional)"
                   value={newContactName}
                   onChange={(e) => setNewContactName(e.target.value)}
-                  className="w-full"
+                  className="bg-white dark:bg-[#2a3942] border-none focus-visible:ring-emerald-500"
                 />
-              </div>
-              <div>
-                <label htmlFor="phone" className="mb-1 block text-sm font-medium text-slate-700 dark:text-white/70">
-                  Phone Number
-                </label>
                 <Input
-                  id="phone"
-                  type="tel"
-                  placeholder="+1234567890"
+                  placeholder="Phone Number (e.g. 919876543210)"
                   value={newPhoneNumber}
                   onChange={(e) => setNewPhoneNumber(e.target.value)}
-                  className="w-full"
+                  className="bg-white dark:bg-[#2a3942] border-none focus-visible:ring-emerald-500"
                 />
-              </div>
-              <div className="flex justify-end space-x-2">
-                <Button variant="outline" onClick={() => setShowNewChatDialog(false)}>
-                  Cancel
-                </Button>
-                <Button onClick={handleCreateNewChat}>
+                <Button 
+                  onClick={handleCreateNewChat} 
+                  className="w-full bg-[#00a884] hover:bg-[#06cf9c] text-white font-semibold rounded-lg h-11"
+                >
                   Create Chat
                 </Button>
               </div>
-            </div>
-          </DialogContent>
-        </Dialog>
+            </DialogContent>
+          </Dialog>
+          <button className="p-1 hover:bg-gray-200 dark:hover:bg-white/10 rounded-full transition-colors">
+            <MoreVertical className="w-6 h-6" />
+          </button>
+        </div>
       </div>
-      <div className="flex-1 overflow-y-auto">
-        {chats.map((chat) => (
+
+      {/* Search Bar */}
+      <div className="p-2 border-b border-gray-100 dark:border-white/5">
+        <div className="relative flex items-center bg-[#f0f2f5] dark:bg-[#202c33] rounded-lg px-3 py-1.5 group">
+          <Search className="w-5 h-5 text-gray-500 mr-3 group-focus-within:text-[#00a884] transition-colors" />
+          <input
+            type="text"
+            placeholder="Search or start new chat"
+            className="flex-1 bg-transparent border-none outline-none text-[15px] text-gray-700 dark:text-[#e9edef] placeholder:text-gray-500"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </div>
+      </div>
+
+      {/* Chat List Items */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar">
+        {filteredChats.map((chat) => (
           <div
             key={chat.id}
-            className={`flex cursor-pointer items-center border-b border-slate-200/60 p-3 transition-colors hover:bg-slate-50 dark:border-white/[0.06] dark:hover:bg-white/[0.04] ${
-              activeChatId === chat.id ? 'bg-[#eff4ff] dark:bg-violet-600/10' : ''
+            className={`flex items-center px-3 py-3 cursor-pointer transition-colors relative border-b border-gray-50 dark:border-white/5 mx-1 rounded-sm ${
+              activeChatId === chat.id 
+                ? 'bg-[#f0f2f5] dark:bg-[#2a3942]' 
+                : 'hover:bg-[#f5f6f6] dark:hover:bg-[#202c33]'
             }`}
             onClick={() => onSelectChat(chat)}
           >
             <div className="relative flex-shrink-0">
               <img
-                src={chat.avatar}
+                src={chat.avatar || `https://i.pravatar.cc/150?u=${chat.phone}`}
                 alt={chat.name}
                 className="w-12 h-12 rounded-full object-cover"
               />
-              {chat.unread > 0 && (
-                <div className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-xs text-white">
-                  {chat.unread}
-                </div>
-              )}
             </div>
-            <div className="ml-3 flex-1 min-w-0">
+            <div className="ml-3 flex-1 min-w-0 flex flex-col justify-center">
               <div className="flex items-center justify-between">
-                <h3 className="truncate text-sm font-medium text-slate-900 dark:text-white">
+                <h3 className="truncate text-[17px] font-normal text-[#111b21] dark:text-[#e9edef]">
                   {chat.name}
                 </h3>
-                <span className="text-xs text-slate-500 dark:text-white/35">
+                <span className={`text-xs ${chat.unread > 0 ? 'text-[#00a884] font-semibold' : 'text-[#667781] dark:text-[#8696a0]'}`}>
                   {formatDate(chat.timestamp)}
                 </span>
               </div>
-              <div className="flex items-center justify-between mt-1">
-                <p className="truncate text-sm text-slate-500 dark:text-white/45">
+              <div className="flex items-center justify-between mt-0.5">
+                <p className="truncate text-[14px] text-[#667781] dark:text-[#8696a0] leading-tight flex-1">
                   {chat.lastMessage}
                 </p>
                 {chat.unread > 0 && (
-                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-xs text-white">
+                  <span className="flex h-[20px] min-w-[20px] px-1.5 items-center justify-center rounded-full bg-[#00a884] text-[12px] font-bold text-white ml-2">
                     {chat.unread}
                   </span>
                 )}
@@ -163,6 +162,18 @@ export function ChatList({ chats, activeChatId, onSelectChat }) {
           </div>
         ))}
       </div>
+      
+      <style jsx>{`
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background-color: transparent;
+        }
+        .custom-scrollbar:hover::-webkit-scrollbar-thumb {
+          background-color: #374151;
+        }
+      `}</style>
     </div>
   )
 }
