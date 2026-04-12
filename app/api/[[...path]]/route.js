@@ -341,6 +341,31 @@ async function getStoredIntegrations(userId = 'default') {
   }
 }
 
+async function getAnyStoredWhatsAppWebhookVerifyToken() {
+  try {
+    await ensureSettingsTables()
+    const pool = getMysqlPool()
+    const [rows] = await pool.execute(
+      `SELECT whatsapp
+       FROM integrations
+       WHERE whatsapp IS NOT NULL
+       ORDER BY updatedAt IS NULL, updatedAt DESC, id DESC`
+    )
+
+    for (const row of rows || []) {
+      const whatsapp = typeof row?.whatsapp === 'string' ? JSON.parse(row.whatsapp) : row?.whatsapp
+      const token = String(whatsapp?.webhookVerifyToken || '').trim()
+      if (token) {
+        return token
+      }
+    }
+  } catch (error) {
+    console.error('[getAnyStoredWhatsAppWebhookVerifyToken] Error:', error.message)
+  }
+
+  return ''
+}
+
 async function saveStoredIntegration(type, data, userId = 'default') {
   try {
     await ensureSettingsTables()
@@ -3455,8 +3480,11 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
         let storedToken = ''
 
         try {
-          const integrations = await getStoredIntegrations()
-          storedToken = integrations?.whatsapp?.webhookVerifyToken || ''
+          const defaultIntegrations = await getStoredIntegrations()
+          storedToken = defaultIntegrations?.whatsapp?.webhookVerifyToken || ''
+          if (!storedToken) {
+            storedToken = await getAnyStoredWhatsAppWebhookVerifyToken()
+          }
         } catch (error) {
           console.error('Failed to load WhatsApp webhook token from storage:', error)
         }
