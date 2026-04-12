@@ -1518,10 +1518,18 @@ function getSequentialStepId(steps, currentStepId) {
 }
 
 function getNextAutomationStepId(steps, step, key = 'main') {
-  const explicitTarget = step?.connections?.[key]
+  if (!step || !step.connections) {
+    // If no connections, try to get the next sequential step if it's a message type
+    if (step && step.type === 'message') {
+      return getSequentialStepId(steps, step.id);
+    }
+    return '';
+  }
+  const explicitTarget = step.connections[key]
   if (explicitTarget) return explicitTarget
+  
   if (key === 'fallback') return ''
-  return getSequentialStepId(steps, step?.id)
+  return getSequentialStepId(steps, step.id)
 }
 
 function matchesCondition(rule, context) {
@@ -1729,16 +1737,28 @@ async function executeAutomationsForEvent(eventType, context, integrations, user
 
     // ── If customer is replying to an interactive menu, jump straight to it ──
     // This avoids re-walking the entire flow from the trigger.
-    const awaitingStepId = conversationState?.awaitingInteractiveStepId || null
-    const isReplyingToMenu = !!(
-      isIncomingWhatsAppAutomation &&
-      context._isInteractiveReply &&
-      awaitingStepId &&
-      steps.find(s => s.id === awaitingStepId)
-    )
-    let currentStepId = isReplyingToMenu
-      ? awaitingStepId
-      : getNextAutomationStepId(steps, trigger, 'main')
+    let currentStepId = ''
+    if (isIncomingWhatsAppAutomation && context._isInteractiveReply && context._chosenOptionId) {
+      console.log(`[executeAutomationsForEvent] Processing interactive reply: ${context._chosenOptionId} for state: ${conversationState?.state}`)
+      if (conversationState?.awaitingInteractiveStepId) {
+        const lastStep = steps.find(s => s.id === conversationState.awaitingInteractiveStepId)
+        if (lastStep && lastStep.connections && lastStep.connections[context._chosenOptionId]) {
+          currentStepId = lastStep.connections[context._chosenOptionId]
+          console.log(`[executeAutomationsForEvent] Found branch for ${context._chosenOptionId} -> ${currentStepId}`)
+        } else {
+          console.log(`[executeAutomationsForEvent] No connection found for ${context._chosenOptionId} in step ${lastStep?.id}`)
+        }
+      }
+    }
+
+    if (!currentStepId) {
+      const triggerIndex = steps.findIndex((s) => s.type === 'trigger' && s.event === eventType)
+      if (triggerIndex !== -1) {
+        const trigger = steps[triggerIndex]
+        currentStepId = getNextAutomationStepId(steps, trigger, 'main')
+        console.log(`[executeAutomationsForEvent] Starting from trigger: ${trigger.id}, next step: ${currentStepId}`)
+      }
+    }
 
     // After routing through an interactive choice we track when the first reply
     // message has been sent so we can STOP — prevents the sequential auto-connection

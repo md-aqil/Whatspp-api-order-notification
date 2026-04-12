@@ -68,19 +68,24 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
       scrollToBottom()
       isInitialRenderRef.current = false
     } 
-    // If user sent a message (added by user), scroll to bottom and play outgoing sound
-    else if (hasNewMessages && messages[messages.length - 1]?.isCustomer === false) {
-      scrollToBottom()
-      playSound(outgoingSoundRef)
-    } 
-    // If user is at bottom and new messages arrive, scroll to bottom and play incoming sound
-    else if (hasNewMessages && isUserAtBottom()) {
-      scrollToBottom()
-      playSound(incomingSoundRef)
-    }
-    // If new message arrives but user is not at bottom, play incoming sound only
-    else if (hasNewMessages && !isUserAtBottom()) {
-      playSound(incomingSoundRef)
+    // Logic for new messages
+    else if (hasNewMessages) {
+      const lastMessage = messages[messages.length - 1]
+      
+      // If user sent a message, always scroll to bottom
+      if (lastMessage?.isCustomer === false) {
+        scrollToBottom()
+        playSound(outgoingSoundRef)
+      } 
+      // If new incoming message, scroll only if user is already at bottom
+      else if (isUserAtBottom()) {
+        scrollToBottom()
+        playSound(incomingSoundRef)
+      }
+      // If new incoming message and NOT at bottom, just play sound
+      else {
+        playSound(incomingSoundRef)
+      }
     }
     
     // Update the previous message count

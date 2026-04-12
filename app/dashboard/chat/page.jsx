@@ -16,7 +16,6 @@ export default function DashboardChatPage() {
   const [waAccounts, setWaAccounts] = useState([])
   const [selectedAccountId, setSelectedAccountId] = useState(null)
   const [authError, setAuthError] = useState('')
-  const wsRef = useRef(null)
   const pollingIntervalRef = useRef(null)
   const lastMessageCountRef = useRef(0)
 
@@ -38,7 +37,7 @@ export default function DashboardChatPage() {
         if (response.ok) {
           const data = await response.json()
           setChats(data)
-          if (data.length > 0) {
+          if (data.length > 0 && !activeChat) {
             setActiveChat(data[0])
           }
         } else if (response.status === 401) {
@@ -66,6 +65,9 @@ export default function DashboardChatPage() {
         if (response.ok) {
           const data = await response.json()
           setWaAccounts(data.accounts || [])
+          if (data.accounts?.length > 0) {
+            setSelectedAccountId(data.accounts[0].id)
+          }
         }
       } catch (error) {
         console.error('Failed to load WhatsApp accounts:', error)
@@ -74,69 +76,53 @@ export default function DashboardChatPage() {
     loadWaAccounts()
   }, [])
 
-  // Load messages for the active chat
+  // Load and poll messages for the active chat
   useEffect(() => {
     if (!activeChat) return
 
-    const loadMessages = async () => {
+    const fetchMessages = async () => {
       try {
         const response = await fetch(`/api/chats/${activeChat.phone}/messages`)
         if (response.ok) {
           const data = await response.json()
-          setMessages(data)
-          lastMessageCountRef.current = data.length
-        } else if (response.status === 401) {
-          handleAuthFailure()
-        } else {
-          throw new Error('Failed to load messages')
-        }
-      } catch (error) {
-        console.error('Failed to load messages:', error)
-        setMessages([])
-        lastMessageCountRef.current = 0
-      }
-    }
-
-    loadMessages()
-    
-    // Set up polling for new messages with optimized interval
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current)
-    }
-    
-    pollingIntervalRef.current = setInterval(async () => {
-      try {
-        const response = await fetch(`/api/chats/${activeChat.phone}/messages`)
-        if (response.ok) {
-          const data = await response.json()
-          // Only update if we have new messages
+          
+          // Only update if message count changed
           if (data.length !== lastMessageCountRef.current) {
-            // Check for new incoming messages (from customer)
-            const newMessages = data.slice(lastMessageCountRef.current)
-            const newIncomingMessages = newMessages.filter(msg => msg.isCustomer === true)
-            
-            // Show toast notifications for each new incoming message
-            newIncomingMessages.forEach(msg => {
-              toast(`New message from ${activeChat.name}`, {
-                description: msg.text,
-                duration: 5000,
-                icon: '💬'
+            // Check for new incoming messages for toast
+            if (lastMessageCountRef.current > 0) {
+              const newMessages = data.slice(lastMessageCountRef.current)
+              newMessages.forEach(msg => {
+                if (msg.isCustomer) {
+                  toast(`New message from ${activeChat.name}`, {
+                    description: msg.message,
+                    icon: '💬'
+                  })
+                }
               })
-            })
+            }
             
             setMessages(data)
             lastMessageCountRef.current = data.length
           }
         } else if (response.status === 401) {
           handleAuthFailure()
-          clearInterval(pollingIntervalRef.current)
+          if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current)
         }
       } catch (error) {
-        console.error('Failed to poll messages:', error)
+        console.error('Failed to fetch messages:', error)
       }
-    }, 10000) // Increased polling interval to 10 seconds to reduce server load
+    }
 
-    // Clean up polling interval
+    // Initial load
+    fetchMessages()
+    
+    // Set up polling (3 seconds)
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current)
+    }
+    
+    pollingIntervalRef.current = setInterval(fetchMessages, 3000)
+
     return () => {
       if (pollingIntervalRef.current) {
         clearInterval(pollingIntervalRef.current)
@@ -146,95 +132,70 @@ export default function DashboardChatPage() {
 
   const handleSelectChat = (chat) => {
     setActiveChat(chat)
-    // Mark messages as read
+    lastMessageCountRef.current = 0 // Reset to trigger full sync
     setChats(prev => prev.map(c => 
       c.id === chat.id ? { ...c, unread: 0 } : c
     ))
-    
-    // If this is a new chat that doesn't exist in the database yet, add it to the chats list
-    if (!chats.some(c => c.id === chat.id)) {
-      setChats(prev => [...prev, chat])
-    }
   }
 
   const handleSendMessage = async (messageText) => {
     if (!activeChat || !messageText.trim()) return
 
     try {
-      // Send the message to WhatsApp API
       const response = await fetch('/api/send-whatsapp-message', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           to: activeChat.phone,
           message: messageText,
-          ...(selectedAccountId ? { accountId: selectedAccountId } : {})
+          accountId: selectedAccountId
         })
       })
       
       if (!response.ok) {
-        let errorMessage = 'Failed to send message'
-        try {
-          const errorData = await response.json()
-          if (response.status === 401) {
-            handleAuthFailure(errorData.error || 'Your session expired. Please sign in again.')
-            return
-          }
-          errorMessage = errorData.guidance
-            ? `${errorData.error} ${errorData.guidance}`
-            : (errorData.error || errorMessage)
-        } catch {
-          // Keep the fallback message if the response body is not JSON.
-        }
-        throw new Error(errorMessage)
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Failed to send message')
       }
       
       const result = await response.json()
-      console.log(`Message sent to ${activeChat.phone}: ${messageText}`)
       
-      // Update the chat list immediately
+      // Update local state immediately for snappy feel
+      if (result.message) {
+        setMessages(prev => [...prev, result.message])
+        lastMessageCountRef.current = lastMessageCountRef.current + 1
+      }
+      
+      // Update chat list last message
       setChats(prev => prev.map(chat => 
-        chat.id === activeChat.id 
+        chat.phone === activeChat.phone 
           ? { ...chat, lastMessage: messageText, timestamp: new Date() }
           : chat
       ))
       
-      // If the API returned the saved message, add it to the messages list
-      if (result.message) {
-        setMessages(prev => [...prev, result.message])
-        lastMessageCountRef.current = [...messages, result.message].length
-      } else {
-        // Fallback: refresh all messages to show the newly sent message
-        // This will fetch the message with its proper ID from the database
-        const messagesResponse = await fetch(`/api/chats/${activeChat.phone}/messages`)
-        if (messagesResponse.ok) {
-          const data = await messagesResponse.json()
-          setMessages(data)
-          lastMessageCountRef.current = data.length
-        }
-      }
-      
     } catch (error) {
       console.error('Failed to send message:', error)
-      toast.error(error.message || 'Failed to send message. Please try again.')
+      toast.error(error.message)
     }
   }
 
   if (loading) {
     return (
-      <div className="chat-scene flex h-full items-center justify-center rounded-[1.75rem] border border-slate-200/70 bg-white/80 dark:border-white/[0.06] dark:bg-[#0d0f17]">
-        <p className="text-slate-600 dark:text-white/55">Loading chats...</p>
+      <div className="flex h-full items-center justify-center bg-slate-50 dark:bg-[#0b0d14]">
+        <div className="flex flex-col items-center gap-4">
+          <div className="h-10 w-10 animate-spin rounded-full border-4 border-emerald-500 border-t-transparent" />
+          <p className="text-slate-500 dark:text-white/40">Loading your conversations...</p>
+        </div>
       </div>
     )
   }
 
   if (authError) {
     return (
-      <div className="chat-scene flex h-full items-center justify-center rounded-[1.75rem] border border-rose-200/80 bg-white/85 dark:border-rose-500/20 dark:bg-[#0d0f17]">
-        <div className="max-w-md text-center">
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Session expired</h2>
-          <p className="mt-2 text-sm text-slate-600 dark:text-white/55">{authError}</p>
-          <Button className="mt-4" onClick={() => router.push('/login')}>
+      <div className="flex h-full items-center justify-center bg-slate-50 dark:bg-[#0b0d14]">
+        <div className="max-w-md rounded-2xl border border-rose-100 bg-white p-8 text-center shadow-sm dark:border-rose-500/10 dark:bg-[#11131d]">
+          <h2 className="text-xl font-bold text-slate-900 dark:text-white">Session Expired</h2>
+          <p className="mt-2 text-slate-500 dark:text-white/50">{authError}</p>
+          <Button className="mt-6 bg-emerald-600 hover:bg-emerald-700" onClick={() => router.push('/login')}>
             Sign in again
           </Button>
         </div>
@@ -243,10 +204,11 @@ export default function DashboardChatPage() {
   }
 
   return (
-    <div className="chat-scene flex h-full -ml-6 -mt-6 border-t border-slate-200/60 bg-slate-100/70 dark:border-white/[0.06] dark:bg-[#0b0d14]">
-      <Toaster position="bottom-right" />
-      {/* Left Panel - Chat List */}
-      <div className="flex h-full w-1/3 flex-col border-r border-slate-200/60 bg-transparent dark:border-white/[0.06]">
+    <div className="flex h-full -ml-8 -mt-8 w-[calc(100%+4rem)] overflow-hidden bg-white dark:bg-[#0b0d14]">
+      <Toaster position="top-center" />
+      
+      {/* Sidebar */}
+      <div className="w-[320px] lg:w-[400px] flex-shrink-0 border-r border-slate-200/60 dark:border-white/[0.05]">
         <ChatList 
           chats={chats} 
           activeChatId={activeChat?.id} 
@@ -254,8 +216,8 @@ export default function DashboardChatPage() {
         />
       </div>
       
-      {/* Right Panel - Chat Window */}
-      <div className="flex-1 flex flex-col h-full">
+      {/* Content */}
+      <div className="flex-1 min-w-0">
         {activeChat ? (
           <ChatWindow 
             chat={activeChat} 
@@ -263,13 +225,16 @@ export default function DashboardChatPage() {
             onSendMessage={handleSendMessage} 
           />
         ) : (
-          <div className="flex flex-1 items-center justify-center bg-slate-100/70 dark:bg-[#11131d]">
-            <div className="text-center">
-              <div className="mx-auto mb-4 h-16 w-16 rounded-xl border-2 border-dashed border-slate-300 bg-slate-200 dark:border-white/[0.08] dark:bg-white/[0.04]" />
-              <h3 className="mb-2 text-xl font-semibold text-slate-800 dark:text-white">WhatsApp Web</h3>
-              <p className="max-w-md text-slate-500 dark:text-white/45">
-                Send and receive messages without keeping your phone online.
-                Use WhatsApp on up to 4 linked devices and 1 phone at the same time.
+          <div className="flex h-full flex-col items-center justify-center bg-slate-50 dark:bg-[#11131d]">
+            <div className="flex flex-col items-center max-w-sm text-center px-6">
+              <div className="mb-6 h-24 w-24 rounded-full bg-emerald-100 dark:bg-emerald-500/10 flex items-center justify-center">
+                <svg viewBox="0 0 24 24" width="48" height="48" stroke="currentColor" strokeWidth="1.5" fill="none" className="text-emerald-600 dark:text-emerald-500">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                </svg>
+              </div>
+              <h3 className="text-2xl font-bold text-slate-800 dark:text-white mb-2">WhatsApp for Business</h3>
+              <p className="text-slate-500 dark:text-white/40 text-sm leading-relaxed">
+                Connect with your customers instantly. Messages are synced automatically every 3 seconds.
               </p>
             </div>
           </div>
