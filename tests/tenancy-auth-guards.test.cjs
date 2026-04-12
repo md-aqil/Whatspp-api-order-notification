@@ -75,6 +75,16 @@ test('registered webhook routes derive tenant from auth and scope mutations by u
   assert.match(source, /SELECT \* FROM registered_webhooks WHERE id = \? AND userId = \?/)
 })
 
+test('chat and send endpoints require auth instead of falling back to the default tenant', () => {
+  const source = read('app/api/[[...path]]/route.js')
+
+  assert.match(source, /import \{ requireRequestUserId, resolveRequestUserId \} from '@\/lib\/request-user'/)
+  assert.match(source, /if \(route === '\/send-whatsapp-message' && method === 'POST'\) \{\s*try \{\s*const authenticatedUserId = requireRequestUserId\(request\)/s)
+  assert.match(source, /if \(route === '\/chats' && method === 'GET'\) \{\s*try \{\s*const authenticatedUserId = requireRequestUserId\(request\)/s)
+  assert.match(source, /if \(route\.startsWith\('\/chats\/'\) && route\.endsWith\('\/messages'\) && method === 'GET'\) \{\s*try \{\s*const authenticatedUserId = requireRequestUserId\(request\)/s)
+  assert.match(source, /if \(route === '\/chats' && method === 'POST'\) \{\s*try \{\s*const authenticatedUserId = requireRequestUserId\(request\)/s)
+})
+
 test('integration storage uses the authenticated tenant and backfills legacy default settings', () => {
   const source = read('app/api/[[...path]]/route.js')
 
@@ -97,4 +107,14 @@ test('automation storage uses tenant-scoped keys and atomic saves', () => {
   assert.match(source, /await connection\.commit\(\)/)
   assert.match(source, /await connection\.rollback\(\)/)
   assert.match(source, /DELETE FROM automations[\s\S]*AND id NOT IN \(\$\{placeholders\}\)/)
+})
+
+test('auth uses a one-hour access token and returns 401 for invalid auth cookies', () => {
+  const authSource = read('lib/auth.js')
+  const authMeSource = read('app/api/auth/me/route.js')
+
+  assert.match(authSource, /const ACCESS_TOKEN_EXPIRY = '1h'/)
+  assert.match(authMeSource, /TokenExpiredError/)
+  assert.match(authMeSource, /JsonWebTokenError/)
+  assert.match(authMeSource, /return NextResponse\.json\(\{ error: 'Not authenticated' \}, \{ status: 401 \}\)/)
 })

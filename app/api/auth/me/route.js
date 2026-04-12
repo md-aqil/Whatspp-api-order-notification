@@ -24,6 +24,9 @@ export async function GET(request) {
     return NextResponse.json({ user })
   } catch (error) {
     console.error('Get user error:', error)
+    if (error?.name === 'TokenExpiredError' || error?.name === 'JsonWebTokenError') {
+      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+    }
     return NextResponse.json({ error: 'Failed to get user' }, { status: 500 })
   }
 }

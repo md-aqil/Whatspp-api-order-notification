@@ -14,7 +14,7 @@ import {
   persistCartRecoveryEvent
 } from '@/lib/cart-recovery'
 import { getLocalIntegrationRecord, saveLocalIntegrationRecord } from '@/lib/local-settings-store'
-import { resolveRequestUserId } from '@/lib/request-user'
+import { requireRequestUserId, resolveRequestUserId } from '@/lib/request-user'
 import { ensureSettingsTables } from '@/lib/settings-db'
 
 let mysqlPool
@@ -4161,6 +4161,7 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
     // New endpoint to send WhatsApp messages from the dashboard
     if (route === '/send-whatsapp-message' && method === 'POST') {
       try {
+        const authenticatedUserId = requireRequestUserId(request)
         const body = await request.json()
         const { to, message, accountId } = body
 
@@ -4175,7 +4176,7 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
 
         // Get WhatsApp account - use accountId if provided, otherwise fallback to legacy integration
         if (accountId) {
-          const waAccount = await getWhatsAppAccountById(accountId, currentUserId)
+          const waAccount = await getWhatsAppAccountById(accountId, authenticatedUserId)
           if (!waAccount) {
             return handleCORS(NextResponse.json(
               { error: "WhatsApp account not found" },
@@ -4187,7 +4188,7 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
           businessAccountId = waAccount.businessAccountId || ''
         } else {
           // Legacy: Get from single integration
-          const integrations = await getStoredIntegrations(currentUserId)
+          const integrations = await getStoredIntegrations(authenticatedUserId)
           const waIntegration = typeof integrations?.whatsapp === 'string' 
             ? JSON.parse(integrations.whatsapp) 
             : integrations?.whatsapp
@@ -4224,7 +4225,7 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
         )
 
         // Save message to database
-        const savedMessage = await saveOutgoingMessage(to, message, result, currentUserId)
+        const savedMessage = await saveOutgoingMessage(to, message, result, authenticatedUserId)
 
         // Return the saved message object
         const messageResponse = {
@@ -4263,7 +4264,8 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
     // New endpoint to get chats for the dashboard
     if (route === '/chats' && method === 'GET') {
       try {
-        const chats = await getStoredChats(currentUserId)
+        const authenticatedUserId = requireRequestUserId(request)
+        const chats = await getStoredChats(authenticatedUserId)
 
         const cleanedChats = chats.map(({ _id, ...rest }) => rest)
         return handleCORS(NextResponse.json(cleanedChats))
@@ -4279,6 +4281,7 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
     // New endpoint to get messages for a specific chat
     if (route.startsWith('/chats/') && route.endsWith('/messages') && method === 'GET') {
       try {
+        const authenticatedUserId = requireRequestUserId(request)
         const phone = route.split('/')[2]; // Extract phone number from route
 
         if (!phone) {
@@ -4289,7 +4292,7 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
         }
 
         // Fetch all messages for this phone number (both incoming from customer and outgoing to customer)
-        const messages = await getStoredMessagesByPhone(phone, currentUserId);
+        const messages = await getStoredMessagesByPhone(phone, authenticatedUserId);
 
         // Transform messages to ensure consistent structure for the frontend
         const transformedMessages = messages.map(msg => {
@@ -4340,6 +4343,7 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
     // New endpoint to create a new chat
     if (route === '/chats' && method === 'POST') {
       try {
+        const authenticatedUserId = requireRequestUserId(request)
         let body;
         try {
           body = await request.json();
@@ -4364,7 +4368,7 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
         const formattedPhone = phone.replace(/\D/g, '');
 
         // Check if chat already exists
-        const existingChat = await getStoredChatByPhone(formattedPhone, currentUserId);
+        const existingChat = await getStoredChatByPhone(formattedPhone, authenticatedUserId);
 
         if (existingChat) {
           return handleCORS(NextResponse.json(existingChat));
@@ -4377,7 +4381,7 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
           lastMessage: 'Chat created',
           timestamp: new Date(),
           unread: 0
-        }, currentUserId);
+        }, authenticatedUserId);
 
         const { _id, ...cleanedChat } = newChat;
         return handleCORS(NextResponse.json(cleanedChat));
