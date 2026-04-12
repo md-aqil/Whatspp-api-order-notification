@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { defaultAutomations, sortAutomations } from '@/lib/automation-defaults'
 import { buildAutomationTemplateMappings, getAutomationTemplateBodyText, getAutomationTemplateParameterSlots, getAutomationVariableOptions, renderAutomationTemplateBodyPreview } from '@/lib/automation-template'
@@ -402,12 +402,14 @@ export function AutomationStudio() {
   const outerRef = useRef(null), canvasRef = useRef(null)
   const autoSaveReadyRef = useRef(false)
   const skipNextAutoSaveRef = useRef(false)
+  const latestAutomationsRef = useRef(defaultAutomations.map(normalize))
   const [automations, setAutomations] = useState(defaultAutomations.map(normalize))
   const [activeId, setActiveId] = useState(defaultAutomations[0].id)
   const [selId, setSelId] = useState(defaultAutomations[0].steps[0]?.id || null)
   const [draftName, setDraftName] = useState('')
   const [dlgOpen, setDlgOpen] = useState(false)
   const [mode, setMode] = useState('blank')
+  const [cloneSourceId, setCloneSourceId] = useState('')
   const [hydrated, setHydrated] = useState(false)
   const [templates, setTemplates] = useState([])
   const [tplErr, setTplErr] = useState('')
@@ -428,6 +430,10 @@ export function AutomationStudio() {
   const [triggerCategory, setTriggerCategory] = useState('')
   const [saveState, setSaveState] = useState('saved')
   const [lastSavedAt, setLastSavedAt] = useState(null)
+
+  useEffect(() => {
+    latestAutomationsRef.current = automations
+  }, [automations])
 
   // Fetch WordPress config for dynamic triggers and tables
   useEffect(() => {
@@ -501,21 +507,55 @@ export function AutomationStudio() {
   }, [automations, hydrated])
 
   // Auto-set trigger category based on current event
-  async function persist(list = automations, msg = '') {
+  const persist = useCallback(async (list = latestAutomationsRef.current, msg = '', options = {}) => {
     try {
-      setSaveState('saving')
       const payload = sortAutomations(list).map(a => ({ ...a, steps: reorder(a) }))
+      if (!options.silent) {
+        setSaveState('saving')
+      }
       console.log('Saving automations:', payload.map(a => ({ id: a.id, stepsCount: a.steps?.length, hasOptions: a.steps?.some(s => s.type === 'interactive' && s.options) })))
-      const r = await fetch('/api/automations', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ automations: payload }) })
+      const r = await fetch('/api/automations', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ automations: payload }),
+        keepalive: options.keepalive === true
+      })
       if (!r.ok) throw new Error('Save failed')
-      setSaveState('saved')
-      setLastSavedAt(Date.now())
+      if (!options.silent) {
+        setSaveState('saved')
+        setLastSavedAt(Date.now())
+      }
       if (msg) toast.success(msg)
     } catch {
-      setSaveState('error')
-      toast.error('Failed to save')
+      if (!options.silent) {
+        setSaveState('error')
+        toast.error('Failed to save')
+      }
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    function flushPendingAutomations() {
+      if (!hydrated || !autoSaveReadyRef.current) return
+      if (skipNextAutoSaveRef.current) return
+      if (saveState === 'saved') return
+      persist(latestAutomationsRef.current, '', { keepalive: true, silent: true })
+    }
+
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'hidden') {
+        flushPendingAutomations()
+      }
+    }
+
+    window.addEventListener('pagehide', flushPendingAutomations)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      window.removeEventListener('pagehide', flushPendingAutomations)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [hydrated, persist, saveState])
 
   const active = useMemo(() => automations.find(a => a.id === activeId) || automations[0], [activeId, automations])
   const activeDef = !!active && isDefault(active.id)
@@ -562,6 +602,39 @@ export function AutomationStudio() {
     if (!active) return null
     return active.steps.find(step => step.id === selId && step.type === 'test') || active.steps.find(step => step.type === 'test') || null
   }, [active, selId])
+  const cloneableAutomations = useMemo(() => {
+    const seen = new Set()
+    const combined = [
+      ...automations,
+      ...defaultAutomations.filter(flow => !automations.some(existing => existing.id === flow.id))
+    ]
+
+    return combined
+      .filter(flow => {
+        if (!flow?.id || seen.has(flow.id)) return false
+        seen.add(flow.id)
+        return true
+      })
+      .map(flow => ({
+        id: flow.id,
+        name: flow.name,
+        source: flow.source || 'Custom',
+        status: flow.status,
+        isDefault: isDefault(flow.id)
+      }))
+  }, [automations])
+  const createdCloneableAutomations = useMemo(() => (
+    cloneableAutomations.filter(flow => !flow.isDefault)
+  ), [cloneableAutomations])
+  const cloneSourceOptions = useMemo(() => (
+    [
+      ...createdCloneableAutomations,
+      ...cloneableAutomations.filter(flow => flow.isDefault)
+    ]
+  ), [cloneableAutomations, createdCloneableAutomations])
+  const defaultCloneableAutomations = useMemo(() => (
+    cloneableAutomations.filter(flow => flow.isDefault)
+  ), [cloneableAutomations])
 
   // Fetch automation logs when tab changes or active automation changes
   useEffect(() => {
@@ -584,6 +657,16 @@ export function AutomationStudio() {
       else if (sel.event.startsWith('custom.')) setTriggerCategory('custom')
     }
   }, [sel?.event, sel?.type])
+  useEffect(() => {
+    if (!cloneSourceOptions.length) {
+      setCloneSourceId('')
+      return
+    }
+    if (!cloneSourceId || !cloneSourceOptions.some(flow => flow.id === cloneSourceId)) {
+      const preferredActiveId = cloneSourceOptions.some(flow => flow.id === active?.id) ? active?.id : ''
+      setCloneSourceId(preferredActiveId || cloneSourceOptions[0]?.id || '')
+    }
+  }, [active?.id, cloneSourceId, cloneSourceOptions])
 
   // Merge static triggers with dynamic WooCommerce and Shopify triggers from config
   const dynamicTriggers = useMemo(() => {
@@ -729,9 +812,17 @@ export function AutomationStudio() {
   }
   function handleCreate() {
     const name = draftName.trim() || (mode === 'template' ? 'Flow Clone' : 'New Automation')
-    const nxt = mode === 'template' ? cloneFlow(defaultAutomations[0], name) : blankFlow(name)
+    const templateSource = cloneSourceOptions.find(flow => flow.id === cloneSourceId)
+    if (mode === 'template' && !templateSource) {
+      toast.error('Choose a flow to clone first')
+      return
+    }
+    const sourceAutomation = mode === 'template'
+      ? (automations.find(flow => flow.id === cloneSourceId) || defaultAutomations.find(flow => flow.id === cloneSourceId))
+      : null
+    const nxt = mode === 'template' && sourceAutomation ? cloneFlow(sourceAutomation, name) : blankFlow(name)
     setAutomations(cur => sortAutomations([nxt, ...cur])); setActiveId(nxt.id); setSelId(nxt.steps[0]?.id || null)
-    setDraftName(''); setMode('blank'); setDlgOpen(false); toast.success(`"${name}" created`)
+    setDraftName(''); setMode('blank'); setCloneSourceId(active?.id || ''); setDlgOpen(false); toast.success(`"${name}" created`)
   }
   function setStatus(id, s, msg = '') {
     const n = sortAutomations(automations.map(a => a.id === id ? { ...a, status: s } : a))
@@ -949,8 +1040,8 @@ export function AutomationStudio() {
         <button
           aria-label="Create new automation flow"
           onClick={() => setDlgOpen(true)}
-          className="ml-auto shrink-0 h-6 px-2.5 rounded-md bg-white/[0.04] hover:bg-white/10 text-white/50 hover:text-white border border-white/8 text-xs flex items-center gap-1 transition-all">
-          <Plus className="h-3 w-3" />New flow
+          className="ml-auto shrink-0 h-8 px-3.5 rounded-lg bg-violet-500/18 hover:bg-violet-500/28 text-violet-100 border border-violet-400/35 shadow-[0_8px_24px_rgba(109,40,217,0.18)] text-xs font-semibold flex items-center gap-1.5 transition-all">
+          <Plus className="h-3.5 w-3.5" />New flow
         </button>
       </div>
 
@@ -1995,7 +2086,7 @@ export function AutomationStudio() {
         </aside>
       </div>
       {/* NEW FLOW DIALOG — rendered at root so overflow can't clip it */}
-      <Dialog open={dlgOpen} onOpenChange={v => { setDlgOpen(v); if (!v) { setDraftName(''); setMode('blank') } }}>
+      <Dialog open={dlgOpen} onOpenChange={v => { setDlgOpen(v); if (!v) { setDraftName(''); setMode('blank'); setCloneSourceId((cloneSourceOptions.some(flow => flow.id === active?.id) ? active?.id : cloneSourceOptions[0]?.id) || '') } }}>
         <DialogContent overlayClassName="z-[200]" className="bg-[#13151f] border border-white/10 text-white sm:max-w-[500px] z-[200]">
           <DialogHeader>
             <DialogTitle className="text-white text-base">Create automation</DialogTitle>
@@ -2016,7 +2107,7 @@ export function AutomationStudio() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               {[
-                { m: 'template', icon: Copy, title: 'Clone template', desc: 'Copy the default order confirmation flow' },
+                { m: 'template', icon: Copy, title: 'Clone template', desc: 'Duplicate one of your existing flows and edit from there' },
                 { m: 'blank', icon: Sparkles, title: 'Blank canvas', desc: 'Start with one trigger and build from scratch' }
               ].map(({ m, icon: Icon, title, desc }) => (
                 <button key={m} type="button" onClick={() => setMode(m)} aria-pressed={mode === m}
@@ -2030,10 +2121,50 @@ export function AutomationStudio() {
                 </button>
               ))}
             </div>
+            {mode === 'template' && (
+              <div className="space-y-1.5">
+                <Label htmlFor="clone-source" className="text-[10px] font-bold uppercase tracking-widest text-white/30">Clone From</Label>
+                <Select value={cloneSourceId} onValueChange={setCloneSourceId} disabled={cloneSourceOptions.length === 0}>
+                  <SelectTrigger id="clone-source" className="bg-white/5 border-white/10 text-white rounded-xl focus:border-violet-500/50">
+                    <SelectValue placeholder={cloneSourceOptions.length ? 'Choose flow to clone' : 'No flows available'} />
+                  </SelectTrigger>
+                  <SelectContent className="z-[260] max-h-80 overflow-y-auto border-white/10 bg-[#13151f] text-white">
+                    {createdCloneableAutomations.length > 0 && (
+                      <SelectGroup>
+                        <SelectLabel className="px-2 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-white/30">Created Flows</SelectLabel>
+                        {createdCloneableAutomations.map(flow => (
+                          <SelectItem key={flow.id} value={flow.id} className="text-white/80 text-xs focus:bg-white/8 focus:text-white">
+                            {flow.name}{flow.id === active?.id ? ' (current)' : ''} • created
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    )}
+                    {createdCloneableAutomations.length > 0 && defaultCloneableAutomations.length > 0 && (
+                      <SelectSeparator className="my-1 bg-white/8" />
+                    )}
+                    {defaultCloneableAutomations.length > 0 && (
+                      <SelectGroup>
+                        <SelectLabel className="px-2 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-white/30">Default Templates</SelectLabel>
+                        {defaultCloneableAutomations.map(flow => (
+                          <SelectItem key={flow.id} value={flow.id} className="text-white/80 text-xs focus:bg-white/8 focus:text-white">
+                            {flow.name}{flow.id === active?.id ? ' (current)' : ''} • default
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    )}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-white/35">
+                  {cloneSourceOptions.length
+                    ? `Showing ${createdCloneableAutomations.length} created flow${createdCloneableAutomations.length === 1 ? '' : 's'} and ${defaultCloneableAutomations.length} default template${defaultCloneableAutomations.length === 1 ? '' : 's'} to clone from.`
+                    : 'Create one flow first before using clone template.'}
+                </p>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => setDlgOpen(false)} className="text-white/50 hover:text-white hover:bg-white/8">Cancel</Button>
-            <Button type="button" onClick={handleCreate} className="bg-violet-600 hover:bg-violet-700 text-white rounded-xl font-semibold">
+            <Button type="button" onClick={handleCreate} disabled={mode === 'template' && !cloneSourceId} className="bg-violet-600 hover:bg-violet-700 text-white rounded-xl font-semibold disabled:opacity-40 disabled:hover:bg-violet-600">
               <CopyPlus className="mr-2 h-4 w-4" />Create flow
             </Button>
           </DialogFooter>

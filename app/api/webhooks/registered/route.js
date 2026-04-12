@@ -1,14 +1,13 @@
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/postgres'
 import { ensureSettingsTables } from '@/lib/settings-db'
+import { requireRequestUserId } from '@/lib/request-user'
 
 // GET - List all registered webhooks
 export async function GET(request) {
     try {
         await ensureSettingsTables()
-
-        const url = new URL(request.url)
-        const userId = url.searchParams.get('userId') || 'default'
+        const userId = requireRequestUserId(request)
 
         const [rows] = await query(
             'SELECT * FROM registered_webhooks WHERE userId = ? ORDER BY createdAt DESC',
@@ -17,8 +16,9 @@ export async function GET(request) {
 
         return NextResponse.json(rows || [])
     } catch (error) {
+        const status = error.status || 500
         console.error('Error fetching registered webhooks:', error)
-        return NextResponse.json([])
+        return NextResponse.json(status === 401 ? { error: 'Not authenticated' } : [], { status })
     }
 }
 
@@ -32,9 +32,9 @@ export async function POST(request) {
             name,
             target_url,
             event_types = [],
-            secret_key,
-            userId = 'default'
+            secret_key
         } = body
+        const userId = requireRequestUserId(request)
 
         // Validation
         if (!name || !target_url) {
@@ -67,8 +67,9 @@ export async function POST(request) {
 
         return NextResponse.json(rows[0], { status: 201 })
     } catch (error) {
+        const status = error.status || 500
         console.error('Error creating registered webhook:', error)
-        return NextResponse.json({ error: 'Failed to create webhook' }, { status: 500 })
+        return NextResponse.json({ error: status === 401 ? 'Not authenticated' : 'Failed to create webhook' }, { status })
     }
 }
 
@@ -76,6 +77,7 @@ export async function POST(request) {
 export async function DELETE(request) {
     try {
         await ensureSettingsTables()
+        const userId = requireRequestUserId(request)
 
         const url = new URL(request.url)
         const id = url.searchParams.get('id')
@@ -88,14 +90,15 @@ export async function DELETE(request) {
         }
 
         await query(
-            'DELETE FROM registered_webhooks WHERE id = ?',
-            [id]
+            'DELETE FROM registered_webhooks WHERE id = ? AND userId = ?',
+            [id, userId]
         )
 
         return NextResponse.json({ message: 'Webhook deleted successfully' })
     } catch (error) {
+        const status = error.status || 500
         console.error('Error deleting registered webhook:', error)
-        return NextResponse.json({ error: 'Failed to delete webhook' }, { status: 500 })
+        return NextResponse.json({ error: status === 401 ? 'Not authenticated' : 'Failed to delete webhook' }, { status })
     }
 }
 
@@ -103,6 +106,7 @@ export async function DELETE(request) {
 export async function PUT(request) {
     try {
         await ensureSettingsTables()
+        const userId = requireRequestUserId(request)
 
         const body = await request.json()
         const { id, name, target_url, event_types, secret_key, is_active } = body
@@ -150,13 +154,13 @@ export async function PUT(request) {
         values.push(id)
 
         await query(
-            `UPDATE registered_webhooks SET ${updates.join(', ')} WHERE id = ?`,
-            values
+            `UPDATE registered_webhooks SET ${updates.join(', ')} WHERE id = ? AND userId = ?`,
+            [...values, userId]
         )
 
         const [rows] = await query(
-            'SELECT * FROM registered_webhooks WHERE id = ?',
-            [id]
+            'SELECT * FROM registered_webhooks WHERE id = ? AND userId = ?',
+            [id, userId]
         )
 
         if (!rows[0]) {
@@ -168,7 +172,8 @@ export async function PUT(request) {
 
         return NextResponse.json(rows[0])
     } catch (error) {
+        const status = error.status || 500
         console.error('Error updating registered webhook:', error)
-        return NextResponse.json({ error: 'Failed to update webhook' }, { status: 500 })
+        return NextResponse.json({ error: status === 401 ? 'Not authenticated' : 'Failed to update webhook' }, { status })
     }
 }

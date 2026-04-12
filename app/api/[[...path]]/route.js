@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { NextResponse } from 'next/server'
 import { buildMetaAuthHeaders, mapMetaAccessTokenError, sanitizeMetaAccessToken } from '@/lib/meta-auth'
 import { buildAutomationTemplateComponents as buildAutomationTemplateComponentsShared } from '@/lib/automation-template'
+import { validateWhatsAppPhoneNumberAccess } from '@/lib/whatsapp-meta'
 import {
   buildCartRecoveryContext,
   cancelPendingCartRecoveryJobs,
@@ -13,6 +14,7 @@ import {
   persistCartRecoveryEvent
 } from '@/lib/cart-recovery'
 import { getLocalIntegrationRecord, saveLocalIntegrationRecord } from '@/lib/local-settings-store'
+import { resolveRequestUserId } from '@/lib/request-user'
 import { ensureSettingsTables } from '@/lib/settings-db'
 
 let mysqlPool
@@ -142,7 +144,7 @@ function shouldSuppressWhatsAppAutomationStep(step, state, now = new Date()) {
   return false
 }
 
-async function getAutomationConversationState(automationId, recipient) {
+async function getAutomationConversationState(automationId, recipient, userId = 'default') {
   await ensureAutomationConversationStateTable()
 
   return queryOne(
@@ -150,16 +152,16 @@ async function getAutomationConversationState(automationId, recipient) {
      FROM automation_conversation_state
      WHERE userId = ? AND automationId = ? AND recipient = ?
      LIMIT 1`,
-    ['default', automationId, recipient]
+    [userId, automationId, recipient]
   )
 }
 
-async function saveAutomationConversationState(automationId, recipient, currentState = null, patch = {}) {
+async function saveAutomationConversationState(automationId, recipient, currentState = null, patch = {}, userId = 'default') {
   await ensureAutomationConversationStateTable()
 
   const nextState = {
     id: getAutomationConversationStateId(automationId, recipient),
-    userId: 'default',
+    userId,
     automationId,
     recipient,
     state: patch.state ?? currentState?.state ?? null,
@@ -275,37 +277,63 @@ async function getShopifyAccessToken(shopify) {
   return tokenData.access_token
 }
 
-async function getStoredIntegrations() {
+async function getStoredIntegrations(userId = 'default') {
   try {
     await ensureSettingsTables()
 
-    const result = await getMysqlPool().execute(
-      'SELECT whatsapp, shopify, stripe FROM integrations WHERE userId = ? ORDER BY updatedAt IS NULL, updatedAt DESC, id DESC LIMIT 1',
-      ['default']
-    )
-
-    const row = result[0][0]
-    console.log('[getStoredIntegrations] DB row:', JSON.stringify(row))
-    
-    if (row && (row.whatsapp || row.shopify || row.stripe)) {
-      // Parse JSON strings from MySQL
-      const parsed = {
-        whatsapp: typeof row.whatsapp === 'string' ? JSON.parse(row.whatsapp) : row.whatsapp,
-        shopify: typeof row.shopify === 'string' ? JSON.parse(row.shopify) : row.shopify,
-        stripe: typeof row.stripe === 'string' ? JSON.parse(row.stripe) : row.stripe
-      }
-      console.log('[getStoredIntegrations] Returning parsed DB data')
-      return parsed
+    const normalizedUserId = String(userId || 'default')
+    const pool = getMysqlPool()
+    const parseIntegrationRow = (row) => ({
+      whatsapp: typeof row.whatsapp === 'string' ? JSON.parse(row.whatsapp) : row.whatsapp,
+      shopify: typeof row.shopify === 'string' ? JSON.parse(row.shopify) : row.shopify,
+      stripe: typeof row.stripe === 'string' ? JSON.parse(row.stripe) : row.stripe
+    })
+    const hasIntegrationData = (row) => Boolean(row && (row.whatsapp || row.shopify || row.stripe))
+    const readIntegrationRow = async (lookupUserId) => {
+      const [rows] = await pool.execute(
+        'SELECT whatsapp, shopify, stripe FROM integrations WHERE userId = ? ORDER BY updatedAt IS NULL, updatedAt DESC, id DESC LIMIT 1',
+        [lookupUserId]
+      )
+      return rows[0] || null
     }
-    
+    const backfillUserScopedIntegrations = async (integrations) => {
+      if (!integrations || normalizedUserId === 'default') return
+
+      const integrationTypes = ['whatsapp', 'shopify', 'stripe']
+      for (const type of integrationTypes) {
+        if (integrations[type]) {
+          await saveStoredIntegration(type, integrations[type], normalizedUserId)
+        }
+      }
+    }
+
+    const row = await readIntegrationRow(normalizedUserId)
+    console.log('[getStoredIntegrations] DB row:', JSON.stringify(row))
+
+    if (hasIntegrationData(row)) {
+      console.log('[getStoredIntegrations] Returning parsed DB data')
+      return parseIntegrationRow(row)
+    }
+
+    if (normalizedUserId !== 'default') {
+      const legacyDefaultRow = await readIntegrationRow('default')
+      if (hasIntegrationData(legacyDefaultRow)) {
+        const parsedLegacy = parseIntegrationRow(legacyDefaultRow)
+        await backfillUserScopedIntegrations(parsedLegacy)
+        console.log('[getStoredIntegrations] Backfilled legacy default integration row for user:', normalizedUserId)
+        return parsedLegacy
+      }
+    }
+
     console.log('[getStoredIntegrations] DB empty, checking local...')
     const localRecord = await getLocalIntegrationRecord()
     console.log('[getStoredIntegrations] Local record:', JSON.stringify(localRecord))
-    
+
     if (localRecord) {
+      await backfillUserScopedIntegrations(localRecord)
       return localRecord
     }
-    
+
     return null
   } catch (error) {
     console.error('[getStoredIntegrations] Error:', error.message)
@@ -313,14 +341,14 @@ async function getStoredIntegrations() {
   }
 }
 
-async function saveStoredIntegration(type, data) {
+async function saveStoredIntegration(type, data, userId = 'default') {
   try {
     await ensureSettingsTables()
 
     const pool = getMysqlPool()
     const existing = await pool.execute(
       'SELECT id FROM integrations WHERE userId = ? ORDER BY updatedAt IS NULL, updatedAt DESC, id DESC LIMIT 1',
-      ['default']
+      [String(userId || 'default')]
     )
 
     if (existing[0][0]) {
@@ -341,7 +369,7 @@ async function saveStoredIntegration(type, data) {
       ? `INSERT INTO integrations (userId, shopify, createdAt, updatedAt) VALUES (?, ?, NOW(), NOW())`
       : `INSERT INTO integrations (userId, stripe, createdAt, updatedAt) VALUES (?, ?, NOW(), NOW())`
     
-    await pool.execute(insertSql, ['default', JSON.stringify(data)])
+    await pool.execute(insertSql, [String(userId || 'default'), JSON.stringify(data)])
 
     await saveLocalIntegrationRecord(type, data)
   } catch (error) {
@@ -355,6 +383,219 @@ async function saveStoredIntegration(type, data) {
     }
     // Re-throw the original error so the caller can handle it
     throw error
+  }
+}
+
+// Multi-account WhatsApp functions
+async function getStoredWhatsAppAccounts(userId = 'default') {
+  try {
+    await ensureSettingsTables()
+    const pool = getMysqlPool()
+    const [rows] = await pool.execute(
+      'SELECT id, userId, accountName, phoneNumberId, businessAccountId, phoneNumber, status, createdAt, updatedAt FROM whatsapp_accounts WHERE userId = ? ORDER BY createdAt DESC',
+      [userId]
+    )
+    return rows || []
+  } catch (error) {
+    console.error('[getStoredWhatsAppAccounts] Error:', error.message)
+    return []
+  }
+}
+
+async function getWhatsAppAccountById(accountId, userId = 'default') {
+  try {
+    await ensureSettingsTables()
+    const pool = getMysqlPool()
+    const [rows] = await pool.execute(
+      'SELECT id, userId, accountName, phoneNumberId, accessToken, businessAccountId, phoneNumber, status, createdAt, updatedAt FROM whatsapp_accounts WHERE id = ? AND userId = ?',
+      [accountId, userId]
+    )
+    return rows[0] || null
+  } catch (error) {
+    console.error('[getWhatsAppAccountById] Error:', error.message)
+    return null
+  }
+}
+
+async function getUserIdByWhatsAppPhoneNumberId(phoneNumberId) {
+  const normalizedId = String(phoneNumberId || '').trim()
+  if (!normalizedId) return 'default'
+
+  try {
+    await ensureSettingsTables()
+    const pool = getMysqlPool()
+
+    const [accountRows] = await pool.execute(
+      `SELECT userId
+       FROM whatsapp_accounts
+       WHERE phoneNumberId = ?
+       ORDER BY updatedAt DESC, createdAt DESC
+       LIMIT 1`,
+      [normalizedId]
+    )
+
+    if (accountRows[0]?.userId) {
+      return String(accountRows[0].userId)
+    }
+
+    const [integrationRows] = await pool.execute(
+      `SELECT userId
+       FROM integrations
+       WHERE JSON_UNQUOTE(JSON_EXTRACT(whatsapp, '$.phoneNumberId')) = ?
+       ORDER BY updatedAt DESC, createdAt DESC, id DESC
+       LIMIT 1`,
+      [normalizedId]
+    )
+
+    if (integrationRows[0]?.userId) {
+      return String(integrationRows[0].userId)
+    }
+  } catch (error) {
+    console.error('[getUserIdByWhatsAppPhoneNumberId] Error:', error.message)
+  }
+
+  return 'default'
+}
+
+async function ensureAutomationsTable() {
+  const [tableCheck] = await query("SHOW TABLES LIKE 'automations'")
+
+  if (tableCheck.length === 0) {
+    await query(`
+      CREATE TABLE IF NOT EXISTS automations (
+        userId VARCHAR(255) NOT NULL DEFAULT 'default',
+        id VARCHAR(255) NOT NULL,
+        name VARCHAR(255),
+        status BOOLEAN DEFAULT FALSE,
+        source VARCHAR(255),
+        summary TEXT,
+        steps JSON,
+        metrics JSON,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (userId, id)
+      )
+    `)
+  }
+
+  try {
+    const indexes = await queryMany('SHOW INDEX FROM automations')
+    const primaryColumns = indexes
+      .filter(index => index.Key_name === 'PRIMARY')
+      .sort((left, right) => left.Seq_in_index - right.Seq_in_index)
+      .map(index => index.Column_name)
+
+    if (primaryColumns.length === 1 && primaryColumns[0] === 'id') {
+      await query('ALTER TABLE automations DROP PRIMARY KEY, ADD PRIMARY KEY (userId, id)')
+    }
+  } catch (error) {
+    console.error('Failed to migrate automations primary key:', error)
+  }
+
+  try {
+    await query('CREATE INDEX automations_user_status_idx ON automations (userId, status)')
+  } catch {
+    // Index already exists.
+  }
+}
+
+async function seedDefaultAutomationsForUser(userId) {
+  const { defaultAutomations } = await import('@/lib/automation-defaults')
+
+  for (const auto of defaultAutomations) {
+    await query(
+      `INSERT INTO automations (id, userId, name, status, source, summary, steps, metrics, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+      [
+        auto.id,
+        userId,
+        auto.name,
+        auto.status ? 1 : 0,
+        auto.source || 'System',
+        auto.summary || '',
+        JSON.stringify(auto.steps || []),
+        JSON.stringify(auto.metrics || { sent: 0, openRate: 0, conversions: 0 })
+      ]
+    )
+  }
+}
+
+async function copyAutomationsBetweenUsers(sourceUserId, targetUserId) {
+  const [rows] = await query(
+    `SELECT id, name, status, source, summary, steps, metrics
+     FROM automations
+     WHERE userId = ?
+     ORDER BY updatedAt DESC, createdAt DESC`,
+    [sourceUserId]
+  )
+
+  if (!rows || rows.length === 0) {
+    return false
+  }
+
+  for (const row of rows) {
+    await query(
+      `INSERT INTO automations (id, userId, name, status, source, summary, steps, metrics, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+      [
+        row.id,
+        targetUserId,
+        row.name,
+        row.status,
+        row.source,
+        row.summary || '',
+        row.steps,
+        row.metrics
+      ]
+    )
+  }
+
+  return true
+}
+
+async function saveWhatsAppAccount(accountData, userId = 'default') {
+  try {
+    await ensureSettingsTables()
+    const pool = getMysqlPool()
+    const { id, accountName, phoneNumberId, accessToken, businessAccountId, phoneNumber } = accountData
+    const accountId = id || `wa_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    
+    const existing = await pool.execute(
+      'SELECT id FROM whatsapp_accounts WHERE id = ? AND userId = ?',
+      [accountId, userId]
+    )
+    
+    if (existing[0][0]) {
+      await pool.execute(
+        `UPDATE whatsapp_accounts SET accountName = ?, phoneNumberId = ?, accessToken = ?, businessAccountId = ?, phoneNumber = ?, updatedAt = NOW() WHERE id = ? AND userId = ?`,
+        [accountName, phoneNumberId, accessToken, businessAccountId, phoneNumber, accountId, userId]
+      )
+    } else {
+      await pool.execute(
+        `INSERT INTO whatsapp_accounts (id, userId, accountName, phoneNumberId, accessToken, businessAccountId, phoneNumber, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+        [accountId, userId, accountName, phoneNumberId, accessToken, businessAccountId, phoneNumber]
+      )
+    }
+    
+    return accountId
+  } catch (error) {
+    console.error('[saveWhatsAppAccount] Error:', error.message)
+    throw error
+  }
+}
+
+async function deleteWhatsAppAccount(accountId, userId = 'default') {
+  try {
+    await ensureSettingsTables()
+    const pool = getMysqlPool()
+    await pool.execute(
+      'DELETE FROM whatsapp_accounts WHERE id = ? AND userId = ?',
+      [accountId, userId]
+    )
+    return true
+  } catch (error) {
+    console.error('[deleteWhatsAppAccount] Error:', error.message)
+    return false
   }
 }
 
@@ -492,29 +733,6 @@ async function validateMetaCatalogAccess(whatsapp) {
   throw new Error(metaMessage)
 }
 
-async function validateWhatsAppPhoneNumberAccess(phoneNumberId, accessToken, businessAccountId = '') {
-  const response = await fetch(`https://graph.facebook.com/v22.0/${phoneNumberId}`, {
-    headers: buildMetaAuthHeaders(accessToken),
-    cache: 'no-store'
-  })
-
-  const data = await response.json()
-  if (response.ok) return
-
-  const metaMessage = mapMetaAccessTokenError(data.error?.message || 'Invalid WhatsApp credentials')
-  const unsupportedGet = /unsupported get request/i.test(metaMessage)
-  if (unsupportedGet || data.error?.code === 100) {
-    const looksLikeBusinessAccountId = String(phoneNumberId || '') === String(businessAccountId || '')
-    throw new Error(
-      looksLikeBusinessAccountId
-        ? 'Phone Number ID appears to be your Business Account ID. Use the numeric Phone Number ID from WhatsApp Manager or Meta Developer App setup.'
-        : 'Phone Number ID is invalid, inaccessible for this token, or you pasted the wrong Meta ID. Use the numeric Phone Number ID from WhatsApp Manager.'
-    )
-  }
-
-  throw new Error(metaMessage)
-}
-
 function normalizeWhatsAppIntegrationData(data = {}) {
   return {
     ...data,
@@ -638,30 +856,30 @@ async function getLatestStoredOrderByPhone(phone) {
   )
 }
 
-async function getStoredChats() {
+async function getStoredChats(userId = 'default') {
   return queryMany(
     'SELECT id, userId, phone, name, lastMessage, timestamp, unread, avatar FROM chats WHERE userId = ? ORDER BY timestamp IS NULL, timestamp DESC, createdAt IS NULL, createdAt DESC',
-    ['default']
+    [userId]
   )
 }
 
-async function getStoredMessagesByPhone(phone) {
+async function getStoredMessagesByPhone(phone, userId = 'default') {
   return queryMany(
     'SELECT id, userId, recipient, phone, message, isCustomer, timestamp, whatsappMessageId, status, messageType, products, template FROM messages WHERE userId = ? AND (recipient = ? OR phone = ?) ORDER BY timestamp IS NULL, timestamp ASC, createdAt IS NULL, createdAt ASC',
-    ['default', phone, phone]
+    [userId, phone, phone]
   )
 }
 
-async function getStoredChatByPhone(phone) {
+async function getStoredChatByPhone(phone, userId = 'default') {
   return queryOne(
     'SELECT id, userId, phone, name, lastMessage, timestamp, unread, avatar FROM chats WHERE userId = ? AND phone = ? LIMIT 1',
-    ['default', phone]
+    [userId, phone]
   )
 }
 
-async function upsertStoredChat({ phone, name, lastMessage, timestamp, unread }) {
+async function upsertStoredChat({ phone, name, lastMessage, timestamp, unread }, userId = 'default') {
   const pool = getMysqlPool()
-  const existing = await getStoredChatByPhone(phone)
+  const existing = await getStoredChatByPhone(phone, userId)
 
   if (existing) {
     await pool.execute(
@@ -675,12 +893,12 @@ async function upsertStoredChat({ phone, name, lastMessage, timestamp, unread })
         existing.id
       ]
     )
-    return getStoredChatByPhone(phone)
+    return getStoredChatByPhone(phone, userId)
   }
 
   const newChat = {
     id: uuidv4(),
-    userId: 'default',
+    userId,
     phone,
     name: name || `Customer ${phone}`,
     lastMessage: lastMessage || 'Chat created',
@@ -1358,14 +1576,14 @@ function buildIncomingWhatsAppAutomationContext(messageData, savedMessage, conta
   }
 }
 
-async function queueAutomationJob(automationId, recipient, message, template, payload, runAt) {
+async function queueAutomationJob(automationId, recipient, message, template, payload, runAt, userId = 'default') {
   const pool = getMysqlPool()
   if (!pool) return
 
   await pool.execute(
     `INSERT INTO automation_jobs (id, automationId, userId, recipient, message, template, payload, status, runAt, createdAt)
      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, NOW())`,
-    [uuidv4(), automationId, 'default', recipient, message, template || null, JSON.stringify(payload || {}), runAt]
+    [uuidv4(), automationId, userId, recipient, message, template || null, JSON.stringify(payload || {}), runAt]
   )
 }
 
@@ -1433,7 +1651,7 @@ async function sendTypingIndicator(phoneNumberId, accessToken, to, wamid) {
   }
 }
 
-async function executeAutomationsForEvent(eventType, context, integrations) {
+async function executeAutomationsForEvent(eventType, context, integrations, userId = 'default') {
   console.log('executeAutomationsForEvent called:', eventType, 'context:', JSON.stringify(context))
   
   const pool = getMysqlPool()
@@ -1446,8 +1664,8 @@ async function executeAutomationsForEvent(eventType, context, integrations) {
   const [rows] = await query(
     `SELECT id, name, steps, metrics
      FROM automations
-     WHERE userId = ? AND status = 1 AND triggerEvent = ?`,
-    ['default', eventType]
+     WHERE userId = ? AND status = 1`,
+    [userId]
   )
   
   // Parse JSON columns from MySQL
@@ -1477,7 +1695,7 @@ async function executeAutomationsForEvent(eventType, context, integrations) {
 
     if (isIncomingWhatsAppAutomation && conversationRecipient) {
       console.log('Getting conversation state for:', conversationRecipient)
-      conversationState = await getAutomationConversationState(automation.id, conversationRecipient)
+      conversationState = await getAutomationConversationState(automation.id, conversationRecipient, userId)
       console.log('Got conversation state:', conversationState)
       
       if (isHandoffActive(conversationState, now)) {
@@ -1490,7 +1708,8 @@ async function executeAutomationsForEvent(eventType, context, integrations) {
             state: 'active',
             lastInboundAt: now,
             handoffUntil: null
-          }
+          },
+          userId
         )
       }
     }
@@ -1579,7 +1798,8 @@ async function executeAutomationsForEvent(eventType, context, integrations) {
               templateComponents: step.templateComponents || [],
               variableMappings: step.variableMappings || []
             },
-            new Date(Date.now() + totalDelayMs)
+            new Date(Date.now() + totalDelayMs),
+            userId
           )
 
           if (isIncomingWhatsAppAutomation && conversationRecipient && normalizeAutomationRecipientKey(recipient) === conversationRecipient) {
@@ -1595,7 +1815,8 @@ async function executeAutomationsForEvent(eventType, context, integrations) {
                 handoffUntil: WHATSAPP_SUPPORT_STEP_IDS.has(step.id)
                   ? new Date(now.getTime() + WHATSAPP_SUPPORT_HANDOFF_MS)
                   : conversationState?.handoffUntil
-              }
+              },
+              userId
             )
           }
 
@@ -1658,7 +1879,7 @@ async function executeAutomationsForEvent(eventType, context, integrations) {
 
           await insertStoredMessage({
             id: uuidv4(),
-            userId: 'default',
+            userId,
             recipient,
             phone: recipient,
             message: body,
@@ -1684,7 +1905,8 @@ async function executeAutomationsForEvent(eventType, context, integrations) {
                 handoffUntil: WHATSAPP_SUPPORT_STEP_IDS.has(step.id)
                   ? new Date(now.getTime() + WHATSAPP_SUPPORT_HANDOFF_MS)
                   : conversationState?.handoffUntil
-              }
+              },
+              userId
             )
           }
         } catch (error) {
@@ -1721,7 +1943,8 @@ async function executeAutomationsForEvent(eventType, context, integrations) {
           // Clear awaiting state and follow the chosen branch
           conversationState = await saveAutomationConversationState(
             automation.id, conversationRecipient, conversationState,
-            { state: 'active', awaitingInteractiveStepId: null, lastInboundAt: now }
+            { state: 'active', awaitingInteractiveStepId: null, lastInboundAt: now },
+            userId
           )
           // Mark that the next message must be the ONLY reply (don't chain siblings)
           sentAfterChoice = false
@@ -1770,7 +1993,7 @@ async function executeAutomationsForEvent(eventType, context, integrations) {
           messagesSentInThisRun++
 
           await insertStoredMessage({
-            id: uuidv4(), userId: 'default',
+            id: uuidv4(), userId,
             recipient, phone: recipient,
             message: `[Menu] ${step.message}`,
             isCustomer: false, timestamp: new Date(),
@@ -1788,7 +2011,8 @@ async function executeAutomationsForEvent(eventType, context, integrations) {
                 lastMenuSentAt: now,
                 lastReplyKey: step.id,
                 lastReplyAt: now
-              }
+              },
+              userId
             )
           }
         } catch (error) {
@@ -1808,11 +2032,8 @@ async function processDueAutomationJobs() {
   const pool = getMysqlPool()
   if (!pool) return
 
-  const integrations = await getStoredIntegrations()
-  if (!integrations?.whatsapp?.phoneNumberId || !integrations?.whatsapp?.accessToken) return
-
   const jobs = await queryMany(
-    `SELECT id, automationId, recipient, message, template, payload
+    `SELECT id, automationId, userId, recipient, message, template, payload
      FROM automation_jobs
      WHERE status = 'pending' AND runAt <= NOW()
      ORDER BY runAt ASC
@@ -1821,6 +2042,11 @@ async function processDueAutomationJobs() {
 
   for (const job of jobs) {
     try {
+      const jobUserId = job.userId || 'default'
+      const integrations = await getStoredIntegrations(jobUserId)
+      if (!integrations?.whatsapp?.phoneNumberId || !integrations?.whatsapp?.accessToken) {
+        continue
+      }
       const cartSessionId = job.payload?.cart_session_id || null
       const cartExternalId = job.payload?.external_cart_id || job.payload?.cart_id || null
       const cartCheckoutToken = job.payload?.checkout_token || null
@@ -1882,7 +2108,7 @@ async function processDueAutomationJobs() {
 
       await insertStoredMessage({
         id: uuidv4(),
-        userId: 'default',
+        userId: jobUserId,
         recipient: job.recipient,
         phone: job.recipient,
         message: job.message,
@@ -1945,7 +2171,12 @@ async function sendWhatsAppMessage(phoneNumberId, accessToken, to, messageData) 
   // Improved error handling to ensure we only return success when the message is actually sent
   if (!response.ok) {
     console.error('WhatsApp API Error:', data);
-    throw new Error(data.error?.message || `WhatsApp API error: ${response.status} ${response.statusText}`)
+    const metaMessage = mapMetaAccessTokenError(data.error?.message || `WhatsApp API error: ${response.status} ${response.statusText}`)
+    const unsupportedPost = /unsupported post request/i.test(metaMessage)
+    if (unsupportedPost || data.error?.code === 100) {
+      throw new Error('Phone Number ID is invalid, inaccessible for this token, or you pasted a Business Account ID instead of a Phone Number ID.')
+    }
+    throw new Error(metaMessage)
   }
 
   // Additional validation that the message was accepted
@@ -1958,7 +2189,7 @@ async function sendWhatsAppMessage(phoneNumberId, accessToken, to, messageData) 
 }
 
 // Function to save incoming WhatsApp messages to database
-async function saveIncomingMessage(messageData) {
+async function saveIncomingMessage(messageData, userId = 'default') {
   console.log('saveIncomingMessage called with:', JSON.stringify(messageData, null, 2));
 
   // Extract data based on message type
@@ -1967,7 +2198,7 @@ async function saveIncomingMessage(messageData) {
   // Create message object
   const message = {
     id: uuidv4(),
-    userId: 'default',
+    userId,
     recipient: from, // This is the customer's phone number
     phone: from, // Also store phone number directly for easier querying
     message: '', // Will be populated based on message type
@@ -2010,23 +2241,23 @@ async function saveIncomingMessage(messageData) {
   await insertStoredMessage(message);
 
   // Update or create chat in the chats collection
-  const chat = await getStoredChatByPhone(from);
+  const chat = await getStoredChatByPhone(from, userId);
   await upsertStoredChat({
     phone: from,
     name: chat?.name || `Customer ${from}`,
     lastMessage: message.message,
     timestamp: message.timestamp,
     unread: (chat?.unread || 0) + 1
-  });
+  }, userId);
 
   return message;
 }
 
 // Function to save outgoing WhatsApp messages to database
-async function saveOutgoingMessage(to, messageText, whatsappResponse) {
+async function saveOutgoingMessage(to, messageText, whatsappResponse, userId = 'default') {
   const message = {
     id: uuidv4(),
-    userId: 'default',
+    userId,
     recipient: to,
     phone: to, // Also store phone number directly for easier querying
     message: messageText,
@@ -2039,14 +2270,14 @@ async function saveOutgoingMessage(to, messageText, whatsappResponse) {
   await insertStoredMessage(message);
 
   // Update or create chat in the chats collection
-  const chat = await getStoredChatByPhone(to);
+  const chat = await getStoredChatByPhone(to, userId);
   await upsertStoredChat({
     phone: to,
     name: chat?.name || `Customer ${to}`,
     lastMessage: messageText,
     timestamp: new Date(),
     unread: chat?.unread || 0
-  });
+  }, userId);
 
   return message;
 }
@@ -2228,6 +2459,7 @@ async function handleRoute(request, { params }) {
   // Fix the route construction to properly handle webhook paths
   const route = path.length > 0 ? `/${path.join('/')}` : '/'
   const method = request.method
+  const currentUserId = resolveRequestUserId(request)
 
   // Add debugging for route matching
   console.log(`Processing route: ${route}, method: ${method}, path array:`, path)
@@ -2246,7 +2478,7 @@ async function handleRoute(request, { params }) {
       let integrations = null
 
       try {
-        integrations = await getStoredIntegrations()
+        integrations = await getStoredIntegrations(currentUserId)
       } catch (error) {
         console.error('Failed to load stored integrations:', error)
       }
@@ -2317,10 +2549,12 @@ async function handleRoute(request, { params }) {
 
       // Test the integration before saving
       try {
-        // Skip WhatsApp validation - trust user's credentials
-        // Validation will happen when actually sending messages
         if (type === 'whatsapp' && data.phoneNumberId && data.accessToken) {
-          console.log('WhatsApp credentials received, skipping validation')
+          await validateWhatsAppPhoneNumberAccess(
+            data.phoneNumberId,
+            data.accessToken,
+            data.businessAccountId
+          )
         }
 
         if (type === 'whatsapp' && data.catalogId) {
@@ -2377,7 +2611,7 @@ async function handleRoute(request, { params }) {
 
       // Save integration
       try {
-        await saveStoredIntegration(type, data)
+        await saveStoredIntegration(type, data, currentUserId)
       } catch (saveError) {
         console.error('Failed to save integration:', saveError)
         return handleCORS(NextResponse.json(
@@ -2986,10 +3220,10 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
         const states = await queryMany(
           `SELECT id, recipient, state, payload, updatedAt
            FROM automation_conversation_state
-           WHERE automationId = ?
+           WHERE userId = ? AND automationId = ?
            ORDER BY updatedAt DESC
            LIMIT 10`,
-          [automationId]
+          [currentUserId, automationId]
         )
 
         return handleCORS(NextResponse.json(states || []))
@@ -3002,6 +3236,7 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
     // Automations PUT handler - delegate to separate route file or handle here
     if (route === '/automations' && method === 'PUT') {
       try {
+        await ensureAutomationsTable()
         const body = await request.json()
         const automations = Array.isArray(body) ? body : body.automations
 
@@ -3009,28 +3244,56 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
           return handleCORS(NextResponse.json({ error: 'Automations array is required' }, { status: 400 }))
         }
 
-        await query('DELETE FROM automations WHERE userId = ?', ['default'])
+        const connection = await getMysqlPool().getConnection()
 
-        for (const automation of automations) {
-          const steps = typeof automation.steps === 'string' ? JSON.parse(automation.steps) : automation.steps
-          const metrics = typeof automation.metrics === 'string' ? JSON.parse(automation.metrics) : (automation.metrics || { sent: 0, openRate: 0, conversions: 0 })
-          
-          await query(
-            `INSERT INTO automations (id, userId, name, status, source, summary, steps, metrics, createdAt, updatedAt)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
-             ON DUPLICATE KEY UPDATE name = VALUES(name), status = VALUES(status), source = VALUES(source),
-             summary = VALUES(summary), steps = VALUES(steps), metrics = VALUES(metrics), updatedAt = NOW()`,
-            [
-              automation.id || `auto-${Date.now()}`,
-              'default',
-              automation.name || 'Unnamed',
-              automation.status !== undefined ? (automation.status ? 1 : 0) : 0,
-              automation.source || 'Custom',
-              automation.summary || '',
-              JSON.stringify(steps || []),
-              JSON.stringify(metrics)
-            ]
-          )
+        try {
+          await connection.beginTransaction()
+
+          const automationIds = []
+
+          for (const automation of automations) {
+            const automationId = automation.id || `auto-${Date.now()}`
+            const steps = typeof automation.steps === 'string' ? JSON.parse(automation.steps) : automation.steps
+            const metrics = typeof automation.metrics === 'string' ? JSON.parse(automation.metrics) : (automation.metrics || { sent: 0, openRate: 0, conversions: 0 })
+
+            automationIds.push(automationId)
+
+            await connection.execute(
+              `INSERT INTO automations (id, userId, name, status, source, summary, steps, metrics, createdAt, updatedAt)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+               ON DUPLICATE KEY UPDATE name = VALUES(name), status = VALUES(status), source = VALUES(source),
+               summary = VALUES(summary), steps = VALUES(steps), metrics = VALUES(metrics), updatedAt = NOW()`,
+              [
+                automationId,
+                currentUserId,
+                automation.name || 'Unnamed',
+                automation.status !== undefined ? (automation.status ? 1 : 0) : 0,
+                automation.source || 'Custom',
+                automation.summary || '',
+                JSON.stringify(steps || []),
+                JSON.stringify(metrics)
+              ]
+            )
+          }
+
+          if (automationIds.length > 0) {
+            const placeholders = automationIds.map(() => '?').join(', ')
+            await connection.execute(
+              `DELETE FROM automations
+               WHERE userId = ?
+               AND id NOT IN (${placeholders})`,
+              [currentUserId, ...automationIds]
+            )
+          } else {
+            await connection.execute('DELETE FROM automations WHERE userId = ?', [currentUserId])
+          }
+
+          await connection.commit()
+        } catch (error) {
+          await connection.rollback()
+          throw error
+        } finally {
+          connection.release()
         }
 
         return handleCORS(NextResponse.json({ success: true }))
@@ -3043,55 +3306,33 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
     // Automations GET handler
     if (route === '/automations' && method === 'GET') {
       try {
-        // First check if the table exists
-        const [tableCheck] = await query("SHOW TABLES LIKE 'automations'")
-        console.log('Automations table exists:', tableCheck.length > 0)
-        
-        if (tableCheck.length === 0) {
-          // Create the table if it doesn't exist
-          await query(`
-            CREATE TABLE IF NOT EXISTS automations (
-              id VARCHAR(255) PRIMARY KEY,
-              userId VARCHAR(255) NOT NULL DEFAULT 'default',
-              name VARCHAR(255),
-              status BOOLEAN DEFAULT FALSE,
-              source VARCHAR(255),
-              summary TEXT,
-              steps JSON,
-              metrics JSON,
-              createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-              updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-            )
-          `)
-          console.log('Created automations table')
-        }
-        
-        // Ensure default automations exist
-        const [existing] = await query('SELECT id FROM automations LIMIT 1')
-        console.log('Automations existing check:', existing)
-        if (!existing || existing.length === 0) {
-          // Import and seed defaults
-          const { defaultAutomations } = await import('@/lib/automation-defaults')
-          console.log('Seeding default automations:', defaultAutomations.map(a => a.id))
-          for (const auto of defaultAutomations) {
-            await query(
-              `INSERT INTO automations (id, userId, name, status, source, summary, steps, metrics, createdAt, updatedAt)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-              [
-                auto.id, 'default', auto.name, auto.status ? 1 : 0, auto.source || 'System',
-                auto.summary || '', JSON.stringify(auto.steps || []), JSON.stringify(auto.metrics || { sent: 0, openRate: 0, conversions: 0 })
-              ]
-            )
-          }
-        }
+        await ensureAutomationsTable()
 
-        const [rows] = await query(
+        let [rows] = await query(
           `SELECT id, name, status, source, summary, steps, metrics, createdAt, updatedAt
            FROM automations
            WHERE userId = ?
            ORDER BY updatedAt DESC, createdAt DESC`,
-          ['default']
+          [currentUserId]
         )
+
+        if (!rows || rows.length === 0) {
+          const migratedFromDefault = currentUserId !== 'default'
+            ? await copyAutomationsBetweenUsers('default', currentUserId)
+            : false
+
+          if (!migratedFromDefault) {
+            await seedDefaultAutomationsForUser(currentUserId)
+          }
+
+          ;[rows] = await query(
+            `SELECT id, name, status, source, summary, steps, metrics, createdAt, updatedAt
+             FROM automations
+             WHERE userId = ?
+             ORDER BY updatedAt DESC, createdAt DESC`,
+            [currentUserId]
+          )
+        }
 
         // Parse JSON columns
         const parsedRows = (rows || []).map(row => ({
@@ -3255,6 +3496,8 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
                 // Handle incoming messages
                 if (change.field === 'messages') {
                   console.log('Found messages field in change value');
+                  const incomingPhoneNumberId = change.value?.metadata?.phone_number_id || ''
+                  const incomingUserId = await getUserIdByWhatsAppPhoneNumberId(incomingPhoneNumberId)
                   const contactsByWaId = new Map(
                     (change.value?.contacts || [])
                       .filter((contact) => contact?.wa_id)
@@ -3266,14 +3509,14 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
                       console.log('Processing incoming messages, count:', change.value.messages.length);
                       
                       console.log('[Webhook] Getting integrations...');
-                      const automationIntegrations = await getStoredIntegrations()
+                      const automationIntegrations = await getStoredIntegrations(incomingUserId)
                       console.log('[Webhook] Got integrations:', JSON.stringify(automationIntegrations));
                       
                       for (const message of change.value.messages) {
                         console.log('[Webhook] Saving incoming message:', JSON.stringify(message, null, 2));
                         // Save incoming message to database
                         const contact = contactsByWaId.get(message.from)
-                        const savedMessage = await saveIncomingMessage(message)
+                        const savedMessage = await saveIncomingMessage(message, incomingUserId)
                         console.log('[Webhook] Saved message, id:', savedMessage?.id);
                         
                         const context = buildIncomingWhatsAppAutomationContext(message, savedMessage, contact)
@@ -3282,7 +3525,8 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
                         await executeAutomationsForEvent(
                           'whatsapp.message_received',
                           context,
-                          automationIntegrations
+                          automationIntegrations,
+                          incomingUserId
                         )
                       }
                   } else {
@@ -3890,7 +4134,7 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
     if (route === '/send-whatsapp-message' && method === 'POST') {
       try {
         const body = await request.json()
-        const { to, message } = body
+        const { to, message, accountId } = body
 
         if (!to || !message) {
           return handleCORS(NextResponse.json(
@@ -3899,20 +4143,39 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
           ))
         }
 
-        // Get WhatsApp integration details
-        const integrations = await getStoredIntegrations()
-        
-        // Parse JSON string if needed
-        const waIntegration = typeof integrations?.whatsapp === 'string' 
-          ? JSON.parse(integrations.whatsapp) 
-          : integrations?.whatsapp
+        let phoneNumberId, accessToken, businessAccountId
 
-        if (!waIntegration?.phoneNumberId || !waIntegration?.accessToken) {
-          return handleCORS(NextResponse.json(
-            { error: "WhatsApp not configured" },
-            { status: 400 }
-          ))
+        // Get WhatsApp account - use accountId if provided, otherwise fallback to legacy integration
+        if (accountId) {
+          const waAccount = await getWhatsAppAccountById(accountId, currentUserId)
+          if (!waAccount) {
+            return handleCORS(NextResponse.json(
+              { error: "WhatsApp account not found" },
+              { status: 404 }
+            ))
+          }
+          phoneNumberId = waAccount.phoneNumberId
+          accessToken = waAccount.accessToken
+          businessAccountId = waAccount.businessAccountId || ''
+        } else {
+          // Legacy: Get from single integration
+          const integrations = await getStoredIntegrations(currentUserId)
+          const waIntegration = typeof integrations?.whatsapp === 'string' 
+            ? JSON.parse(integrations.whatsapp) 
+            : integrations?.whatsapp
+
+          if (!waIntegration?.phoneNumberId || !waIntegration?.accessToken) {
+            return handleCORS(NextResponse.json(
+              { error: "WhatsApp not configured. Please add a WhatsApp account first." },
+              { status: 400 }
+            ))
+          }
+          phoneNumberId = waIntegration.phoneNumberId
+          accessToken = waIntegration.accessToken
+          businessAccountId = waIntegration.businessAccountId || ''
         }
+
+        await validateWhatsAppPhoneNumberAccess(phoneNumberId, accessToken, businessAccountId)
 
         // Prepare message data
         const messageData = {
@@ -3926,14 +4189,14 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
 
         // Send message via WhatsApp API
         const result = await sendWhatsAppMessage(
-          waIntegration.phoneNumberId,
-          waIntegration.accessToken,
+          phoneNumberId,
+          accessToken,
           to,
           messageData
         )
 
         // Save message to database
-        const savedMessage = await saveOutgoingMessage(to, message, result)
+        const savedMessage = await saveOutgoingMessage(to, message, result, currentUserId)
 
         // Return the saved message object
         const messageResponse = {
@@ -3972,7 +4235,7 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
     // New endpoint to get chats for the dashboard
     if (route === '/chats' && method === 'GET') {
       try {
-        const chats = await getStoredChats()
+        const chats = await getStoredChats(currentUserId)
 
         const cleanedChats = chats.map(({ _id, ...rest }) => rest)
         return handleCORS(NextResponse.json(cleanedChats))
@@ -3998,7 +4261,7 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
         }
 
         // Fetch all messages for this phone number (both incoming from customer and outgoing to customer)
-        const messages = await getStoredMessagesByPhone(phone);
+        const messages = await getStoredMessagesByPhone(phone, currentUserId);
 
         // Transform messages to ensure consistent structure for the frontend
         const transformedMessages = messages.map(msg => {
@@ -4073,7 +4336,7 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
         const formattedPhone = phone.replace(/\D/g, '');
 
         // Check if chat already exists
-        const existingChat = await getStoredChatByPhone(formattedPhone);
+        const existingChat = await getStoredChatByPhone(formattedPhone, currentUserId);
 
         if (existingChat) {
           return handleCORS(NextResponse.json(existingChat));
@@ -4086,7 +4349,7 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
           lastMessage: 'Chat created',
           timestamp: new Date(),
           unread: 0
-        });
+        }, currentUserId);
 
         const { _id, ...cleanedChat } = newChat;
         return handleCORS(NextResponse.json(cleanedChat));

@@ -78,7 +78,7 @@ export default function SettingsPage() {
   useEffect(() => {
     setMounted(true)
 
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && !process.env.NEXT_PUBLIC_BASE_URL) {
       setBaseUrl(window.location.origin)
     }
   }, [])
@@ -1301,6 +1301,10 @@ function IntegrationForm({ type, integration, loading, onSave }) {
   }
 
   const webhookUrl = useMemo(() => {
+    const publicBaseUrl = process.env.NEXT_PUBLIC_BASE_URL || ''
+    if (publicBaseUrl) {
+      return `${publicBaseUrl}/api/webhook/whatsapp`
+    }
     if (typeof window === 'undefined') return ''
     return `${window.location.origin}/api/webhook/whatsapp`
   }, [])

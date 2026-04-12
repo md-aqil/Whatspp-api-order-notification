@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server'
-import { deleteSession } from '@/lib/auth'
+import { deleteSessionByToken } from '@/lib/auth'
 
 export async function POST(request) {
   try {
     const refreshToken = request.cookies.get('refresh_token')?.value
     if (refreshToken) {
-      await deleteSession(refreshToken)
+      await deleteSessionByToken(refreshToken)
     }
 
     const response = NextResponse.json({ success: true })

@@ -12,6 +12,8 @@ export default function DashboardChatPage() {
   const [activeChat, setActiveChat] = useState(null)
   const [loading, setLoading] = useState(true)
   const [messages, setMessages] = useState([])
+  const [waAccounts, setWaAccounts] = useState([])
+  const [selectedAccountId, setSelectedAccountId] = useState(null)
   const wsRef = useRef(null)
   const pollingIntervalRef = useRef(null)
   const lastMessageCountRef = useRef(0)
@@ -73,6 +75,22 @@ export default function DashboardChatPage() {
     }
 
     loadChats()
+  }, [])
+
+  // Load WhatsApp accounts
+  useEffect(() => {
+    const loadWaAccounts = async () => {
+      try {
+        const response = await fetch('/api/whatsapp-accounts')
+        if (response.ok) {
+          const data = await response.json()
+          setWaAccounts(data.accounts || [])
+        }
+      } catch (error) {
+        console.error('Failed to load WhatsApp accounts:', error)
+      }
+    }
+    loadWaAccounts()
   }, [])
 
   // Load messages for the active chat
@@ -187,7 +205,8 @@ export default function DashboardChatPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           to: activeChat.phone,
-          message: messageText
+          message: messageText,
+          ...(selectedAccountId ? { accountId: selectedAccountId } : {})
         })
       })
       

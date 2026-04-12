@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { query, queryMany } from '@/lib/postgres'
+import { requireRequestUserId } from '@/lib/request-user'
 
 async function ensureCampaignSchema() {
   try {
@@ -14,26 +15,29 @@ async function ensureCampaignSchema() {
   }
 }
 
-export async function GET() {
+export async function GET(request) {
   try {
+    const userId = requireRequestUserId(request)
     await ensureCampaignSchema()
     const [rows] = await query(
       `SELECT id, name, template, templateLanguage, templateCategory, templateHeaderImageUrl, campaignType, productIds, message, variables, audience, recipients, status, results, sentAt, failedAt, createdAt
        FROM campaigns
        WHERE userId = ?
        ORDER BY createdAt DESC`,
-      ['default']
+      [userId]
     )
 
     return NextResponse.json(rows || [])
   } catch (error) {
+    const status = error.status || 500
     console.error('Error fetching campaigns:', error)
-    return NextResponse.json({ error: 'Failed to fetch campaigns' }, { status: 500 })
+    return NextResponse.json({ error: status === 401 ? 'Not authenticated' : 'Failed to fetch campaigns' }, { status })
   }
 }
 
 export async function POST(request) {
   try {
+    const userId = requireRequestUserId(request)
     await ensureCampaignSchema()
     const campaignData = await request.json()
 
@@ -49,7 +53,7 @@ export async function POST(request) {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
       [
         id,
-        'default',
+        userId,
         campaignData.name,
         campaignData.template,
         campaignData.templateLanguage || '',
@@ -70,13 +74,14 @@ export async function POST(request) {
 
     const [rows] = await query(
       `SELECT id, name, template, templateLanguage, templateCategory, templateHeaderImageUrl, campaignType, productIds, message, variables, audience, recipients, status, results, sentAt, failedAt, createdAt
-       FROM campaigns WHERE id = ?`,
-      [id]
+       FROM campaigns WHERE id = ? AND userId = ?`,
+      [id, userId]
     )
 
     return NextResponse.json(rows[0])
   } catch (error) {
+    const status = error.status || 500
     console.error('Error creating campaign:', error)
-    return NextResponse.json({ error: 'Failed to create campaign' }, { status: 500 })
+    return NextResponse.json({ error: status === 401 ? 'Not authenticated' : 'Failed to create campaign' }, { status })
   }
 }
