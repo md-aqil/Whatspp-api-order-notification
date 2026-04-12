@@ -1692,6 +1692,7 @@ async function executeAutomationsForEvent(eventType, context, integrations, user
      WHERE userId = ? AND status = 1`,
     [userId]
   )
+  console.log('[executeAutomationsForEvent] active automation rows:', Array.isArray(rows) ? rows.length : 0, 'for user:', userId)
   
   // Parse JSON columns from MySQL
   const automations = (rows || []).map(row => ({
@@ -4266,6 +4267,7 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
       try {
         const authenticatedUserId = requireRequestUserId(request)
         const chats = await getStoredChats(authenticatedUserId)
+        console.log('[GET /chats] user:', authenticatedUserId, 'chatCount:', chats.length)
 
         const cleanedChats = chats.map(({ _id, ...rest }) => rest)
         return handleCORS(NextResponse.json(cleanedChats))
@@ -4293,6 +4295,10 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
 
         // Fetch all messages for this phone number (both incoming from customer and outgoing to customer)
         const messages = await getStoredMessagesByPhone(phone, authenticatedUserId);
+        console.log('[GET /chats/:phone/messages] user:', authenticatedUserId, 'phone:', phone, 'messageCount:', messages.length)
+        if (messages[0]) {
+          console.log('[GET /chats/:phone/messages] newest message snapshot:', JSON.stringify(messages[messages.length - 1]))
+        }
 
         // Transform messages to ensure consistent structure for the frontend
         const transformedMessages = messages.map(msg => {
@@ -4330,6 +4336,7 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
           }
         });
 
+        console.log('[GET /chats/:phone/messages] transformedCount:', transformedMessages.length)
         return handleCORS(NextResponse.json(transformedMessages));
       } catch (error) {
         console.error('Failed to fetch messages:', error);

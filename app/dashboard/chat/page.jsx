@@ -1,28 +1,39 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import { ChatWindow } from '@/components/dashboard/ChatWindow'
 import { ChatList } from '@/components/dashboard/ChatList'
-import { Card, CardContent } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 import { toast, Toaster } from 'sonner'
-import { v4 as uuidv4 } from 'uuid'
 
 export default function DashboardChatPage() {
+  const router = useRouter()
   const [chats, setChats] = useState([])
   const [activeChat, setActiveChat] = useState(null)
   const [loading, setLoading] = useState(true)
   const [messages, setMessages] = useState([])
   const [waAccounts, setWaAccounts] = useState([])
   const [selectedAccountId, setSelectedAccountId] = useState(null)
+  const [authError, setAuthError] = useState('')
   const wsRef = useRef(null)
   const pollingIntervalRef = useRef(null)
   const lastMessageCountRef = useRef(0)
+
+  const handleAuthFailure = (message = 'Your session expired. Please sign in again.') => {
+    setAuthError(message)
+    setChats([])
+    setMessages([])
+    setActiveChat(null)
+    toast.error(message)
+  }
 
   // Load chats from the database
   useEffect(() => {
     const loadChats = async () => {
       try {
         setLoading(true)
+        setAuthError('')
         const response = await fetch('/api/chats')
         if (response.ok) {
           const data = await response.json()
@@ -30,45 +41,15 @@ export default function DashboardChatPage() {
           if (data.length > 0) {
             setActiveChat(data[0])
           }
+        } else if (response.status === 401) {
+          handleAuthFailure()
         } else {
           throw new Error('Failed to load chats')
         }
       } catch (error) {
         console.error('Failed to load chats:', error)
-        // Fallback to mock data if API fails
-        const mockChats = [
-          {
-            id: '1',
-            name: 'John Doe',
-            phone: '+1234567890',
-            lastMessage: 'Thanks for your help!',
-            timestamp: new Date(Date.now() - 3600000),
-            unread: 0,
-            avatar: 'https://ui-avatars.com/api/?name=John+Doe&background=random',
-          },
-          {
-            id: '2',
-            name: 'Jane Smith',
-            phone: '+1234567891',
-            lastMessage: 'Can you send me the catalog?',
-            timestamp: new Date(Date.now() - 86400000),
-            unread: 2,
-            avatar: 'https://ui-avatars.com/api/?name=Jane+Smith&background=random',
-          },
-          {
-            id: '3',
-            name: 'Robert Johnson',
-            phone: '+1234567892',
-            lastMessage: 'I have a question about returns',
-            timestamp: new Date(Date.now() - 172800000),
-            unread: 0,
-            avatar: 'https://ui-avatars.com/api/?name=Robert+Johnson&background=random',
-          }
-        ]
-        setChats(mockChats)
-        if (mockChats.length > 0) {
-          setActiveChat(mockChats[0])
-        }
+        setChats([])
+        setActiveChat(null)
       } finally {
         setLoading(false)
       }
@@ -104,37 +85,15 @@ export default function DashboardChatPage() {
           const data = await response.json()
           setMessages(data)
           lastMessageCountRef.current = data.length
+        } else if (response.status === 401) {
+          handleAuthFailure()
         } else {
           throw new Error('Failed to load messages')
         }
       } catch (error) {
         console.error('Failed to load messages:', error)
-        // Fallback to mock data if API fails
-        const mockMessages = [
-          { 
-            id: '1', 
-            text: 'Hello! How can I help you today?', 
-            isCustomer: true, 
-            timestamp: new Date(Date.now() - 3600000),
-            phone: activeChat.phone
-          },
-          { 
-            id: '2', 
-            text: 'Hi there! I have a question about my order.', 
-            isCustomer: false, 
-            timestamp: new Date(Date.now() - 3500000),
-            phone: activeChat.phone
-          },
-          { 
-            id: '3', 
-            text: 'Sure, I\'d be happy to help. What is your order number?', 
-            isCustomer: true, 
-            timestamp: new Date(Date.now() - 3400000),
-            phone: activeChat.phone
-          },
-        ]
-        setMessages(mockMessages)
-        lastMessageCountRef.current = mockMessages.length
+        setMessages([])
+        lastMessageCountRef.current = 0
       }
     }
 
@@ -168,6 +127,9 @@ export default function DashboardChatPage() {
             setMessages(data)
             lastMessageCountRef.current = data.length
           }
+        } else if (response.status === 401) {
+          handleAuthFailure()
+          clearInterval(pollingIntervalRef.current)
         }
       } catch (error) {
         console.error('Failed to poll messages:', error)
@@ -214,6 +176,10 @@ export default function DashboardChatPage() {
         let errorMessage = 'Failed to send message'
         try {
           const errorData = await response.json()
+          if (response.status === 401) {
+            handleAuthFailure(errorData.error || 'Your session expired. Please sign in again.')
+            return
+          }
           errorMessage = errorData.guidance
             ? `${errorData.error} ${errorData.guidance}`
             : (errorData.error || errorMessage)
@@ -258,6 +224,20 @@ export default function DashboardChatPage() {
     return (
       <div className="chat-scene flex h-full items-center justify-center rounded-[1.75rem] border border-slate-200/70 bg-white/80 dark:border-white/[0.06] dark:bg-[#0d0f17]">
         <p className="text-slate-600 dark:text-white/55">Loading chats...</p>
+      </div>
+    )
+  }
+
+  if (authError) {
+    return (
+      <div className="chat-scene flex h-full items-center justify-center rounded-[1.75rem] border border-rose-200/80 bg-white/85 dark:border-rose-500/20 dark:bg-[#0d0f17]">
+        <div className="max-w-md text-center">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Session expired</h2>
+          <p className="mt-2 text-sm text-slate-600 dark:text-white/55">{authError}</p>
+          <Button className="mt-4" onClick={() => router.push('/login')}>
+            Sign in again
+          </Button>
+        </div>
       </div>
     )
   }
