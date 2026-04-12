@@ -107,7 +107,12 @@ export async function POST(request) {
     )
 
     const updatedConnection = updatedRows[0]
-    const storedWaConfig = await getStoredWaConfig(connection.userId || 'default')
+    const connectionUserId = String(connection.userId || '').trim()
+    if (!connectionUserId) {
+      return NextResponse.json({ error: 'WordPress connection is missing a user owner' }, { status: 500 })
+    }
+
+    const storedWaConfig = await getStoredWaConfig(connectionUserId)
     const currentConfig = storedWaConfig?.config && typeof storedWaConfig.config === 'object'
       ? storedWaConfig.config
       : {}
@@ -128,7 +133,7 @@ export async function POST(request) {
         await query(
           `INSERT INTO wa_config (userId, config, createdAt, updatedAt)
            VALUES (?, ?, NOW(), NOW())`,
-          [connection.userId || 'default', JSON.stringify(nextConfig)]
+          [connectionUserId, JSON.stringify(nextConfig)]
         )
       }
     }

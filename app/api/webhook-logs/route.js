@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/postgres'
 import { ensureSettingsTables } from '@/lib/settings-db'
+import { requireRequestUserId } from '@/lib/request-user'
 
 function withCors(response) {
   response.headers.set('Access-Control-Allow-Origin', process.env.CORS_ORIGINS || '*')
@@ -17,6 +18,7 @@ export async function OPTIONS() {
 export async function GET(request) {
   try {
     await ensureSettingsTables()
+    requireRequestUserId(request)
 
     const { searchParams } = new URL(request.url)
     const rawLimit = parseInt(searchParams.get('limit') || '10', 10)
@@ -32,6 +34,9 @@ export async function GET(request) {
 
     return withCors(NextResponse.json({ logs: rows || [] }))
   } catch (error) {
+    if (error?.status === 401) {
+      return withCors(NextResponse.json({ error: 'Not authenticated', logs: [] }, { status: 401 }))
+    }
     console.error('Failed to get webhook logs:', error)
     return withCors(NextResponse.json({ logs: [] }))
   }

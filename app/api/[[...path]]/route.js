@@ -296,17 +296,6 @@ async function getStoredIntegrations(userId = 'default') {
       )
       return rows[0] || null
     }
-    const backfillUserScopedIntegrations = async (integrations) => {
-      if (!integrations || normalizedUserId === 'default') return
-
-      const integrationTypes = ['whatsapp', 'shopify', 'stripe']
-      for (const type of integrationTypes) {
-        if (integrations[type]) {
-          await saveStoredIntegration(type, integrations[type], normalizedUserId)
-        }
-      }
-    }
-
     const row = await readIntegrationRow(normalizedUserId)
     console.log('[getStoredIntegrations] DB row:', JSON.stringify(row))
 
@@ -315,29 +304,23 @@ async function getStoredIntegrations(userId = 'default') {
       return parseIntegrationRow(row)
     }
 
-    if (normalizedUserId !== 'default') {
-      const legacyDefaultRow = await readIntegrationRow('default')
-      if (hasIntegrationData(legacyDefaultRow)) {
-        const parsedLegacy = parseIntegrationRow(legacyDefaultRow)
-        await backfillUserScopedIntegrations(parsedLegacy)
-        console.log('[getStoredIntegrations] Backfilled legacy default integration row for user:', normalizedUserId)
-        return parsedLegacy
+    if (normalizedUserId === 'default') {
+      console.log('[getStoredIntegrations] Default tenant DB empty, checking local...')
+      const localRecord = await getLocalIntegrationRecord()
+      console.log('[getStoredIntegrations] Local record:', JSON.stringify(localRecord))
+
+      if (localRecord) {
+        return localRecord
       }
-    }
-
-    console.log('[getStoredIntegrations] DB empty, checking local...')
-    const localRecord = await getLocalIntegrationRecord()
-    console.log('[getStoredIntegrations] Local record:', JSON.stringify(localRecord))
-
-    if (localRecord) {
-      await backfillUserScopedIntegrations(localRecord)
-      return localRecord
     }
 
     return null
   } catch (error) {
     console.error('[getStoredIntegrations] Error:', error.message)
-    return getLocalIntegrationRecord()
+    if (String(userId || 'default') === 'default') {
+      return getLocalIntegrationRecord()
+    }
+    return null
   }
 }
 

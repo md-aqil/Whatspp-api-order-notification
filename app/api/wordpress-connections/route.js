@@ -2,6 +2,7 @@ import crypto from 'crypto'
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/postgres'
 import { ensureSettingsTables } from '@/lib/settings-db'
+import { requireRequestUserId } from '@/lib/request-user'
 
 function normalizeSiteUrl(siteUrl) {
   const parsed = new URL(siteUrl)
@@ -120,7 +121,7 @@ export async function GET(request) {
     await ensureSettingsTables()
 
     const url = new URL(request.url)
-    const userId = url.searchParams.get('userId') || 'default'
+    const userId = requireRequestUserId(request)
     const id = url.searchParams.get('id')
 
     if (id) {
@@ -143,6 +144,9 @@ export async function GET(request) {
 
     return NextResponse.json(rows.map(mapConnection))
   } catch (error) {
+    if (error?.status === 401) {
+      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+    }
     console.error('Error fetching WordPress connections:', error)
     return NextResponse.json([])
   }
@@ -163,8 +167,8 @@ export async function POST(request) {
       plugin_version,
       capabilities = {},
       metadata = {},
-      userId = 'default',
     } = body
+    const userId = requireRequestUserId(request)
 
     if (!site_url) {
       return NextResponse.json({ error: 'Site URL is required' }, { status: 400 })
@@ -182,7 +186,8 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Site ID is required' }, { status: 400 })
     }
 
-    const [result] = await query(
+    const connectionId = crypto.randomUUID()
+    await query(
       `INSERT INTO wordpress_connections (
         id,
         userId,
@@ -199,7 +204,7 @@ export async function POST(request) {
       )
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
       [
-        crypto.randomUUID(),
+        connectionId,
         userId,
         normalizedSiteId,
         site_name?.trim() || null,
@@ -214,11 +219,14 @@ export async function POST(request) {
 
     const [insertedRow] = await query(
       'SELECT * FROM wordpress_connections WHERE id = ?',
-      [crypto.randomUUID()]
+      [connectionId]
     )
 
     return NextResponse.json(mapConnection(insertedRow[0]), { status: 201 })
   } catch (error) {
+    if (error?.status === 401) {
+      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+    }
     console.error('Error creating WordPress connection:', error)
 
     if (error?.code === 'ER_DUP_ENTRY') {
@@ -238,9 +246,9 @@ export async function PUT(request) {
     await ensureSettingsTables()
 
     const body = await request.json()
+    const userId = requireRequestUserId(request)
     const {
       id,
-      userId = 'default',
       site_id,
       site_name,
       site_url,
@@ -318,8 +326,8 @@ export async function PUT(request) {
     )
 
     const [rows] = await query(
-      'SELECT * FROM wordpress_connections WHERE id = ?',
-      [id]
+      'SELECT * FROM wordpress_connections WHERE id = ? AND userId = ?',
+      [id, userId]
     )
 
     if (!rows[0]) {
@@ -328,6 +336,9 @@ export async function PUT(request) {
 
     return NextResponse.json(mapConnection(rows[0]))
   } catch (error) {
+    if (error?.status === 401) {
+      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+    }
     console.error('Error updating WordPress connection:', error)
 
     if (error?.code === 'ER_DUP_ENTRY') {
@@ -348,7 +359,7 @@ export async function DELETE(request) {
 
     const url = new URL(request.url)
     const id = url.searchParams.get('id')
-    const userId = url.searchParams.get('userId') || 'default'
+    const userId = requireRequestUserId(request)
 
     if (!id) {
       return NextResponse.json({ error: 'Connection ID is required' }, { status: 400 })
@@ -361,6 +372,9 @@ export async function DELETE(request) {
 
     return NextResponse.json({ message: 'WordPress connection deleted successfully' })
   } catch (error) {
+    if (error?.status === 401) {
+      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+    }
     console.error('Error deleting WordPress connection:', error)
     return NextResponse.json({ error: 'Failed to delete WordPress connection' }, { status: 500 })
   }

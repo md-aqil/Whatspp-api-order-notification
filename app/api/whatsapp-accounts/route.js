@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getPool } from '@/lib/postgres'
 import { ensureSettingsTables } from '@/lib/settings-db'
-import { resolveRequestUserId } from '@/lib/request-user'
+import { requireRequestUserId } from '@/lib/request-user'
 import { validateWhatsAppPhoneNumberAccess } from '@/lib/whatsapp-meta'
 
 let pool
@@ -92,8 +92,7 @@ async function deleteWhatsAppAccount(accountId, userId = 'default') {
 export async function GET(request) {
   try {
     await ensureSettingsTables()
-    const url = new URL(request.url)
-    const userId = resolveRequestUserId(request, url.searchParams.get('userId'))
+    const userId = requireRequestUserId(request)
     
     const accounts = await getStoredWhatsAppAccounts(userId)
     
@@ -111,6 +110,12 @@ export async function GET(request) {
     
     return NextResponse.json({ accounts: safeAccounts })
   } catch (error) {
+    if (error?.status === 401) {
+      return NextResponse.json(
+        { error: 'Not authenticated' },
+        { status: 401 }
+      )
+    }
     console.error('Error fetching WhatsApp accounts:', error)
     return NextResponse.json(
       { error: 'Failed to fetch WhatsApp accounts' },
@@ -125,14 +130,13 @@ export async function POST(request) {
     const body = await request.json()
     
     const {
-      userId: requestedUserId,
       accountName,
       phoneNumberId,
       accessToken,
       businessAccountId,
       phoneNumber
     } = body
-    const userId = resolveRequestUserId(request, requestedUserId)
+    const userId = requireRequestUserId(request)
     
     if (!accountName || !phoneNumberId || !accessToken) {
       return NextResponse.json(
@@ -157,6 +161,12 @@ export async function POST(request) {
       message: 'WhatsApp account saved successfully'
     })
   } catch (error) {
+    if (error?.status === 401) {
+      return NextResponse.json(
+        { error: 'Not authenticated' },
+        { status: 401 }
+      )
+    }
     console.error('Error saving WhatsApp account:', error)
     return NextResponse.json(
       { error: 'Failed to save WhatsApp account: ' + error.message },
@@ -171,7 +181,6 @@ export async function PUT(request) {
     const body = await request.json()
     
     const {
-      userId: requestedUserId,
       id,
       accountName,
       phoneNumberId,
@@ -179,7 +188,7 @@ export async function PUT(request) {
       businessAccountId,
       phoneNumber
     } = body
-    const userId = resolveRequestUserId(request, requestedUserId)
+    const userId = requireRequestUserId(request)
     
     if (!id || !accountName || !phoneNumberId || !accessToken) {
       return NextResponse.json(
@@ -205,6 +214,12 @@ export async function PUT(request) {
       message: 'WhatsApp account updated successfully'
     })
   } catch (error) {
+    if (error?.status === 401) {
+      return NextResponse.json(
+        { error: 'Not authenticated' },
+        { status: 401 }
+      )
+    }
     console.error('Error updating WhatsApp account:', error)
     return NextResponse.json(
       { error: 'Failed to update WhatsApp account: ' + error.message },
@@ -217,7 +232,7 @@ export async function DELETE(request) {
   try {
     await ensureSettingsTables()
     const url = new URL(request.url)
-    const userId = resolveRequestUserId(request, url.searchParams.get('userId'))
+    const userId = requireRequestUserId(request)
     const accountId = url.searchParams.get('id')
     
     if (!accountId) {
@@ -241,6 +256,12 @@ export async function DELETE(request) {
       message: 'WhatsApp account deleted successfully'
     })
   } catch (error) {
+    if (error?.status === 401) {
+      return NextResponse.json(
+        { error: 'Not authenticated' },
+        { status: 401 }
+      )
+    }
     console.error('Error deleting WhatsApp account:', error)
     return NextResponse.json(
       { error: 'Failed to delete WhatsApp account: ' + error.message },

@@ -30,6 +30,10 @@ test('logout revokes stored sessions by refresh token hash', () => {
 test('dedicated WhatsApp account route scopes writes by user and has valid insert SQL', () => {
   const source = read('app/api/whatsapp-accounts/route.js')
 
+  assert.match(source, /requireRequestUserId/)
+  assert.doesNotMatch(source, /resolveRequestUserId/)
+  assert.doesNotMatch(source, /searchParams\.get\('userId'\)/)
+  assert.doesNotMatch(source, /requestedUserId/)
   assert.match(source, /SELECT id FROM whatsapp_accounts WHERE id = \? AND userId = \?/)
   assert.match(source, /UPDATE whatsapp_accounts SET[\s\S]*WHERE id = \? AND userId = \?/)
   assert.match(source, /VALUES \(\?, \?, \?, \?, \?, \?, \?, NOW\(\), NOW\(\)\)/)
@@ -85,13 +89,44 @@ test('chat and send endpoints require auth instead of falling back to the defaul
   assert.match(source, /if \(route === '\/chats' && method === 'POST'\) \{\s*try \{\s*const authenticatedUserId = requireRequestUserId\(request\)/s)
 })
 
-test('integration storage uses the authenticated tenant and backfills legacy default settings', () => {
+test('settings and template routes require auth and do not use shared default user ids', () => {
+  const waConfigSource = read('app/api/wa-config/route.js')
+  const templatesSource = read('app/api/whatsapp-templates/route.js')
+  const webhookLogsSource = read('app/api/webhook-logs/route.js')
+
+  assert.match(waConfigSource, /requireRequestUserId/)
+  assert.doesNotMatch(waConfigSource, /searchParams\.get\('userId'\) \|\| 'default'/)
+  assert.doesNotMatch(waConfigSource, /userId = 'default'/)
+  assert.match(templatesSource, /requireRequestUserId/)
+  assert.doesNotMatch(templatesSource, /\['default'\]/)
+  assert.match(webhookLogsSource, /requireRequestUserId\(request\)/)
+})
+
+test('campaign send and WordPress connection routes require auth and avoid request-supplied user ids', () => {
+  const campaignSendSource = read('app/api/campaigns/[id]/send/route.js')
+  const wpConnectionsSource = read('app/api/wordpress-connections/route.js')
+  const wpConnectTokenSource = read('app/api/wordpress-connections/connect-token/route.js')
+
+  assert.match(campaignSendSource, /requireRequestUserId/)
+  assert.doesNotMatch(campaignSendSource, /\['default', phone\]/)
+  assert.doesNotMatch(campaignSendSource, /\[params\.id, 'default'\]/)
+  assert.doesNotMatch(campaignSendSource, /\['default'\]/)
+  assert.match(campaignSendSource, /WHERE id = \? AND userId = \?/)
+  assert.match(wpConnectionsSource, /requireRequestUserId/)
+  assert.doesNotMatch(wpConnectionsSource, /searchParams\.get\('userId'\) \|\| 'default'/)
+  assert.doesNotMatch(wpConnectionsSource, /userId = 'default'/)
+  assert.match(wpConnectTokenSource, /requireRequestUserId/)
+  assert.doesNotMatch(wpConnectTokenSource, /body\.userId \|\| 'default'/)
+})
+
+test('integration storage uses the authenticated tenant without inheriting default settings for new users', () => {
   const source = read('app/api/[[...path]]/route.js')
 
   assert.match(source, /async function getStoredIntegrations\(userId = 'default'\)/)
   assert.match(source, /const normalizedUserId = String\(userId \|\| 'default'\)/)
-  assert.match(source, /const legacyDefaultRow = await readIntegrationRow\('default'\)/)
-  assert.match(source, /await backfillUserScopedIntegrations\(parsedLegacy\)/)
+  assert.match(source, /if \(normalizedUserId === 'default'\) \{/)
+  assert.doesNotMatch(source, /const legacyDefaultRow = await readIntegrationRow\('default'\)/)
+  assert.doesNotMatch(source, /await backfillUserScopedIntegrations\(/)
   assert.match(source, /integrations = await getStoredIntegrations\(currentUserId\)/)
   assert.match(source, /await saveStoredIntegration\(type, data, currentUserId\)/)
   assert.doesNotMatch(source, /saveStoredIntegration\(type, data\)(?!,)/)

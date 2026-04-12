@@ -2,6 +2,7 @@ import crypto from 'crypto'
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/postgres'
 import { ensureSettingsTables } from '@/lib/settings-db'
+import { requireRequestUserId } from '@/lib/request-user'
 
 function buildOrigin(request) {
   const forwardedProto = request.headers.get('x-forwarded-proto')
@@ -20,7 +21,7 @@ export async function POST(request) {
 
     const body = await request.json()
     const connectionId = body.connection_id || body.connectionId
-    const userId = body.userId || 'default'
+    const userId = requireRequestUserId(request)
 
     if (!connectionId) {
       return NextResponse.json({ error: 'Connection ID is required' }, { status: 400 })
@@ -61,6 +62,9 @@ export async function POST(request) {
       connect_url: `${origin}/api/wordpress-connections/handshake?token=${token}`
     })
   } catch (error) {
+    if (error?.status === 401) {
+      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+    }
     console.error('Error generating WordPress connect token:', error)
     return NextResponse.json({ error: 'Failed to generate connect token' }, { status: 500 })
   }

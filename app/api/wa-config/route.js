@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/postgres'
 import { ensureSettingsTables } from '@/lib/settings-db'
+import { requireRequestUserId } from '@/lib/request-user'
 
 const SHOPIFY_WEBHOOK_TOPICS = [
   { value: 'shopify.order_created', label: 'Order Created', topic: 'orders/create', description: 'When a new order is created' },
@@ -233,7 +234,7 @@ export async function GET(request) {
     await ensureSettingsTables()
 
     const url = new URL(request.url)
-    const userId = url.searchParams.get('userId') || 'default'
+    const userId = requireRequestUserId(request)
     const connectionId = url.searchParams.get('connectionId') || url.searchParams.get('connection_id')
     const siteId = url.searchParams.get('siteId') || url.searchParams.get('site_id')
 
@@ -330,6 +331,9 @@ export async function GET(request) {
       })
     )
   } catch (error) {
+    if (error?.status === 401) {
+      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+    }
     console.error('Error fetching config:', error)
     return NextResponse.json(EMPTY_CONFIG)
   }
@@ -341,13 +345,13 @@ export async function POST(request) {
 
     const body = await request.json()
     const {
-      userId = 'default',
       connection_id,
       site_id,
       wordpress_url,
       woocommerce_triggers,
       custom_tables
     } = body
+    const userId = requireRequestUserId(request)
     const storedConfigRow = await getStoredWaConfig(userId)
     const storedConfig = storedConfigRow?.config && typeof storedConfigRow.config === 'object'
       ? storedConfigRow.config
@@ -419,6 +423,9 @@ export async function POST(request) {
       })
     )
   } catch (error) {
+    if (error?.status === 401) {
+      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+    }
     console.error('Error saving config:', error)
     return NextResponse.json(
       { error: 'Failed to save configuration' },

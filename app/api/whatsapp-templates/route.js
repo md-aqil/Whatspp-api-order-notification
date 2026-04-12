@@ -1,15 +1,16 @@
 import { NextResponse } from 'next/server'
 import { buildMetaAuthHeaders, mapMetaAccessTokenError } from '@/lib/meta-auth'
 import { query } from '@/lib/postgres'
+import { requireRequestUserId } from '@/lib/request-user'
 
-async function getStoredIntegrations() {
+async function getStoredIntegrations(userId) {
   const [rows] = await query(
     `SELECT whatsapp
      FROM integrations
      WHERE userId = ?
      ORDER BY updatedAt DESC, id DESC
      LIMIT 1`,
-    ['default']
+    [userId]
   )
   const row = rows[0]
   if (!row) return null
@@ -19,9 +20,10 @@ async function getStoredIntegrations() {
   }
 }
 
-export async function GET() {
+export async function GET(request) {
   try {
-    const integrations = await getStoredIntegrations()
+    const userId = requireRequestUserId(request)
+    const integrations = await getStoredIntegrations(userId)
     const whatsapp = integrations?.whatsapp
 
     if (!whatsapp?.accessToken || !whatsapp?.businessAccountId) {
@@ -76,6 +78,9 @@ export async function GET() {
 
     return NextResponse.json(approvedTemplates)
   } catch (error) {
+    if (error?.status === 401) {
+      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+    }
     console.error('Error fetching WhatsApp templates:', error)
     return NextResponse.json(
       {

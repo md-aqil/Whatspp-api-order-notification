@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { buildMetaAuthHeaders, mapMetaAccessTokenError } from '@/lib/meta-auth'
 import { query, queryMany, queryOne } from '@/lib/postgres'
+import { requireRequestUserId } from '@/lib/request-user'
 
 async function ensureCampaignSchema() {
   try {
@@ -57,7 +58,7 @@ async function getApprovedTemplateDefinition(businessAccountId, accessToken, tem
   return selectedTemplate
 }
 
-async function getRecipientContext(recipient) {
+async function getRecipientContext(recipient, userId) {
   const phone = recipient.replace(/\D/g, '')
   const [chat, order] = await Promise.all([
     queryOne(
@@ -66,7 +67,7 @@ async function getRecipientContext(recipient) {
        WHERE userId = ? AND REPLACE(REPLACE(REPLACE(phone, '+', ''), '-', ''), ' ', '') = ?
        ORDER BY timestamp DESC, createdAt DESC
        LIMIT 1`,
-      ['default', phone]
+      [userId, phone]
     ),
     queryOne(
       `SELECT customerName, orderNumber
@@ -74,7 +75,7 @@ async function getRecipientContext(recipient) {
        WHERE userId = ? AND REPLACE(REPLACE(REPLACE(customerPhone, '+', ''), '-', ''), ' ', '') = ?
        ORDER BY createdAt DESC
        LIMIT 1`,
-      ['default', phone]
+      [userId, phone]
     )
   ])
 
@@ -85,12 +86,12 @@ async function getRecipientContext(recipient) {
   }
 }
 
-async function getSelectedProducts(productIds) {
+async function getSelectedProducts(productIds, userId) {
   if (!Array.isArray(productIds) || productIds.length === 0) return []
 
   const [rows] = await query(
     'SELECT products FROM products WHERE userId = ? ORDER BY updatedAt DESC, id DESC LIMIT 1',
-    ['default']
+    [userId]
   )
 
   const rawProducts = rows[0]?.products
@@ -386,7 +387,7 @@ function buildCampaignTemplatePayload({ templateDefinition, templateName, templa
   return payload
 }
 
-async function getRecipients(campaign) {
+async function getRecipients(campaign, userId) {
   if (campaign.audience === 'custom') {
     return Array.isArray(campaign.recipients) ? campaign.recipients : []
   }
@@ -398,7 +399,7 @@ async function getRecipients(campaign) {
        WHERE userId = ?
          AND customerPhone IS NOT NULL
          AND createdAt >= DATE_SUB(NOW(), INTERVAL 30 DAY)`,
-      ['default']
+      [userId]
     )
     return (rows || []).map((row) => row.customerPhone).filter(Boolean)
   }
@@ -407,7 +408,7 @@ async function getRecipients(campaign) {
     `SELECT DISTINCT phone
      FROM chats
      WHERE userId = ? AND phone IS NOT NULL`,
-    ['default']
+    [userId]
   )
 
   return (rows || []).map((row) => row.phone).filter(Boolean)
@@ -415,12 +416,13 @@ async function getRecipients(campaign) {
 
 export async function POST(request, { params }) {
   try {
+    const userId = requireRequestUserId(request)
     await ensureCampaignSchema()
     const [campaignRows] = await query(
       `SELECT id, name, template, templateLanguage, templateCategory, templateHeaderImageUrl, campaignType, productIds, message, variables, audience, recipients, status
        FROM campaigns
        WHERE id = ? AND userId = ?`,
-      [params.id, 'default']
+      [params.id, userId]
     )
 
     const campaign = campaignRows[0]
@@ -441,7 +443,7 @@ export async function POST(request, { params }) {
        WHERE userId = ?
        ORDER BY updatedAt DESC, id DESC
        LIMIT 1`,
-      ['default']
+      [userId]
     )
 
     const rawIntegrations = integrationsRows[0]
@@ -463,7 +465,7 @@ export async function POST(request, { params }) {
 
     const storedVariables = Array.isArray(campaign.variables) ? campaign.variables : []
     const hasProductActions = templateHasProductActions(templateDefinition.components || [])
-    const selectedProducts = await getSelectedProducts(campaign.productIds)
+    const selectedProducts = await getSelectedProducts(campaign.productIds, userId)
 
     if (hasProductActions && selectedProducts.length === 0) {
       return NextResponse.json(
@@ -474,7 +476,7 @@ export async function POST(request, { params }) {
 
     const productContext = buildProductContext(selectedProducts, integrations.shopify, integrations.whatsapp)
 
-    const recipients = await getRecipients(campaign)
+    const recipients = await getRecipients(campaign, userId)
     if (recipients.length === 0) {
       return NextResponse.json({ error: 'No recipients found for this campaign' }, { status: 400 })
     }
@@ -482,7 +484,7 @@ export async function POST(request, { params }) {
     const results = []
     for (const recipient of recipients) {
       try {
-        const recipientContext = await getRecipientContext(recipient)
+        const recipientContext = await getRecipientContext(recipient, userId)
         const messageTemplate = buildCampaignTemplatePayload({
           templateDefinition,
           templateName: campaign.template,
@@ -510,7 +512,7 @@ export async function POST(request, { params }) {
            VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, NOW(), NOW())`,
           [
             crypto.randomUUID(),
-            'default',
+            userId,
             campaign.id,
             recipient,
             recipient,
@@ -534,8 +536,8 @@ export async function POST(request, { params }) {
       `UPDATE campaigns
        SET status = ?, results = ?, sentAt = CASE WHEN ? = 'sent' THEN NOW() ELSE sentAt END,
            failedAt = CASE WHEN ? = 'failed' THEN NOW() ELSE failedAt END
-       WHERE id = ?`,
-      [anySuccess ? 'sent' : 'failed', JSON.stringify(results), anySuccess ? 'sent' : 'failed', anySuccess ? 'sent' : 'failed', campaign.id]
+       WHERE id = ? AND userId = ?`,
+      [anySuccess ? 'sent' : 'failed', JSON.stringify(results), anySuccess ? 'sent' : 'failed', anySuccess ? 'sent' : 'failed', campaign.id, userId]
     )
 
     return NextResponse.json({
@@ -544,6 +546,9 @@ export async function POST(request, { params }) {
       results
     })
   } catch (error) {
+    if (error?.status === 401) {
+      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+    }
     console.error('Error sending campaign:', error)
     return NextResponse.json({ error: error.message || 'Failed to send campaign' }, { status: 500 })
   }
