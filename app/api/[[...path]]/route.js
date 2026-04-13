@@ -93,6 +93,20 @@ async function ensureAutomationConversationStateTable() {
           INDEX automation_conversation_state_lookup_idx (userId, automationId, recipient)
         );
       `)
+      
+      // Migration: Ensure new column exists for existing tables
+      try {
+        await getMysqlPool().query(`
+          ALTER TABLE automation_conversation_state 
+          ADD COLUMN IF NOT EXISTS awaitingInteractiveStepId VARCHAR(255) DEFAULT NULL 
+          AFTER handoffUntil
+        `)
+      } catch (colErr) {
+        // MariaDB/MySQL doesn't always support ADD COLUMN IF NOT EXISTS without specific plugins
+        if (!colErr.message.includes('Duplicate column name')) {
+          console.warn('[DB Migration] Notice:', colErr.message)
+        }
+      }
       // Add the column if it doesn't exist yet (safe for MySQL 5.7+)
       try {
         await getMysqlPool().query(
@@ -112,8 +126,8 @@ function normalizeAutomationRecipientKey(value = '') {
   return String(value || '').replace(/\D/g, '')
 }
 
-function getAutomationConversationStateId(automationId, recipient) {
-  return `${automationId}:${recipient}`
+function getAutomationConversationStateId(userId, automationId, recipient) {
+  return `${userId}:${automationId}:${recipient}`
 }
 
 function getDateValue(value) {
@@ -144,23 +158,28 @@ function shouldSuppressWhatsAppAutomationStep(step, state, now = new Date()) {
   return false
 }
 
-async function getAutomationConversationState(automationId, recipient, userId = 'default') {
+async function getAutomationConversationState(automationId, recipient, userId) {
   await ensureAutomationConversationStateTable()
-
-  return queryOne(
+  const stateId = getAutomationConversationStateId(userId, automationId, recipient)
+  
+  const result = await queryOne(
     `SELECT id, automationId, recipient, state, lastInboundAt, lastMenuSentAt, lastReplyKey, lastReplyAt, handoffUntil, awaitingInteractiveStepId, payload
      FROM automation_conversation_state
-     WHERE userId = ? AND automationId = ? AND recipient = ?
-     LIMIT 1`,
-    [userId, automationId, recipient]
+     WHERE id = ?`,
+    [stateId]
   )
+  
+  if (result) {
+    console.log(`[getAutomationConversationState] Found state for ${stateId}: awaiting=${result.awaitingInteractiveStepId}`)
+  }
+  return result
 }
 
 async function saveAutomationConversationState(automationId, recipient, currentState = null, patch = {}, userId = 'default') {
   await ensureAutomationConversationStateTable()
 
   const nextState = {
-    id: getAutomationConversationStateId(automationId, recipient),
+    id: getAutomationConversationStateId(userId, automationId, recipient),
     userId,
     automationId,
     recipient,
@@ -1518,18 +1537,23 @@ function getSequentialStepId(steps, currentStepId) {
 }
 
 function getNextAutomationStepId(steps, step, key = 'main') {
-  if (!step || !step.connections) {
-    // If no connections, try to get the next sequential step if it's a message type
-    if (step && step.type === 'message') {
+  if (!step) return '';
+  
+  // 1. Check for explicit connections for the requested key (main/fallback/opt0/etc)
+  if (step.connections && step.connections[key]) {
+    return step.connections[key];
+  }
+  
+  // 2. If it's a message step and we are looking for 'main', check for a generic sequential next step
+  // BUT only if there are NO other explicit connections defined (to avoid bleeding branches)
+  if (key === 'main' && step.type === 'message') {
+    const hasAnyConnections = step.connections && Object.keys(step.connections).length > 0;
+    if (!hasAnyConnections) {
       return getSequentialStepId(steps, step.id);
     }
-    return '';
   }
-  const explicitTarget = step.connections[key]
-  if (explicitTarget) return explicitTarget
-  
-  if (key === 'fallback') return ''
-  return getSequentialStepId(steps, step.id)
+
+  return '';
 }
 
 function matchesCondition(rule, context) {
@@ -1696,25 +1720,30 @@ async function executeAutomationsForEvent(eventType, context, integrations, user
   for (const automation of automations) {
     const steps = Array.isArray(automation.steps) ? automation.steps : []
     const trigger = steps.find((step) => step.type === 'trigger')
-    console.log(`Automation ${automation.id}: trigger =`, trigger?.event, 'looking for', eventType)
-    if (!trigger || trigger.event !== eventType) continue
-
-    console.log(`Processing automation: ${automation.id}, steps count:`, steps.length)
-
     const isIncomingWhatsAppAutomation = eventType === 'whatsapp.message_received'
-    console.log('isIncomingWhatsAppAutomation:', isIncomingWhatsAppAutomation)
     const conversationRecipient = isIncomingWhatsAppAutomation
       ? normalizeAutomationRecipientKey(resolveAutomationRecipient({ recipientMode: 'customer' }, context))
       : ''
-    console.log('conversationRecipient:', conversationRecipient)
     const now = new Date()
     let conversationState = null
 
     if (isIncomingWhatsAppAutomation && conversationRecipient) {
-      console.log('Getting conversation state for:', conversationRecipient)
+      console.log(`[executeAutomationsForEvent] Checking state for ${automation.id} / ${conversationRecipient}`)
       conversationState = await getAutomationConversationState(automation.id, conversationRecipient, userId)
-      console.log('Got conversation state:', conversationState)
-      
+    }
+
+    const eventMatches = trigger && trigger.event === eventType
+    const isInteractiveReply = isIncomingWhatsAppAutomation && context?._isInteractiveReply
+    const isWaitingForThisReply = isInteractiveReply && conversationState?.awaitingInteractiveStepId
+
+    if (!eventMatches && !isWaitingForThisReply) {
+      console.log(`Automation ${automation.id}: skipped (no event match and not waiting for reply)`)
+      continue
+    }
+
+    console.log(`Processing automation: ${automation.id}, steps count: ${steps.length}, isInteractiveReply: ${isInteractiveReply}`)
+
+    if (isIncomingWhatsAppAutomation && conversationRecipient && conversationState) {
       if (isHandoffActive(conversationState, now)) {
         console.log('Clearing handoff - customer sent new message')
         conversationState = await saveAutomationConversationState(
@@ -1734,29 +1763,53 @@ async function executeAutomationsForEvent(eventType, context, integrations, user
     let totalDelayMs = 0
     const inboundWamid = context?._inboundWamid || null
     let messagesSentInThisRun = 0
+    let isReplyingToMenu = false
 
     // ── If customer is replying to an interactive menu, jump straight to it ──
     // This avoids re-walking the entire flow from the trigger.
     let currentStepId = ''
     if (isIncomingWhatsAppAutomation && context._isInteractiveReply && context._chosenOptionId) {
-      console.log(`[executeAutomationsForEvent] Processing interactive reply: ${context._chosenOptionId} for state: ${conversationState?.state}`)
+      console.log(`[executeAutomationsForEvent] Interactive Reply Detected: automation=${automation.id}, option=${context._chosenOptionId}, awaiting=${conversationState?.awaitingInteractiveStepId}`)
+      
       if (conversationState?.awaitingInteractiveStepId) {
         const lastStep = steps.find(s => s.id === conversationState.awaitingInteractiveStepId)
-        if (lastStep && lastStep.connections && lastStep.connections[context._chosenOptionId]) {
-          currentStepId = lastStep.connections[context._chosenOptionId]
-          console.log(`[executeAutomationsForEvent] Found branch for ${context._chosenOptionId} -> ${currentStepId}`)
+        console.log(`[executeAutomationsForEvent] Awaiting step found: id=${lastStep?.id}, type=${lastStep?.type}`)
+        
+        // Try matching by ID first, then by the Title/Label of the button
+        const branchTarget = lastStep?.connections?.[context._chosenOptionId] || lastStep?.connections?.[context.customer_message]
+        
+        if (branchTarget) {
+          currentStepId = branchTarget
+          isReplyingToMenu = true
+          console.log(`[executeAutomationsForEvent] FOUND BRANCH: ${context._chosenOptionId}/${context.customer_message} -> ${currentStepId}`)
+          
+          // CRITICAL: Clear the awaiting state immediately so it doesn't stay "stuck"
+          conversationState = await saveAutomationConversationState(
+            automation.id, conversationRecipient, conversationState,
+            { state: 'active', awaitingInteractiveStepId: null, lastReplyKey: context._chosenOptionId, lastReplyAt: now },
+            userId
+          )
         } else {
-          console.log(`[executeAutomationsForEvent] No connection found for ${context._chosenOptionId} in step ${lastStep?.id}`)
+          console.log(`[executeAutomationsForEvent] NO CONNECTION for ${context._chosenOptionId} in step ${lastStep?.id}. Connections: ${JSON.stringify(lastStep?.connections)}`)
         }
+      } else {
+        console.log(`[executeAutomationsForEvent] No awaitingInteractiveStepId in state for ${automation.id}. If this reply was for THIS automation, state might have been lost.`)
+      }
+      
+      // CRITICAL: If this is an interactive reply but we didn't find a matching branch for THIS automation,
+      // skip this automation entirely.
+      if (!currentStepId) {
+        console.log(`[executeAutomationsForEvent] SKIPPING automation ${automation.id}: Interactive reply doesn't belong here.`)
+        continue
       }
     }
 
     if (!currentStepId) {
       const triggerIndex = steps.findIndex((s) => s.type === 'trigger' && s.event === eventType)
       if (triggerIndex !== -1) {
-        const trigger = steps[triggerIndex]
-        currentStepId = getNextAutomationStepId(steps, trigger, 'main')
-        console.log(`[executeAutomationsForEvent] Starting from trigger: ${trigger.id}, next step: ${currentStepId}`)
+        const triggerNode = steps[triggerIndex]
+        currentStepId = getNextAutomationStepId(steps, triggerNode, 'main')
+        console.log(`[executeAutomationsForEvent] STARTING NEW FLOW. Trigger: ${triggerNode.id}, First Step: ${currentStepId}`)
       }
     }
 
@@ -1905,7 +1958,6 @@ async function executeAutomationsForEvent(eventType, context, integrations, user
           messagesSentInThisRun++
           if (isReplyingToMenu) sentAfterChoice = true
 
-
           await insertStoredMessage({
             id: uuidv4(),
             userId,
@@ -1922,17 +1974,22 @@ async function executeAutomationsForEvent(eventType, context, integrations, user
           await incrementAutomationSentMetric(automation.id)
 
           if (isIncomingWhatsAppAutomation && conversationRecipient && normalizeAutomationRecipientKey(recipient) === conversationRecipient) {
+             // Dynamically determine if this step is a menu (has branching options)
+            const hasBranching = step.connections && Object.keys(step.connections).some(k => k !== 'main')
+            const isSupport = body.toLowerCase().includes('support') || body.toLowerCase().includes('agent')
+            
             conversationState = await saveAutomationConversationState(
               automation.id,
               conversationRecipient,
               conversationState,
               {
-                state: WHATSAPP_SUPPORT_STEP_IDS.has(step.id) ? 'handoff' : (WHATSAPP_MENU_STEP_IDS.has(step.id) ? 'awaiting_choice' : 'active'),
-                lastMenuSentAt: WHATSAPP_MENU_STEP_IDS.has(step.id) ? now : conversationState?.lastMenuSentAt,
+                state: isSupport ? 'handoff' : (hasBranching ? 'awaiting_choice' : 'active'),
+                lastMenuSentAt: hasBranching ? now : conversationState?.lastMenuSentAt,
                 lastReplyKey: step.id,
                 lastReplyAt: now,
-                handoffUntil: WHATSAPP_SUPPORT_STEP_IDS.has(step.id)
-                  ? new Date(now.getTime() + WHATSAPP_SUPPORT_HANDOFF_MS)
+                awaitingInteractiveStepId: hasBranching ? step.id : null,
+                handoffUntil: isSupport
+                  ? new Date(now.getTime() + 86400000) // 24h default
                   : conversationState?.handoffUntil
               },
               userId
@@ -1943,10 +2000,7 @@ async function executeAutomationsForEvent(eventType, context, integrations, user
         }
 
         currentStepId = getNextAutomationStepId(steps, step, 'main')
-        // If we just sent the first reply after a menu choice, stop here.
-        // mapStep auto-connects sibling reply nodes sequentially which would
-        // cause ALL branch replies to fire. Breaking after the first prevents that.
-        if (isReplyingToMenu && sentAfterChoice) break
+        console.log(`[executeAutomationsForEvent] Step completed. Next step: ${currentStepId || 'END'}`)
         continue
       }
 

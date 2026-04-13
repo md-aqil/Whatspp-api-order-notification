@@ -162,42 +162,65 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
       {/* Messages Container with WhatsApp Wallpaper */}
       <div 
         ref={messagesContainerRef}
-        className="flex-1 overflow-y-auto bg-[#efeae2] dark:bg-[#0b141a] relative"
+        className="flex-1 overflow-y-auto relative"
         style={{ 
-          backgroundImage: `url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png')`,
-          backgroundBlendMode: 'overlay',
-          backgroundSize: '400px'
+          backgroundColor: typeof window !== 'undefined' && window.document.documentElement.classList.contains('dark') ? '#0b141a' : '#efeae2',
         }}
       >
-        <div className="p-5 space-y-2">
+        {/* WhatsApp Pattern Overlay */}
+        <div 
+          className="absolute inset-0 opacity-[0.06] dark:opacity-[0.04] pointer-events-none"
+          style={{ 
+            backgroundImage: `url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png')`,
+            backgroundSize: '400px',
+            filter: typeof window !== 'undefined' && window.document.documentElement.classList.contains('dark') ? 'invert(1)' : 'none'
+          }}
+        />
+
+        <div className="p-4 md:p-6 space-y-1 relative z-10">
           {messages.map((message, idx) => {
-            const isLastInGroup = idx === messages.length - 1 || messages[idx+1]?.isCustomer !== message.isCustomer;
+            const isCustomer = message.isCustomer;
+            const isFirstInGroup = idx === 0 || messages[idx-1]?.isCustomer !== isCustomer;
             
             return (
               <div
                 key={message.id}
-                className={`flex w-full mb-1 ${message.isCustomer ? 'justify-start' : 'justify-end'}`}
+                className={`flex w-full ${isFirstInGroup ? 'mt-3' : 'mt-0.5'} ${isCustomer ? 'justify-start' : 'justify-end'}`}
               >
                 <div
-                  className={`relative max-w-[85%] md:max-w-[65%] px-2.5 py-1.5 shadow-sm ${
-                    message.isCustomer
+                  className={`relative max-w-[85%] md:max-w-[70%] px-2.5 py-1.5 shadow-[0_1px_0.5px_rgba(0,0,0,0.13)] ${
+                    isCustomer
                       ? 'bg-white dark:bg-[#202c33] text-[#111b21] dark:text-[#e9edef] rounded-r-lg rounded-bl-lg'
                       : 'bg-[#dcf8c6] dark:bg-[#005c4b] text-[#111b21] dark:text-[#e9edef] rounded-l-lg rounded-br-lg'
-                  } ${!isLastInGroup ? 'rounded-lg' : ''}`}
+                  } ${!isFirstInGroup ? 'rounded-lg' : ''}`}
                 >
-                  {/* Message Tail */}
-                  {isLastInGroup && (
-                    <div className={`absolute top-0 w-2 h-2.5 ${message.isCustomer ? '-left-2 bg-white dark:bg-[#202c33] [clip-path:polygon(100%_0,0_0,100%_100%)]' : '-right-2 bg-[#dcf8c6] dark:bg-[#005c4b] [clip-path:polygon(0_0,100%_0,0_100%)]'}`}></div>
+                  {/* Message Tail - Only on first message in group */}
+                  {isFirstInGroup && (
+                    <div className={`absolute top-0 ${isCustomer ? '-left-[8px]' : '-right-[8px]'}`}>
+                      <svg width="8" height="13" viewBox="0 0 8 13" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path 
+                          d={isCustomer ? "M8 0H0V13L8 0Z" : "M0 0H8V13L0 0Z"} 
+                          fill="currentColor" 
+                          className={isCustomer ? "text-white dark:text-[#202c33]" : "text-[#dcf8c6] dark:text-[#005c4b]"}
+                        />
+                      </svg>
+                    </div>
                   )}
                   
-                  <div className="flex flex-col">
-                    <span className="text-[14.2px] leading-relaxed break-words">{message.text}</span>
-                    <div className="flex items-center justify-end space-x-1 -mt-1 ml-4 select-none">
-                      <span className="text-[11px] text-[#667781] dark:text-[#8696a0] uppercase">
+                  <div className="flex flex-col min-w-[60px]">
+                    <span className="text-[14.2px] leading-[19px] break-words whitespace-pre-wrap">
+                      {message.text}
+                    </span>
+                    <div className="flex items-center justify-end space-x-1 mt-1 -mr-1 ml-4 select-none self-end">
+                      <span className="text-[11px] text-[#667781] dark:text-[#8696a0] tabular-nums">
                         {formatTime(message.timestamp)}
                       </span>
-                      {!message.isCustomer && (
-                        <svg viewBox="0 0 16 11" height="11" width="16" preserveAspectRatio="xMidYMid meet" className="text-[#53bdeb] fill-current"><path d="M11.053,2.372L5.808,7.618L5.344,7.153l-0.419-0.42c-0.198-0.198-0.518-0.198-0.716,0c-0.198,0.198-0.198,0.518,0,0.716l0.778,0.778l0,0l0.357,0.357c0.198,0.198,0.518,0.198,0.716,0l5.462-5.462c0.198-0.198,0.198-0.518,0-0.716C11.571,2.174,11.251,2.174,11.053,2.372z M15.429,2.372l-5.462,5.462c-0.198,0.198-0.518,0.198-0.716,0l-0.357-0.357c-0.198-0.198-0.518-0.198-0.716,0c-0.198,0.198-0.198,0.518,0,0.716l0.716,0.716c0.198,0.198,0.518,0.198,0.716,0l5.819-5.819c0.198-0.198,0.198-0.518,0-0.716C15.947,2.174,15.627,2.174,15.429,2.372z M1.745,5.117L0.892,5.97c-0.198,0.198-0.198,0.518,0,0.716l0.357,0.357c0.198,0.198,0.518,0.198,0.716,0l1.21-1.21c0.198-0.198,0.198-0.518,0-0.716l-0.357-0.357C2.62,4.563,2.3,4.563,2.102,4.761L2.102,4.761z"></path></svg>
+                      {!isCustomer && (
+                        <span className="text-[#53bdeb]">
+                          <svg viewBox="0 0 16 15" width="16" height="15" fill="currentColor">
+                            <path d="M15.01 3.3L8.07 10.24l-3.32-3.32-.73.73 4.05 4.05 7.68-7.68-.74-.72zm-4.72 0L9.56 4.03l2.8 2.8.73-.73-2.8-2.8zm-7.69.74l3.32 3.32.73-.73-4.05-4.05-.73.73z" />
+                          </svg>
+                        </span>
                       )}
                     </div>
                   </div>
@@ -206,7 +229,7 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
             );
           })}
         </div>
-        <div ref={messagesEndRef} />
+        <div ref={messagesEndRef} className="h-4" />
       </div>
 
       {/* Input Area */}
