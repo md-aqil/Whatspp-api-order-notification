@@ -1375,9 +1375,6 @@ function IntegrationForm({ type, integration, loading, onSave }) {
             <Label htmlFor={field.key}>{field.label}</Label>
             {type === 'whatsapp' && field.key === 'webhookVerifyToken' && (
               <div className="flex gap-2">
-                <Button type="button" variant="outline" size="sm" onClick={generateVerifyToken}>
-                  Generate
-                </Button>
                 <Button
                   type="button"
                   variant="outline"
@@ -1408,7 +1405,14 @@ function IntegrationForm({ type, integration, loading, onSave }) {
             value={formData[field.key] || ''}
             onChange={(e) => setFormData(prev => ({ ...prev, [field.key]: e.target.value }))}
             required={!(type === 'whatsapp' && (field.key === 'catalogId' || field.key === 'webhookVerifyToken'))}
+            readOnly={type === 'whatsapp' && field.key === 'webhookVerifyToken'}
+            className={type === 'whatsapp' && field.key === 'webhookVerifyToken' ? 'bg-slate-50 font-mono text-[11px]' : ''}
           />
+          {type === 'whatsapp' && field.key === 'webhookVerifyToken' && (
+            <p className="text-[10px] text-slate-500 italic">
+              This token is managed by the system environment variables.
+            </p>
+          )}
         </div>
       ))}
 

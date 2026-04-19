@@ -2673,9 +2673,8 @@ async function handleRoute(request, { params }) {
 
       // Ensure WhatsApp configuration has the right structure
       if (type === 'whatsapp') {
-        if (!data.webhookVerifyToken) {
-          data.webhookVerifyToken = `wa_verify_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`
-        }
+        // Force use of environment token to prevent mismatch with Meta configuration
+        data.webhookVerifyToken = process.env.WHATSAPP_VERIFY_TOKEN || ''
 
         data.connected = !!(data.phoneNumberId && data.accessToken);
         // Ensure catalogId is properly handled
@@ -3547,8 +3546,8 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
           console.error('Failed to load WhatsApp webhook token from storage:', error)
         }
 
-        // Use env token if stored token is empty or is a test value like '123'
-        const expectedToken = (storedToken && storedToken.length > 10) ? storedToken : process.env.WHATSAPP_VERIFY_TOKEN
+        // Use env token strictly as requested
+        const expectedToken = process.env.WHATSAPP_VERIFY_TOKEN || '41ddad7ee4b44d0418876d444b36f4ac817c042c36265b5d'
 
         console.log('WhatsApp webhook verification:', { verifyToken, expectedToken, storedToken, envToken: process.env.WHATSAPP_VERIFY_TOKEN })
 
