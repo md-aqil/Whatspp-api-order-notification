@@ -1,0 +1,44 @@
+#!/usr/bin/expect -f
+set timeout 60
+set host "187.127.154.55"
+set user "root"
+set password "5nUiTR3JBIjL-.7Gx1U;"
+
+spawn ssh -o StrictHostKeyChecking=no $user@$host
+expect "password:"
+send "$password\r"
+expect "# "
+
+# Kill any manually running tunnel first
+send "pkill -f cloudflared\r"
+expect "# "
+
+# Create the systemd service file
+send "cat <<EOF > /etc/systemd/system/cloudflared-tunnel.service\n"
+send "\[Unit\]\n"
+send "Description=Cloudflare Tunnel for WhatsApp Commerce Hub\n"
+send "After=network.target\n\n"
+send "\[Service\]\n"
+send "Type=simple\n"
+send "User=root\n"
+send "WorkingDirectory=/var/www/whatsapp-commerce-hub\n"
+send "ExecStart=/usr/local/bin/cloudflared tunnel --config /var/www/whatsapp-commerce-hub/tunnel-config/config.yaml run\n"
+send "Restart=always\n"
+send "RestartSec=5\n\n"
+send "\[Install\]\n"
+send "WantedBy=multi-user.target\n"
+send "EOF\r"
+expect "# "
+
+# Reload systemd and start the service
+send "systemctl daemon-reload\r"
+expect "# "
+send "systemctl enable cloudflared-tunnel\r"
+expect "# "
+send "systemctl start cloudflared-tunnel\r"
+expect "# "
+send "systemctl status cloudflared-tunnel\r"
+expect "# "
+
+send "exit\r"
+expect eof

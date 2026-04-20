@@ -58,9 +58,9 @@ NEXT_PID=$!
 echo "Waiting for Next.js to start..."
 sleep 10
 
-# Start Cloudflare tunnel
-echo "Starting Cloudflare Tunnel..."
-cloudflared tunnel --config tunnel-config/config.yaml run
+# Start Cloudflare tunnel (Quick Tunnel for local dev)
+echo "Starting Temporary Cloudflare Tunnel..."
+cloudflared tunnel --url http://localhost:3000
 
 # If tunnel stops, kill Next.js
 kill $NEXT_PID 2>/dev/null

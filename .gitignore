@@ -35,6 +35,9 @@ dist/
 *token.json*
 *credentials.json*
 
+# Temporary scripts
+scratch/
+
 # Logs and debug files
 npm-debug.log*
 yarn-debug.log*

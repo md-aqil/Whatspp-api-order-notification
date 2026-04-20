@@ -10,12 +10,13 @@ import {
   Send,
   Megaphone,
   Workflow,
-  Brain
+  Brain,
+  Shield
 } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
-export function Sidebar({ sidebarOpen, setSidebarOpen }) {
+export function Sidebar({ sidebarOpen, setSidebarOpen, user }) {
   const pathname = usePathname()
   const [activeCount, setActiveCount] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -43,6 +44,11 @@ export function Sidebar({ sidebarOpen, setSidebarOpen }) {
     { name: 'Orders', href: '/dashboard/orders', icon: CreditCard },
     { name: 'Settings', href: '/dashboard/settings', icon: Settings },
   ]
+
+  // Add Admin link for superadmins
+  if (user?.role === 'superadmin') {
+    navigation.push({ name: 'Admin', href: '/dashboard/admin', icon: Shield })
+  }
 
   return (
     <>

@@ -1,0 +1,25 @@
+#!/usr/bin/expect -f
+set timeout 10
+set host "187.127.154.55"
+set user "root"
+set password "5nUiTR3JBIjL-.7Gx1U;"
+
+spawn ssh -o StrictHostKeyChecking=no $user@$host
+expect "password:"
+send "$password\r"
+expect "# "
+
+# 1. Alter the table to include 'superadmin' in the role ENUM
+send "mysql -u root -p'5nUiTR3JBIjL-.7Gx1U;' whatsapp_api -e \"ALTER TABLE users MODIFY COLUMN role ENUM('owner', 'admin', 'member', 'viewer', 'superadmin') DEFAULT 'member';\"\r"
+expect "# "
+
+# 2. Update the role for the admin accounts
+send "mysql -u root -p'5nUiTR3JBIjL-.7Gx1U;' whatsapp_api -e \"UPDATE users SET role = 'superadmin' WHERE email IN ('mdaqil4k@gmail.com', 'aqilali381@gmail.com');\"\r"
+expect "# "
+
+# 3. Verify the changes
+send "mysql -u root -p'5nUiTR3JBIjL-.7Gx1U;' whatsapp_api -e \"SELECT email, role FROM users WHERE role = 'superadmin';\"\r"
+expect "# "
+
+send "exit\r"
+expect eof

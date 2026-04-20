@@ -1,0 +1,61 @@
+#!/usr/bin/expect -f
+set timeout 300
+set host "187.127.154.55"
+set user "root"
+set password "5nUiTR3JBIjL-.7Gx1U;"
+
+spawn ssh -o StrictHostKeyChecking=no $user@$host
+expect "password:"
+send "$password\r"
+expect "# "
+
+# Create directories
+send "mkdir -p /var/www/whatsapp-commerce-hub/app/dashboard/admin\r"
+expect "# "
+send "mkdir -p /var/www/whatsapp-commerce-hub/app/api/admin/users\r"
+expect "# "
+send "mkdir -p /var/www/whatsapp-commerce-hub/app/api/admin/integrations\r"
+expect "# "
+
+# Upload app/dashboard/admin/page.jsx
+send "cat <<'EOF' > /var/www/whatsapp-commerce-hub/app/dashboard/admin/page.jsx\n"
+set f [open "app/dashboard/admin/page.jsx" r]
+while {[gets $f line] != -1} {
+    send "$line\n"
+}
+close $f
+send "EOF\r"
+expect "# "
+
+# Upload app/api/admin/users/route.js
+send "cat <<'EOF' > /var/www/whatsapp-commerce-hub/app/api/admin/users/route.js\n"
+set f [open "app/api/admin/users/route.js" r]
+while {[gets $f line] != -1} {
+    send "$line\n"
+}
+close $f
+send "EOF\r"
+expect "# "
+
+# Upload app/api/admin/integrations/route.js
+send "cat <<'EOF' > /var/www/whatsapp-commerce-hub/app/api/admin/integrations/route.js\n"
+set f [open "app/api/admin/integrations/route.js" r]
+while {[gets $f line] != -1} {
+    send "$line\n"
+}
+close $f
+send "EOF\r"
+expect "# "
+
+# Rebuild the app
+send "cd /var/www/whatsapp-commerce-hub\r"
+expect "# "
+send "npm run build\r"
+expect "# "
+
+# Restart PM2
+send "pm2 restart whatsapp-commerce-hub\r"
+expect "# "
+
+send "exit\r"
+expect eof

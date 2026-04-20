@@ -32,7 +32,7 @@ async function setupTables() {
         email VARCHAR(255) UNIQUE NOT NULL,
         password_hash VARCHAR(255) NOT NULL,
         name VARCHAR(255),
-        role ENUM('owner', 'admin', 'member', 'viewer') DEFAULT 'member',
+        role ENUM('superadmin', 'owner', 'admin', 'member', 'viewer') DEFAULT 'member',
         plan VARCHAR(50) DEFAULT 'free',
         isActive BOOLEAN DEFAULT TRUE,
         createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
