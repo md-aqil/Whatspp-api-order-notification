@@ -538,20 +538,24 @@ async function seedDefaultAutomationsForUser(userId) {
   const { defaultAutomations } = await import('@/lib/automation-defaults')
 
   for (const auto of defaultAutomations) {
-    await query(
-      `INSERT INTO automations (id, userId, name, status, source, summary, steps, metrics, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-      [
-        auto.id,
-        userId,
-        auto.name,
-        auto.status ? 1 : 0,
-        auto.source || 'System',
-        auto.summary || '',
-        JSON.stringify(auto.steps || []),
-        JSON.stringify(auto.metrics || { sent: 0, openRate: 0, conversions: 0 })
-      ]
-    )
+    try {
+      await query(
+        `INSERT IGNORE INTO automations (id, userId, name, status, source, summary, steps, metrics, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+        [
+          auto.id,
+          userId,
+          auto.name,
+          auto.status ? 1 : 0,
+          auto.source || 'System',
+          auto.summary || '',
+          JSON.stringify(auto.steps || []),
+          JSON.stringify(auto.metrics || { sent: 0, openRate: 0, conversions: 0 })
+        ]
+      )
+    } catch (err) {
+      console.error(`Failed to seed default automation ${auto.id}:`, err.message)
+    }
   }
 }
 
@@ -3486,6 +3490,7 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
     if (route === '/automations' && method === 'GET') {
       try {
         await ensureAutomationsTable()
+        await seedDefaultAutomationsForUser(currentUserId)
 
         let [rows] = await query(
           `SELECT id, name, status, source, summary, steps, metrics, createdAt, updatedAt
@@ -3494,24 +3499,6 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
            ORDER BY updatedAt DESC, createdAt DESC`,
           [currentUserId]
         )
-
-        if (!rows || rows.length === 0) {
-          const migratedFromDefault = currentUserId !== 'default'
-            ? await copyAutomationsBetweenUsers('default', currentUserId)
-            : false
-
-          if (!migratedFromDefault) {
-            await seedDefaultAutomationsForUser(currentUserId)
-          }
-
-          ;[rows] = await query(
-            `SELECT id, name, status, source, summary, steps, metrics, createdAt, updatedAt
-             FROM automations
-             WHERE userId = ?
-             ORDER BY updatedAt DESC, createdAt DESC`,
-            [currentUserId]
-          )
-        }
 
         // Parse JSON columns
         const parsedRows = (rows || []).map(row => ({
