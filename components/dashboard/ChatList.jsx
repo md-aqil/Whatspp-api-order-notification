@@ -61,119 +61,115 @@ export function ChatList({ chats, activeChatId, onSelectChat }) {
   )
 
   return (
-    <div className="flex h-full flex-col bg-white dark:bg-[#111b21] border-r border-gray-200 dark:border-white/5">
+    <div className="flex h-full flex-col bg-white dark:bg-[#0b0d14] border-r border-gray-100 dark:border-slate-800">
       {/* List Header */}
-      <div className="flex items-center justify-between bg-[#f0f2f5] dark:bg-[#202c33] px-4 py-2">
-        <div className="w-10 h-10 rounded-full bg-slate-200 overflow-hidden cursor-pointer hover:bg-slate-300 transition-colors">
-          <img src="https://i.pravatar.cc/150?u=me" alt="Me" className="w-full h-full object-cover" />
-        </div>
-        <div className="flex items-center space-x-5 text-[#54656f] dark:text-[#aebac1]">
+      <div className="flex items-center justify-between px-6 py-5 border-b border-gray-50 dark:border-slate-800 bg-[#f9fafb] dark:bg-[#111827]/50">
+        <h2 className="text-xl font-black text-gray-900 dark:text-white tracking-tight">Messages</h2>
+        <div className="flex items-center space-x-2">
           <Dialog open={showNewChatDialog} onOpenChange={setShowNewChatDialog}>
             <DialogTrigger asChild>
-              <button className="p-1 hover:bg-gray-200 dark:hover:bg-white/10 rounded-full transition-colors">
-                <MessageSquare className="w-6 h-6" />
-              </button>
+              <Button variant="ghost" size="icon" className="rounded-full text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-500/10">
+                <Plus className="w-5 h-5" />
+              </Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-[425px] dark:bg-[#202c33] dark:text-white border-none">
+            <DialogContent className="sm:max-w-[400px] bg-white dark:bg-[#111827] text-gray-900 dark:text-white border-none shadow-2xl rounded-3xl">
               <DialogHeader>
-                <DialogTitle className="text-xl">New Chat</DialogTitle>
+                <DialogTitle className="text-2xl font-bold tracking-tight">New Conversation</DialogTitle>
               </DialogHeader>
-              <div className="space-y-4 py-4">
-                <Input
-                  placeholder="Contact Name (Optional)"
-                  value={newContactName}
-                  onChange={(e) => setNewContactName(e.target.value)}
-                  className="bg-white dark:bg-[#2a3942] border-none focus-visible:ring-emerald-500"
-                />
-                <Input
-                  placeholder="Phone Number (e.g. 919876543210)"
-                  value={newPhoneNumber}
-                  onChange={(e) => setNewPhoneNumber(e.target.value)}
-                  className="bg-white dark:bg-[#2a3942] border-none focus-visible:ring-emerald-500"
-                />
+              <div className="space-y-5 py-6">
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-widest text-gray-400 ml-1">Recipient Name</label>
+                  <Input
+                    placeholder="e.g. John Doe"
+                    value={newContactName}
+                    onChange={(e) => setNewContactName(e.target.value)}
+                    className="h-12 bg-gray-50 dark:bg-slate-800 border-none focus-visible:ring-emerald-500 rounded-xl"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-widest text-gray-400 ml-1">Phone Number</label>
+                  <Input
+                    placeholder="e.g. 919876543210"
+                    value={newPhoneNumber}
+                    onChange={(e) => setNewPhoneNumber(e.target.value)}
+                    className="h-12 bg-gray-50 dark:bg-slate-800 border-none focus-visible:ring-emerald-500 rounded-xl"
+                  />
+                </div>
                 <Button 
                   onClick={handleCreateNewChat} 
-                  className="w-full bg-[#00a884] hover:bg-[#06cf9c] text-white font-semibold rounded-lg h-11"
+                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl h-12 shadow-lg shadow-emerald-500/20 transition-all active:scale-[0.98]"
                 >
                   Create Chat
                 </Button>
               </div>
             </DialogContent>
           </Dialog>
-          <button className="p-1 hover:bg-gray-200 dark:hover:bg-white/10 rounded-full transition-colors">
-            <MoreVertical className="w-6 h-6" />
-          </button>
         </div>
       </div>
 
-      {/* Search Bar */}
-      <div className="p-2 border-b border-gray-100 dark:border-white/5">
-        <div className="relative flex items-center bg-[#f0f2f5] dark:bg-[#202c33] rounded-lg px-3 py-1.5 group">
-          <Search className="w-5 h-5 text-gray-500 mr-3 group-focus-within:text-[#00a884] transition-colors" />
-          <input
-            type="text"
-            placeholder="Search or start new chat"
-            className="flex-1 bg-transparent border-none outline-none text-[15px] text-gray-700 dark:text-[#e9edef] placeholder:text-gray-500"
+      {/* Search */}
+      <div className="p-4 border-b border-gray-50 dark:border-slate-800">
+        <div className="relative group">
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 group-focus-within:text-emerald-500 transition-colors" />
+          <Input 
+            placeholder="Search conversations..." 
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-10 h-11 bg-gray-50 dark:bg-slate-800/50 border-none focus-visible:ring-emerald-500 rounded-xl placeholder:text-gray-400"
           />
         </div>
       </div>
 
-      {/* Chat List Items */}
-      <div className="flex-1 overflow-y-auto custom-scrollbar">
+      {/* Chat Items */}
+      <div className="flex-1 overflow-y-auto">
         {filteredChats.map((chat) => (
-          <div
+          <button
             key={chat.id}
-            className={`flex items-center px-3 py-3 cursor-pointer transition-colors relative border-b border-gray-50 dark:border-white/5 mx-1 rounded-sm ${
-              activeChatId === chat.id 
-                ? 'bg-[#f0f2f5] dark:bg-[#2a3942]' 
-                : 'hover:bg-[#f5f6f6] dark:hover:bg-[#202c33]'
-            }`}
             onClick={() => onSelectChat(chat)}
+            className={`w-full flex items-center px-6 py-4 transition-all duration-200 border-b border-gray-50 dark:border-slate-800/50 ${
+              activeChatId === chat.id 
+                ? 'bg-emerald-50/50 dark:bg-emerald-500/10 border-r-4 border-r-emerald-500' 
+                : 'bg-white dark:bg-transparent hover:bg-gray-50 dark:hover:bg-slate-800/50'
+            }`}
           >
             <div className="relative flex-shrink-0">
-              <img
-                src={chat.avatar || `https://i.pravatar.cc/150?u=${chat.phone}`}
-                alt={chat.name}
-                className="w-12 h-12 rounded-full object-cover"
-              />
+              <div className="w-12 h-12 md:w-14 md:h-14 rounded-2xl overflow-hidden shadow-sm border border-gray-100 dark:border-slate-700">
+                <img
+                  src={chat.avatar || `https://i.pravatar.cc/150?u=${chat.phone}`}
+                  alt={chat.name}
+                  className="w-full h-full object-cover"
+                />
+              </div>
+              <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-emerald-500 border-2 border-white dark:border-[#0b0d14] rounded-full"></div>
             </div>
-            <div className="ml-3 flex-1 min-w-0 flex flex-col justify-center">
-              <div className="flex items-center justify-between">
-                <h3 className="truncate text-[17px] font-normal text-[#111b21] dark:text-[#e9edef]">
+            
+            <div className="ml-4 flex-1 min-w-0 text-left">
+              <div className="flex justify-between items-baseline mb-1">
+                <h3 className={`font-bold truncate tracking-tight ${
+                  activeChatId === chat.id ? 'text-emerald-700 dark:text-emerald-400' : 'text-gray-900 dark:text-white'
+                }`}>
                   {chat.name}
                 </h3>
-                <span className={`text-xs ${chat.unread > 0 ? 'text-[#00a884] font-semibold' : 'text-[#667781] dark:text-[#8696a0]'}`}>
+                <span className="text-[10px] font-bold text-gray-400 dark:text-gray-500 whitespace-nowrap ml-2">
                   {formatDate(chat.timestamp)}
                 </span>
               </div>
-              <div className="flex items-center justify-between mt-0.5">
-                <p className="truncate text-[14px] text-[#667781] dark:text-[#8696a0] leading-tight flex-1">
-                  {chat.lastMessage}
+              <div className="flex justify-between items-center">
+                <p className={`text-sm truncate ${
+                  chat.unread > 0 ? 'text-gray-900 dark:text-white font-bold' : 'text-gray-500 dark:text-gray-400'
+                }`}>
+                  {chat.lastMessage || 'No messages yet'}
                 </p>
                 {chat.unread > 0 && (
-                  <span className="flex h-[20px] min-w-[20px] px-1.5 items-center justify-center rounded-full bg-[#00a884] text-[12px] font-bold text-white ml-2">
+                  <span className="ml-2 bg-emerald-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full shadow-sm shadow-emerald-500/20">
                     {chat.unread}
                   </span>
                 )}
               </div>
             </div>
-          </div>
+          </button>
         ))}
       </div>
-      
-      <style jsx>{`
-        .custom-scrollbar::-webkit-scrollbar {
-          width: 6px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-          background-color: transparent;
-        }
-        .custom-scrollbar:hover::-webkit-scrollbar-thumb {
-          background-color: #374151;
-        }
-      `}</style>
     </div>
   )
 }

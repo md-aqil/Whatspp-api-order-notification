@@ -16,6 +16,7 @@ import {
 import { getLocalIntegrationRecord, saveLocalIntegrationRecord } from '@/lib/local-settings-store'
 import { requireRequestUserId, resolveRequestUserId } from '@/lib/request-user'
 import { ensureSettingsTables } from '@/lib/settings-db'
+import { generateAIResponse } from '@/lib/ai'
 
 let mysqlPool
 const shopifyTokenCache = new Map()
@@ -1850,6 +1851,78 @@ async function executeAutomationsForEvent(eventType, context, integrations, user
         totalDelayMs += parseDelayToMs(step)
         currentStepId = getNextAutomationStepId(steps, step, 'main')
         continue
+      }
+
+      if (step.type === 'ai_reply') {
+        console.log('Processing AI reply step:', step.id);
+        
+        const recipient = resolveAutomationRecipient(step, context);
+        if (!recipient) {
+          currentStepId = getNextAutomationStepId(steps, step, 'main');
+          continue;
+        }
+
+        const messageText = context.customer_message || context.message || "";
+        
+        // Fetch Knowledge Base
+        const [kbRows] = await getMysqlPool().query(
+          'SELECT content FROM knowledge_base WHERE userId = ?',
+          [userId]
+        );
+        
+        const kbContent = kbRows.map(r => r.content).join("\n\n");
+        console.log(`[AI Reply] Found KB entries: ${kbRows.length}, Total KB length: ${kbContent.length}`);
+        const businessName = integrations.whatsapp?.name || "Our Business";
+
+        // Generate AI Response
+        const aiBody = await generateAIResponse(messageText, kbContent, businessName);
+
+        // Split into multiple messages for a human-like feel
+        const parts = aiBody.split(/\n\n+/).filter(p => p.trim().length > 0);
+        
+        console.log(`[AI Reply] Splitting response into ${parts.length} messages`);
+
+        for (let i = 0; i < parts.length; i++) {
+          const part = parts[i];
+          
+          // Small delay between messages to simulate "typing"
+          if (i > 0) {
+            const delayMs = Math.min(2500, 800 + (part.length * 15)); 
+            await sleep(delayMs);
+          }
+
+          const messageData = {
+            messaging_product: 'whatsapp',
+            to: recipient,
+            type: 'text',
+            text: { body: part }
+          };
+
+          const partResult = await sendWhatsAppMessage(
+            integrations.whatsapp.phoneNumberId,
+            integrations.whatsapp.accessToken,
+            recipient,
+            messageData
+          );
+
+          messagesSentInThisRun++;
+
+          await insertStoredMessage({
+            id: uuidv4(),
+            userId,
+            recipient,
+            phone: recipient,
+            message: part,
+            isCustomer: false,
+            timestamp: new Date(),
+            whatsappMessageId: partResult?.messages?.[0]?.id || '',
+            status: 'sent',
+            messageType: 'ai_assistant'
+          });
+        }
+
+        currentStepId = getNextAutomationStepId(steps, step, 'main');
+        continue;
       }
 
       if (step.type === 'message') {
@@ -4376,9 +4449,10 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
 
         // Transform messages to ensure consistent structure for the frontend
         const transformedMessages = messages.map(msg => {
-          // For incoming messages (from customer)
-          // If isCustomer is explicitly set to true, or if the phone field matches the chat phone (and it's not an outgoing message)
-          if (msg.isCustomer === true || (msg.phone && msg.phone === phone && msg.recipient !== phone)) {
+          // Robustly determine if this is a customer message
+          const isCustomer = Boolean(msg.isCustomer === true || msg.isCustomer === 1 || msg.isCustomer === '1' || msg.isCustomer === 'true');
+          
+          if (isCustomer) {
             return {
               id: msg.id || msg._id?.toString() || uuidv4(),
               text: msg.message || msg.text || '',
@@ -4386,26 +4460,13 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
               timestamp: msg.timestamp || new Date(),
               phone: msg.phone || phone
             };
-          }
-          // For outgoing messages (to customer)
-          // If isCustomer is explicitly set to false, or if the recipient field matches the chat phone (and it's not an incoming message)
-          else if (msg.isCustomer === false || (msg.recipient && msg.recipient === phone && msg.phone !== phone)) {
+          } else {
             return {
               id: msg.id || msg._id?.toString() || uuidv4(),
               text: msg.message || msg.text || '',
               isCustomer: false,
               timestamp: msg.timestamp || new Date(),
               phone: msg.recipient || phone
-            };
-          }
-          // Fallback - assume outgoing message if we can't determine
-          else {
-            return {
-              id: msg.id || msg._id?.toString() || uuidv4(),
-              text: msg.message || msg.text || '',
-              isCustomer: false,
-              timestamp: msg.timestamp || new Date(),
-              phone: msg.recipient || msg.phone || phone
             };
           }
         });

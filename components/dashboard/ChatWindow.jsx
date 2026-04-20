@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { format } from 'date-fns'
-import { Send } from 'lucide-react'
+import { Send, MessageSquare } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 
@@ -15,31 +15,64 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
   const incomingSoundRef = useRef(null)
   const outgoingSoundRef = useRef(null)
 
-  // Initialize sound effects
+  // Initialize sound effects with high-quality sources
   useEffect(() => {
-    incomingSoundRef.current = new Audio('/sounds/incoming-message.mp3')
-    outgoingSoundRef.current = new Audio('/sounds/outgoing-message.mp3')
+    // Use high-quality professional notification sounds
+    incomingSoundRef.current = new Audio('https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3') // Clean "Ding"
+    outgoingSoundRef.current = new Audio('https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3') // Soft "Whoosh"
     
     // Cleanup
     return () => {
-      if (incomingSoundRef.current) {
-        incomingSoundRef.current = null
-      }
-      if (outgoingSoundRef.current) {
-        outgoingSoundRef.current = null
-      }
+      incomingSoundRef.current = null
+      outgoingSoundRef.current = null
     }
   }, [])
 
-  // Play sound effect
-  const playSound = (soundRef) => {
-    try {
-      if (soundRef.current) {
-        soundRef.current.currentTime = 0
-        soundRef.current.play().catch(e => console.log("Sound play prevented by browser policy"))
+  // Tab Title Notification Logic
+  useEffect(() => {
+    let intervalId;
+    const originalTitle = document.title;
+    const currentMessageCount = messages.length;
+    
+    // Check if the last message was from a customer AND we are not the active tab
+    const lastMessage = messages[messages.length - 1];
+    if (lastMessage?.isCustomer === true && !isInitialRenderRef.current) {
+      // Blink title if tab is hidden
+      if (document.hidden) {
+        let showNotification = true;
+        intervalId = setInterval(() => {
+          document.title = showNotification ? "📩 (1) New Message!" : originalTitle;
+          showNotification = !showNotification;
+        }, 1000);
       }
-    } catch (error) {
-      console.log("Sound could not be played", error)
+    }
+
+    // Reset title when tab becomes visible
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        clearInterval(intervalId);
+        document.title = originalTitle;
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    return () => {
+      clearInterval(intervalId);
+      document.title = originalTitle;
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    }
+  }, [messages])
+
+  // Play sound effect with better handling
+  const playSound = (soundRef) => {
+    if (soundRef.current) {
+      soundRef.current.currentTime = 0;
+      soundRef.current.volume = 0.5;
+      soundRef.current.play().catch(e => {
+        // Silently fail if browser blocks autoplay
+        console.log("Audio play deferred until user interaction");
+      });
     }
   }
 
@@ -72,19 +105,20 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
     else if (hasNewMessages) {
       const lastMessage = messages[messages.length - 1]
       
-      // If user sent a message, always scroll to bottom
+      // If user/AI sent a message
       if (lastMessage?.isCustomer === false) {
         scrollToBottom()
         playSound(outgoingSoundRef)
       } 
-      // If new incoming message, scroll only if user is already at bottom
-      else if (isUserAtBottom()) {
-        scrollToBottom()
-        playSound(incomingSoundRef)
-      }
-      // If new incoming message and NOT at bottom, just play sound
+      // If new incoming message from customer
       else {
+        // Play sound regardless of position
         playSound(incomingSoundRef)
+        
+        // Scroll only if user is already at bottom
+        if (isUserAtBottom()) {
+          scrollToBottom()
+        }
       }
     }
     
@@ -132,95 +166,113 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
   }
 
   return (
-    <div className="flex h-full flex-col bg-[#efeae2] dark:bg-[#0b141a] overflow-hidden">
+    <div className="flex h-full flex-col bg-[#f9fafb] dark:bg-[#0b0d14] overflow-hidden">
       {/* Chat Header */}
-      <div className="flex items-center justify-between bg-[#f0f2f5] px-4 py-2 dark:bg-[#202c33] dark:border-white/5 border-b border-gray-200">
-        <div className="flex items-center cursor-pointer">
+      <div className="flex items-center justify-between bg-white dark:bg-[#0b0d14] border-b border-gray-200 dark:border-slate-800 px-4 md:px-6 py-3 md:py-4 sticky top-0 z-20 shadow-sm">
+        <div className="flex items-center">
           <div className="relative">
-            <img
-              src={chat.avatar || 'https://i.pravatar.cc/150'}
-              alt={chat.name}
-              className="w-10 h-10 rounded-full object-cover mr-3"
-            />
-            <div className="absolute bottom-0 right-3 w-3 h-3 bg-emerald-500 border-2 border-[#f0f2f5] dark:border-[#202c33] rounded-full"></div>
+            <div className="w-10 h-10 md:w-12 md:h-12 rounded-full overflow-hidden border-2 border-emerald-100 dark:border-emerald-900/30 shadow-sm">
+              <img
+                src={chat.avatar || `https://i.pravatar.cc/150?u=${chat.phone}`}
+                alt={chat.name}
+                className="w-full h-full object-cover"
+              />
+            </div>
+            <div className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-white dark:border-[#0b0d14] rounded-full"></div>
           </div>
-          <div>
-            <h3 className="font-medium text-[#111b21] dark:text-[#e9edef] text-base leading-tight">{chat.name}</h3>
-            <p className="text-xs text-[#667781] dark:text-[#8696a0]">online</p>
+          <div className="ml-3 md:ml-4">
+            <h3 className="font-bold text-gray-900 dark:text-white text-base md:text-lg tracking-tight">{chat.name}</h3>
+            <div className="flex items-center mt-0.5">
+              <span className="text-[11px] md:text-[12px] font-medium text-gray-500 dark:text-gray-400 mr-3">{chat.phone}</span>
+              <div className="flex items-center">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5"></span>
+                <p className="text-[10px] font-bold text-emerald-600 dark:text-emerald-500 uppercase tracking-widest">Online</p>
+              </div>
+            </div>
           </div>
         </div>
-        <div className="flex items-center space-x-5 text-[#54656f] dark:text-[#aebac1]">
-          <button className="p-1 hover:bg-gray-200 dark:hover:bg-white/10 rounded-full transition-colors">
-            <svg viewBox="0 0 24 24" height="24" width="24" preserveAspectRatio="xMidYMid meet" fill="currentColor"><path d="M15.9,14.3H15L14.7,14c1-1.1,1.6-2.7,1.6-4.3c0-3.7-3-6.7-6.7-6.7S3,6,3,9.7s3,6.7,6.7,6.7c1.6,0,3.2-0.6,4.3-1.6l0.3,0.3v0.8l5.1,5.1l1.5-1.5L15.9,14.3z M9.7,14.3c-2.6,0-4.6-2.1-4.6-4.6s2.1-4.6,4.6-4.6s4.6,2.1,4.6,4.6S12.2,14.3,9.7,14.3z"></path></svg>
-          </button>
-          <button className="p-1 hover:bg-gray-200 dark:hover:bg-white/10 rounded-full transition-colors">
-            <svg viewBox="0 0 24 24" height="24" width="24" preserveAspectRatio="xMidYMid meet" fill="currentColor"><path d="M12,7c1.1,0,2-0.9,2-2s-0.9-2-2-2s-2,0.9-2,2S10.9,7,12,7z M12,9c-1.1,0-2,0.9-2,2s0.9,2,2,2s2-0.9,2-2S13.1,9,12,9z M12,15c-1.1,0-2,0.9-2,2s0.9,2,2,2s2-0.9,2-2S13.1,15,12,15z"></path></svg>
-          </button>
+        <div className="flex items-center gap-1 md:gap-2">
+          <Button variant="ghost" size="icon" className="text-gray-400 hover:text-gray-600 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 h-9 w-9 md:h-10 md:w-10">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          </Button>
+          <Button variant="ghost" size="icon" className="text-gray-400 hover:text-gray-600 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 h-9 w-9 md:h-10 md:w-10">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="1"></circle><circle cx="12" cy="5" r="1"></circle><circle cx="12" cy="19" r="1"></circle></svg>
+          </Button>
         </div>
       </div>
+    <div className="flex-1 relative overflow-hidden bg-[#e5ddd5] dark:bg-[#0b0d14]">
+      {/* Fixed Background Layer - Does not scroll */}
+      <div className="absolute inset-0 pointer-events-none">
+        {/* Light Mode Doodle - Blended */}
+        <div 
+          className="absolute inset-0 dark:hidden"
+          style={{
+            backgroundImage: `url('/images/doodle-light.jpg')`,
+            backgroundRepeat: 'repeat',
+            backgroundSize: '800px',
+            mixBlendMode: 'multiply',
+            opacity: '0.8'
+          }}
+        ></div>
 
-      {/* Messages Container with WhatsApp Wallpaper */}
+        {/* Dark Mode Doodle - Blended */}
+        <div 
+          className="absolute inset-0 hidden dark:block"
+          style={{
+            backgroundImage: `url('/images/doodle-dark.png')`,
+            backgroundRepeat: 'repeat',
+            backgroundSize: '800px',
+            mixBlendMode: 'screen',
+            opacity: '0.4'
+          }}
+        ></div>
+
+        {/* Softening Overlay - Tones down doodles slightly for better readability */}
+        <div className="absolute inset-0 bg-[#e5ddd5]/30 dark:bg-[#0b0d14]/50 pointer-events-none"></div>
+      </div>
+
+      {/* Messages Scroll Layer */}
       <div 
         ref={messagesContainerRef}
-        className="flex-1 overflow-y-auto relative"
-        style={{ 
-          backgroundColor: typeof window !== 'undefined' && window.document.documentElement.classList.contains('dark') ? '#0b141a' : '#efeae2',
-        }}
+        className="absolute inset-0 overflow-y-auto z-10 scroll-smooth"
       >
-        {/* WhatsApp Pattern Overlay */}
-        <div 
-          className="absolute inset-0 opacity-[0.06] dark:opacity-[0.04] pointer-events-none"
-          style={{ 
-            backgroundImage: `url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png')`,
-            backgroundSize: '400px',
-            filter: typeof window !== 'undefined' && window.document.documentElement.classList.contains('dark') ? 'invert(1)' : 'none'
-          }}
-        />
-
-        <div className="p-4 md:p-6 space-y-1 relative z-10">
+        <div className="p-4 md:p-8 space-y-4 max-w-4xl mx-auto min-h-full">
+          {messages.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-20 text-center opacity-40">
+              <div className="w-16 h-16 bg-gray-100 dark:bg-slate-800 rounded-full flex items-center justify-center mb-4">
+                <MessageSquare className="w-8 h-8 text-gray-400" />
+              </div>
+              <p className="text-gray-500 dark:text-gray-400 font-medium">No messages yet</p>
+            </div>
+          )}
+          
           {messages.map((message, idx) => {
             const isCustomer = message.isCustomer;
-            const isFirstInGroup = idx === 0 || messages[idx-1]?.isCustomer !== isCustomer;
             
             return (
               <div
-                key={message.id}
-                className={`flex w-full ${isFirstInGroup ? 'mt-3' : 'mt-0.5'} ${isCustomer ? 'justify-start' : 'justify-end'}`}
+                key={message.id || idx}
+                className={`flex w-full mb-1 ${isCustomer ? 'justify-start' : 'justify-end'}`}
               >
                 <div
-                  className={`relative max-w-[85%] md:max-w-[70%] px-2.5 py-1.5 shadow-[0_1px_0.5px_rgba(0,0,0,0.13)] ${
+                  className={`relative max-w-[85%] md:max-w-[75%] px-4 py-2.5 shadow-sm backdrop-blur-md transition-all ${
                     isCustomer
-                      ? 'bg-white dark:bg-[#202c33] text-[#111b21] dark:text-[#e9edef] rounded-r-lg rounded-bl-lg'
-                      : 'bg-[#dcf8c6] dark:bg-[#005c4b] text-[#111b21] dark:text-[#e9edef] rounded-l-lg rounded-br-lg'
-                  } ${!isFirstInGroup ? 'rounded-lg' : ''}`}
+                      ? 'bg-white/90 dark:bg-[#1f2937]/90 text-gray-800 dark:text-gray-100 border border-white/20 dark:border-slate-700/50 rounded-2xl rounded-tl-none'
+                      : 'bg-[#dcf8c6]/95 dark:bg-[#056162]/90 text-gray-800 dark:text-white border border-white/10 dark:border-white/5 rounded-2xl rounded-tr-none'
+                  }`}
                 >
-                  {/* Message Tail - Only on first message in group */}
-                  {isFirstInGroup && (
-                    <div className={`absolute top-0 ${isCustomer ? '-left-[8px]' : '-right-[8px]'}`}>
-                      <svg width="8" height="13" viewBox="0 0 8 13" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path 
-                          d={isCustomer ? "M8 0H0V13L8 0Z" : "M0 0H8V13L0 0Z"} 
-                          fill="currentColor" 
-                          className={isCustomer ? "text-white dark:text-[#202c33]" : "text-[#dcf8c6] dark:text-[#005c4b]"}
-                        />
-                      </svg>
-                    </div>
-                  )}
-                  
-                  <div className="flex flex-col min-w-[60px]">
-                    <span className="text-[14.2px] leading-[19px] break-words whitespace-pre-wrap">
-                      {message.text}
+                  <div className="flex flex-col">
+                    <span className="text-[14.5px] md:text-[15.5px] leading-[1.5] break-words whitespace-pre-wrap font-normal">
+                      {message.text || message.message}
                     </span>
-                    <div className="flex items-center justify-end space-x-1 mt-1 -mr-1 ml-4 select-none self-end">
-                      <span className="text-[11px] text-[#667781] dark:text-[#8696a0] tabular-nums">
-                        {formatTime(message.timestamp)}
+                    <div className={`flex items-center justify-end space-x-1 mt-1 opacity-40 self-end`}>
+                      <span className="text-[9px] md:text-[10px] font-medium tabular-nums">
+                        {formatTime(message.timestamp || message.createdAt)}
                       </span>
                       {!isCustomer && (
-                        <span className="text-[#53bdeb]">
-                          <svg viewBox="0 0 16 15" width="16" height="15" fill="currentColor">
-                            <path d="M15.01 3.3L8.07 10.24l-3.32-3.32-.73.73 4.05 4.05 7.68-7.68-.74-.72zm-4.72 0L9.56 4.03l2.8 2.8.73-.73-2.8-2.8zm-7.69.74l3.32 3.32.73-.73-4.05-4.05-.73.73z" />
-                          </svg>
-                        </span>
+                        <svg viewBox="0 0 16 15" width="12" height="12" fill={isCustomer ? "currentColor" : "#4fc3f7"}>
+                          <path d="M15.01 3.3L8.07 10.24l-3.32-3.32-.73.73 4.05 4.05 7.68-7.68-.74-.72zm-4.72 0L9.56 4.03l2.8 2.8.73-.73-2.8-2.8zm-7.69.74l3.32 3.32.73-.73-4.05-4.05-.73.73z" />
+                        </svg>
                       )}
                     </div>
                   </div>
@@ -231,36 +283,38 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
         </div>
         <div ref={messagesEndRef} className="h-4" />
       </div>
+    </div>
 
       {/* Input Area */}
-      <div className="bg-[#f0f2f5] dark:bg-[#202c33] px-4 py-2.5 flex items-center space-x-2">
-        <div className="flex space-x-3 text-[#54656f] dark:text-[#aebac1]">
-          <button className="hover:text-[#111b21] dark:hover:text-[#e9edef] transition-colors">
-            <svg viewBox="0 0 24 24" height="24" width="24" fill="currentColor"><path d="M12,1c-6.1,0-11,4.9-11,11s4.9,11,11,11s11-4.9,11-11S18.1,1,12,1z M12,21c-4.9,0-9-4.1-9-9s4.1-9,9-9s9,4.1,9,9S16.9,21,12,21z M15.4,8.6c-0.4-0.4-1-0.4-1.4,0L12,10.6L10,8.6c-0.4-0.4-1-0.4-1.4,0c-0.4,0.4-0.4,1,0,1.4l2,2l-2,2c-0.4,0.4-0.4,1,0,1.4c0.2,0.2,0.5,0.3,0.7,0.3s0.5-0.1,0.7-0.3l2-2l2,2c0.2,0.2,0.5,0.3,0.7,0.3s0.5-0.1,0.7-0.3c0.4-0.4,0.4-1,0-1.4l-2-2l2-2C15.8,9.6,15.8,9,15.4,8.6z"></path></svg>
-          </button>
-          <button className="hover:text-[#111b21] dark:hover:text-[#e9edef] transition-colors">
-            <svg viewBox="0 0 24 24" height="24" width="24" fill="currentColor"><path d="M16.5,6H13V3c0-0.55-0.45-1-1-1s-1,0.45-1,1v3H7.5C6.67,6,6,6.67,6,7.5V11h-3c-0.55,0-1,0.45-1,1s0.45,1,1,1h3v3.5c0,0.83,0.67,1.5,1.5,1.5H11v3c0,0.55,0.45,1,1,1s1-0.45,1-1v-3h3.5c0.83,0,1.5-0.67,1.5-1.5V13h3c0.55,0,1-0.45,1-1s-0.45-1-1-1h-3V7.5C18,6.67,17.33,6,16.5,6z"></path></svg>
-          </button>
+      <div className="bg-white dark:bg-[#0b0d14] px-4 md:px-6 py-4 md:py-6 border-t border-gray-100 dark:border-slate-800 shadow-[0_-4px_12px_rgba(0,0,0,0.05)] relative z-20">
+        <div className="max-w-4xl mx-auto flex items-center gap-3">
+          <Button variant="ghost" size="icon" className="text-gray-400 hover:text-emerald-500 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 h-10 w-10 flex-shrink-0">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+          </Button>
+          
+          <div className="flex-1 relative">
+            <Textarea
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
+              onKeyPress={handleKeyPress}
+              placeholder="Type your message..."
+              className="w-full resize-none border-gray-200 dark:border-slate-700 bg-gray-50/50 dark:bg-slate-800/50 rounded-xl px-4 py-2.5 focus:border-emerald-500 focus:ring-emerald-500/10 text-gray-900 dark:text-white text-[14px] md:text-[15px] min-h-[44px] max-h-[120px] shadow-sm"
+              rows="1"
+            />
+          </div>
+          
+          <Button
+            onClick={handleSendMessage}
+            disabled={inputValue.trim() === ''}
+            className={`h-10 w-10 md:h-12 md:w-12 rounded-full flex-shrink-0 shadow-md transition-all ${
+              inputValue.trim() === '' 
+                ? 'bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-slate-600' 
+                : 'bg-emerald-500 text-white hover:bg-emerald-600'
+            }`}
+          >
+            <Send className="w-5 h-5" />
+          </Button>
         </div>
-        
-        <div className="flex-1 bg-white dark:bg-[#2a3942] rounded-lg px-3 py-1.5 flex items-center">
-          <Textarea
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onKeyPress={handleKeyPress}
-            placeholder="Type a message"
-            className="flex-1 resize-none border-none bg-transparent focus-visible:ring-0 text-[#111b21] dark:text-[#e9edef] text-[15px] min-h-[20px] max-h-[120px]"
-            rows="1"
-          />
-        </div>
-        
-        <button
-          onClick={handleSendMessage}
-          disabled={inputValue.trim() === ''}
-          className={`p-2 rounded-full transition-colors ${inputValue.trim() === '' ? 'text-[#8696a0]' : 'text-[#00a884]'}`}
-        >
-          <Send className="w-6 h-6" fill="currentColor" />
-        </button>
       </div>
     </div>
   )

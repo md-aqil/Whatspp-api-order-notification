@@ -39,8 +39,8 @@ export async function POST(request) {
       user: { id: userId, email, name: name || email.split('@')[0], role: 'owner', plan: 'free' }
     })
 
-    response.cookies.set('access_token', accessToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: 60 * 60 })
-    response.cookies.set('refresh_token', refreshToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: 60 * 60 * 24 * 7 })
+    response.cookies.set('access_token', accessToken, { httpOnly: true, secure: false, sameSite: 'lax', maxAge: 60 * 60 })
+    response.cookies.set('refresh_token', refreshToken, { httpOnly: true, secure: false, sameSite: 'lax', maxAge: 60 * 60 * 24 * 7 })
 
     return response
   } catch (error) {

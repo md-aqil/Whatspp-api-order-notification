@@ -13,29 +13,30 @@ import { defaultAutomations, sortAutomations } from '@/lib/automation-defaults'
 import { buildAutomationTemplateMappings, getAutomationTemplateBodyText, getAutomationTemplateParameterSlots, getAutomationVariableOptions, renderAutomationTemplateBodyPreview } from '@/lib/automation-template'
 
 const TRIGGERS = [
-  { value: 'shopify.order_created', label: 'Shopify Order', icon: PackageCheck, description: 'When an order is placed' },
-  { value: 'shopify.fulfillment_created', label: 'Fulfillment Created', icon: Truck, description: 'When tracking is created' },
-  { value: 'shopify.order_delivered', label: 'Order Delivered', icon: BellRing, description: 'When delivery is confirmed' },
-  { value: 'shopify.cart_created', label: 'Shopify Cart Created', icon: PackageCheck, description: 'When a Shopify checkout is created' },
-  { value: 'shopify.cart_updated', label: 'Shopify Cart Updated', icon: PackageCheck, description: 'When a Shopify checkout changes' },
-  { value: 'shopify.cart_abandoned', label: 'Shopify Cart Abandoned', icon: Clock3, description: 'When a Shopify checkout becomes abandoned' },
-  { value: 'shopify.cart_recovered', label: 'Shopify Cart Recovered', icon: CheckCircle2, description: 'When an abandoned Shopify checkout is recovered' },
-  { value: 'woocommerce.cart_created', label: 'WooCommerce Cart Created', icon: PackageCheck, description: 'When a WooCommerce cart is created' },
-  { value: 'woocommerce.cart_updated', label: 'WooCommerce Cart Updated', icon: PackageCheck, description: 'When a WooCommerce cart is updated' },
-  { value: 'woocommerce.cart_abandoned', label: 'WooCommerce Cart Abandoned', icon: Clock3, description: 'When a WooCommerce cart becomes abandoned' },
-  { value: 'woocommerce.cart_recovered', label: 'WooCommerce Cart Recovered', icon: CheckCircle2, description: 'When an abandoned WooCommerce cart is recovered' },
-  { value: 'whatsapp.message_received', label: 'WhatsApp Message', icon: MessageSquareText, description: 'When a customer sends a WhatsApp message' },
-  { value: 'custom.webhook', label: 'Custom Webhook', icon: Workflow, description: 'When a webhook is received from any source' },
-  { value: 'custom.order_created', label: 'Custom Order', icon: Workflow, description: 'When a custom order is created' },
-  { value: 'custom.payment_received', label: 'Custom Payment', icon: Workflow, description: 'When payment is received' },
+  { value: 'shopify.order_created', label: 'Order Created (Shopify)', icon: PackageCheck, description: 'When an order is placed' },
+  { value: 'shopify.fulfillment_created', label: 'Fulfillment Created (Shopify)', icon: Truck, description: 'When tracking is created' },
+  { value: 'shopify.order_delivered', label: 'Order Delivered (Shopify)', icon: BellRing, description: 'When delivery is confirmed' },
+  { value: 'shopify.cart_created', label: 'Cart Created (Shopify)', icon: PackageCheck, description: 'When a checkout is created' },
+  { value: 'shopify.cart_updated', label: 'Cart Updated (Shopify)', icon: PackageCheck, description: 'When a checkout changes' },
+  { value: 'shopify.cart_abandoned', label: 'Cart Abandoned (Shopify)', icon: Clock3, description: 'When a checkout becomes abandoned' },
+  { value: 'shopify.cart_recovered', label: 'Cart Recovered (Shopify)', icon: CheckCircle2, description: 'When an abandoned checkout is recovered' },
+  { value: 'woocommerce.cart_created', label: 'Cart Created (Woo)', icon: PackageCheck, description: 'When a WooCommerce cart is created' },
+  { value: 'woocommerce.cart_updated', label: 'Cart Updated (Woo)', icon: PackageCheck, description: 'When a WooCommerce cart is updated' },
+  { value: 'woocommerce.cart_abandoned', label: 'Cart Abandoned (Woo)', icon: Clock3, description: 'When a WooCommerce cart becomes abandoned' },
+  { value: 'woocommerce.cart_recovered', label: 'Cart Recovered (Woo)', icon: CheckCircle2, description: 'When an abandoned WooCommerce cart is recovered' },
+  { value: 'whatsapp.message_received', label: 'Incoming Message', icon: MessageSquareText, description: 'When a customer sends a WhatsApp message' },
+  { value: 'custom.webhook', label: 'Generic Webhook', icon: Workflow, description: 'When a webhook is received from any source' },
+  { value: 'custom.order_created', label: 'Generic Order', icon: Workflow, description: 'When a custom order is created' },
+  { value: 'custom.payment_received', label: 'Generic Payment', icon: Workflow, description: 'When payment is received' },
 ]
 const BLOCKS = [
   { type: 'test', tab: 'Triggers', label: 'Test Node', icon: PlayCircle, color: 'pink', description: 'Manual test with latest order or dummy data', defaults: { title: 'Test Flow', event: 'shopify.order_created', testSource: 'latest_order', description: 'Run this flow with latest order data or dummy values' } },
-  { type: 'trigger', tab: 'Triggers', label: 'Shopify Trigger', icon: BellRing, color: 'violet', description: 'Start from a commerce event', defaults: { title: 'Shopify Order', event: 'shopify.order_created', description: 'When an order is placed' } },
+  { type: 'trigger', tab: 'Triggers', label: 'Integration Trigger', icon: BellRing, color: 'violet', description: 'Start from a commerce event', defaults: { title: 'Order Trigger', event: 'shopify.order_created', description: 'When an order is placed' } },
   { type: 'delay', tab: 'Actions', label: 'Delay', icon: Clock3, color: 'blue', description: 'Pause before next action', defaults: { title: 'Wait 2 Hours', delayValue: '2', delayUnit: 'hours', description: 'Fixed time offset' } },
   { type: 'message', tab: 'Actions', label: 'WhatsApp', icon: MessageSquareText, color: 'emerald', description: 'Send a WhatsApp message', defaults: { title: 'Order Confirmation', channel: 'whatsapp', template: '', templateLanguage: '', message: 'Hi {{customer_name}}, your order #{{order_number}} is confirmed!', description: 'Confirmation message', recipientMode: 'customer', recipientNumber: '', variableMappings: [{ label: 'Customer Name', value: '{{shopify.customer.first_name}}' }, { label: 'Order Amount', value: '{{shopify.total_price}}' }] } },
   { type: 'condition', tab: 'Actions', label: 'Condition', icon: Workflow, color: 'amber', description: 'Branch logic on a rule', defaults: { title: 'Order > $100', rule: 'total_price > 100', description: 'Conditional branch' } },
   { type: 'interactive', tab: 'Actions', label: 'Interactive Menu', icon: HelpCircle, color: 'fuchsia', description: 'Send a menu with reply options', defaults: { title: 'Auto Reply Menu', message: 'Hello! Please choose an option:', options: [{ id: 'opt0', label: 'Check Order Status' }, { id: 'opt1', label: 'Talk to Support' }], description: 'Send a 4-option menu' } },
+  { type: 'ai_reply', tab: 'Actions', label: 'AI Assistant', icon: Sparkles, color: 'indigo', description: 'Natural AI response using knowledge base', defaults: { title: 'AI Assistant', description: 'AI-powered reply', recipientMode: 'customer' } },
 ]
 const COLORS = {
   test: { border: 'border-pink-500/40', bg: 'bg-[#1d0f18]', hdr: 'bg-pink-600/15', icon: 'bg-pink-600/25 text-pink-300', lbl: 'text-pink-300', dot: 'bg-pink-500' },
@@ -44,6 +45,7 @@ const COLORS = {
   message: { border: 'border-emerald-500/40', bg: 'bg-[#0f1a16]', hdr: 'bg-emerald-600/15', icon: 'bg-emerald-600/25 text-emerald-300', lbl: 'text-emerald-300', dot: 'bg-emerald-500' },
   condition: { border: 'border-amber-500/40', bg: 'bg-[#1a1508]', hdr: 'bg-amber-600/15', icon: 'bg-amber-600/25 text-amber-300', lbl: 'text-amber-300', dot: 'bg-amber-500' },
   interactive: { border: 'border-fuchsia-500/40', bg: 'bg-[#1a0f18]', hdr: 'bg-fuchsia-600/15', icon: 'bg-fuchsia-600/25 text-fuchsia-300', lbl: 'text-fuchsia-300', dot: 'bg-fuchsia-500' },
+  ai_reply: { border: 'border-indigo-500/40', bg: 'bg-[#0f1125]', hdr: 'bg-indigo-600/15', icon: 'bg-indigo-600/25 text-indigo-300', lbl: 'text-indigo-300', dot: 'bg-indigo-500' },
 }
 const uid = p => `${p}-${Math.random().toString(36).slice(2, 9)}`
 const isDefault = id => defaultAutomations.some(a => a.id === id)
@@ -204,8 +206,8 @@ function mapStep(step, i, arr) {
   return {
     ...step, position: step.position || dflt[step.type] || { x: 100 + i * 380, y: 220 },
     testSource: step.type === 'test' ? (step.testSource || 'latest_order') : step.testSource,
-    recipientMode: step.type === 'message' ? (step.recipientMode || 'customer') : step.recipientMode,
-    recipientNumber: step.type === 'message' ? (step.recipientNumber || '') : step.recipientNumber,
+    recipientMode: (step.type === 'message' || step.type === 'ai_reply') ? (step.recipientMode || 'customer') : step.recipientMode,
+    recipientNumber: (step.type === 'message' || step.type === 'ai_reply') ? (step.recipientNumber || '') : step.recipientNumber,
     customTriggerMode: step.type === 'trigger' ? (step.customTriggerMode || 'any') : step.customTriggerMode,
     customWatchedColumn: step.type === 'trigger' ? (step.customWatchedColumn || '') : step.customWatchedColumn,
     customExpectedValue: step.type === 'trigger' ? (step.customExpectedValue || '') : step.customExpectedValue,
@@ -246,17 +248,29 @@ function buildEdges(steps) {
     outs.forEach(({ key, label }) => { const tid = s.connections?.[key]; if (tid && m.has(tid)) edges.push({ id: `${s.id}-${key}`, sourceId: s.id, targetId: tid, key, label }) })
   }); return edges
 }
+function disconnectEdge(activeId, sourceId, key, updAuto) {
+  updAuto(activeId, a => ({
+    ...a,
+    steps: a.steps.map(s => s.id === sourceId ? { ...s, connections: { ...s.connections, [key]: '' } } : s)
+  }))
+  toast.success('Connection removed')
+}
 function outPt(s, key) {
-  const x = s.position.x + 260
-  if (s.type === 'condition' && key === 'fallback') return { x, y: s.position.y + 100 }
-  if (s.type === 'condition' && key === 'main') return { x, y: s.position.y + 60 }
+  const x = s.position.x + 256
+  // Condition branch offsets
+  if (s.type === 'condition') {
+    if (key === 'main') return { x, y: s.position.y + 42 } // Matches top-[32px] + 10px center
+    if (key === 'fallback') return { x, y: s.position.y + 92 } // Matches top-[82px] + 10px center
+  }
+  // Interactive menu option offsets
   if (s.type === 'interactive') {
     const idx = parseInt(key.replace('opt', ''), 10)
-    return { x, y: s.position.y + 90 + (idx * 30) }
+    return { x, y: s.position.y + 130 + (idx * 32) } // Matches top-[120px] + 10px center + gap
   }
-  return { x, y: s.position.y + 70 }
+  // Default output (centered with the input port for straight lines)
+  return { x, y: s.position.y + 60 }
 }
-const inPt = s => ({ x: s.position.x, y: s.position.y + 70 })
+const inPt = s => ({ x: s.position.x, y: s.position.y + 60 })
 function ePath(src, tgt, key) {
   const f = outPt(src, key), t = inPt(tgt), d = Math.max(80, Math.abs(t.x - f.x) * 0.5)
   return `M ${f.x} ${f.y} C ${f.x + d} ${f.y}, ${t.x - d} ${t.y}, ${t.x} ${t.y}`
@@ -925,7 +939,13 @@ export function AutomationStudio() {
   }
   useEffect(() => {
     function mv(e) {
-      if (drag && active) { const pt = clientToCv(e.clientX, e.clientY); updAuto(active.id, a => ({ ...a, steps: a.steps.map(s => s.id === drag.id ? { ...s, position: { x: Math.round(Math.max(20, pt.x - drag.ox)), y: Math.round(Math.max(20, pt.y - drag.oy)) } } : s) })) }
+      if (drag && active) {
+        const pt = clientToCv(e.clientX, e.clientY)
+        const SNAP = 20
+        const nx = Math.round((pt.x - drag.ox) / SNAP) * SNAP
+        const ny = Math.round((pt.y - drag.oy) / SNAP) * SNAP
+        updAuto(active.id, a => ({ ...a, steps: a.steps.map(s => s.id === drag.id ? { ...s, position: { x: Math.max(20, nx), y: Math.max(20, ny) } } : s) }))
+      }
       if (conn) { const pt = clientToCv(e.clientX, e.clientY); setConn(c => c ? { ...c, cx: pt.x, cy: pt.y } : null) }
       if (panning && panOrg) setTr(t => ({ ...t, x: e.clientX - panOrg.x, y: e.clientY - panOrg.y }))
     }
@@ -1221,11 +1241,40 @@ export function AutomationStudio() {
                 const d = ePath(src, tgt, edge.key)
                 const isAlt = edge.key === 'fallback'
                 const col = isAlt ? '#fbbf24' : '#8b5cf6'
+                
+                // Calculate midpoint for the delete button
+                const f = outPt(src, edge.key), t = inPt(tgt)
+                const midX = (f.x + t.x) / 2
+                const midY = (f.y + t.y) / 2
+
                 return (
-                  <g key={edge.id}>
-                    <path d={d} fill="none" stroke={col} strokeOpacity="0.15" strokeWidth="8" strokeLinecap="round" />
-                    <path d={d} fill="none" stroke={col} strokeOpacity="0.9" strokeWidth="2.5" strokeLinecap="round" markerEnd={isAlt ? 'url(#arr-alt)' : 'url(#arr-main)'} filter="url(#glow)" className="edge-path" />
-                    {edge.label && (() => { const f = outPt(src, edge.key), t2 = inPt(tgt); return <text x={(f.x + t2.x) / 2} y={(f.y + t2.y) / 2 - 10} fill={col} textAnchor="middle" fontSize="10" fontWeight="700" fontFamily="Inter,sans-serif">{edge.label}</text> })()}
+                  <g key={edge.id} className="group/edge">
+                    {/* Wider invisible hit area for easier hovering */}
+                    <path d={d} fill="none" stroke="transparent" strokeWidth="24" strokeLinecap="round" className="cursor-pointer" />
+                    <path d={d} fill="none" stroke={col} strokeOpacity="0.15" strokeWidth="12" strokeLinecap="round" className="pointer-events-none" />
+                    <path d={d} fill="none" stroke={col} strokeOpacity="0.9" strokeWidth="2.5" strokeLinecap="round" markerEnd={isAlt ? 'url(#arr-alt)' : 'url(#arr-main)'} filter="url(#glow)" className="edge-path pointer-events-none" />
+                    {edge.label && (
+                      <text x={midX} y={midY - 12} fill={col} textAnchor="middle" fontSize="10" fontVariant="all-small-caps" fontWeight="800" className="drop-shadow-sm pointer-events-none">
+                        {edge.label}
+                      </text>
+                    )}
+                    
+                    {/* Disconnect Button */}
+                    <g 
+                      transform={`translate(${Math.round(midX)}, ${Math.round(midY)})`}
+                      className="opacity-0 group-hover/edge:opacity-100 transition-all duration-200 cursor-pointer pointer-events-auto hover:scale-110"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        disconnectEdge(active.id, edge.sourceId, edge.key, updAuto)
+                      }}
+                    >
+                      <circle r="10" fill="#0b0d14" stroke={col} strokeWidth="2" className="shadow-lg" />
+                      <g stroke={col} strokeWidth="2" strokeLinecap="round" opacity="0.8">
+                        <line x1="-3.5" y1="-3.5" x2="3.5" y2="3.5" />
+                        <line x1="3.5" y1="-3.5" x2="-3.5" y2="3.5" />
+                      </g>
+                      <title>Remove Connection</title>
+                    </g>
                   </g>
                 )
               })}
@@ -1245,14 +1294,14 @@ export function AutomationStudio() {
 	              const hasError = !!stepValidation?.errors?.length
 	              const hasWarning = !hasError && !!stepValidation?.warnings?.length
 	              const tMeta = step.type === 'trigger' ? getTrig(step.event) : null
-	              const recipientSummary = step.type === 'message'
+	              const recipientSummary = (step.type === 'message' || step.type === 'ai_reply')
 	                ? (step.recipientMode === 'fixed_number' && step.recipientNumber ? `To: ${step.recipientNumber}` : `To: ${defaultRecipientLabel.toLowerCase()}`)
 	                : ''
               const testResult = activeLastTest?.nodeId === step.id ? activeLastTest.results?.[0] : null
               const isThisTestRunning = testing && step.id === testingNodeId
               const body = step.type === 'test'
                 ? (step.testSource === 'dummy' ? 'Dummy order data' : 'Latest saved order data')
-                : (step.type === 'interactive' ? step.message : (step.template ? `Template: ${step.template}` : step.message || step.rule || step.description || 'Configure node'))
+                : (step.type === 'interactive' ? step.message : (step.type === 'ai_reply' ? 'Knowledge-based response' : (step.template ? `Template: ${step.template}` : step.message || step.rule || step.description || 'Configure node')))
               return (
                 <div key={step.id} data-node="true" role="article" aria-label={`${step.type} node: ${step.title}`} aria-selected={isSel} tabIndex={0}
 	                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') setSelId(step.id); if (e.key === 'Delete') delNode(step.id) }}
@@ -1273,9 +1322,9 @@ export function AutomationStudio() {
                     <div className="text-sm font-bold text-white/90 leading-tight pr-6">{step.title}</div>
                     <p className="mt-1.5 text-[11px] text-white/35 line-clamp-2 leading-relaxed">{tMeta?.description || step.description || body}</p>
                     {step.type === 'interactive' && (
-                      <div className="mt-3 flex flex-col gap-1.5" style={{ minHeight: `${(step.options?.length || 0) * 30}px` }}>
+                      <div className="mt-4 flex flex-col gap-2" style={{ minHeight: `${(step.options?.length || 0) * 32}px` }}>
                         {(step.options || []).map((opt, idx) => (
-                           <div key={idx} className="text-[10px] flex items-center bg-fuchsia-500/10 border border-fuchsia-500/20 rounded px-2 h-[22px] truncate w-[85%] text-fuchsia-100/90 shadow-sm relative top-[8px]">
+                           <div key={idx} className="text-[10px] flex items-center bg-fuchsia-500/10 border border-fuchsia-500/20 rounded px-3 h-[24px] truncate w-[88%] text-fuchsia-100/90 shadow-sm">
                               {opt.label || `Option ${idx + 1}`}
                            </div>
                         ))}
@@ -1316,31 +1365,31 @@ export function AutomationStudio() {
                         )}
                       </>
                     )}
-                    {/* input port */}
-                    <button aria-label="Input connection port" onMouseUp={e => { e.stopPropagation(); finishConn(step.id) }}
-                      className="absolute -left-2.5 top-1/2 -translate-y-1/2 h-5 w-5 rounded-full border-2 border-[#0b0d14] bg-white/15 hover:bg-white/40 transition-all ring-1 ring-transparent hover:ring-white/20" />
-                    {/* output port(s) */}
-                    {step.type === 'condition' ? (
-                      <>
-                        <button aria-label="True branch output" onMouseDown={e => startConn(e, step.id, 'main')} className={`absolute -right-2.5 top-7 h-5 w-5 rounded-full border-2 border-[#0b0d14] ${c.dot} hover:brightness-125 transition-all ring-1 ring-transparent hover:ring-violet-400/40`} />
-                        <button aria-label="False branch output" onMouseDown={e => startConn(e, step.id, 'fallback')} className="absolute -right-2.5 bottom-7 h-5 w-5 rounded-full border-2 border-[#0b0d14] bg-amber-500 hover:brightness-125 transition-all ring-1 ring-transparent hover:ring-amber-400/40" />
-                      </>
-                    ) : step.type === 'interactive' ? (
-                      <>
-                        {(step.options || []).map((opt, idx) => {
-                          const topOff = 92 + (idx * 30);
-                          return <button key={idx} aria-label={`Option: ${opt.label}`} onMouseDown={e => startConn(e, step.id, `opt${idx}`)} className={`absolute -right-2.5 h-5 w-5 rounded-full border-2 border-[#0b0d14] ${c.dot} hover:brightness-125 transition-all ring-1 ring-transparent hover:ring-fuchsia-400/40`} style={{ top: topOff }} />
-                        })}
-                      </>
-                    ) : (
-                      <button aria-label="Output connection port" onMouseDown={e => startConn(e, step.id, 'main')} className={`absolute -right-2.5 top-1/2 -translate-y-1/2 h-5 w-5 rounded-full border-2 border-[#0b0d14] ${c.dot} hover:brightness-125 transition-all ring-1 ring-transparent hover:ring-violet-400/40`} />
-                    )}
                     <Button size="icon" variant="ghost" aria-label={`Delete ${step.title}`}
                       onClick={e => { e.stopPropagation(); delNode(step.id) }}
                       className="absolute right-1.5 top-1.5 h-6 w-6 text-white/15 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-all">
                       <Trash2 className="h-3 w-3" />
                     </Button>
                   </div>
+                  {/* input port */}
+                  <button aria-label="Input connection port" onMouseUp={e => { e.stopPropagation(); finishConn(step.id) }}
+                    className="absolute -left-2.5 top-[50px] h-5 w-5 rounded-full border-2 border-[#0b0d14] bg-white/15 hover:bg-white/40 transition-all ring-1 ring-transparent hover:ring-white/20 z-20" />
+                  {/* output port(s) */}
+                  {step.type === 'condition' ? (
+                    <>
+                      <button aria-label="True branch output" onMouseDown={e => startConn(e, step.id, 'main')} className={`absolute -right-2.5 top-[32px] h-5 w-5 rounded-full border-2 border-[#0b0d14] ${c.dot} hover:brightness-125 transition-all ring-1 ring-transparent hover:ring-violet-400/40 z-20`} />
+                      <button aria-label="False branch output" onMouseDown={e => startConn(e, step.id, 'fallback')} className="absolute -right-2.5 top-[82px] h-5 w-5 rounded-full border-2 border-[#0b0d14] bg-amber-500 hover:brightness-125 transition-all ring-1 ring-transparent hover:ring-amber-400/40 z-20" />
+                    </>
+                  ) : step.type === 'interactive' ? (
+                    <>
+                      {(step.options || []).map((opt, idx) => {
+                        const topOff = 120 + (idx * 32);
+                        return <button key={idx} aria-label={`Option: ${opt.label}`} onMouseDown={e => startConn(e, step.id, `opt${idx}`)} className={`absolute -right-2.5 h-5 w-5 rounded-full border-2 border-[#0b0d14] ${c.dot} hover:brightness-125 transition-all ring-1 ring-transparent hover:ring-fuchsia-400/40 z-20`} style={{ top: topOff }} />
+                      })}
+                    </>
+                  ) : (
+                    <button aria-label="Output connection port" onMouseDown={e => startConn(e, step.id, 'main')} className={`absolute -right-2.5 top-[50px] h-5 w-5 rounded-full border-2 border-[#0b0d14] ${c.dot} hover:brightness-125 transition-all ring-1 ring-transparent hover:ring-violet-400/40 z-20`} />
+                  )}
                 </div>
               )
             })}
@@ -1804,6 +1853,52 @@ export function AutomationStudio() {
                       </div>
                     </>
                   )}
+                  {sel.type === 'ai_reply' && (
+                    <div className="space-y-6">
+                      <div className="space-y-3">
+                        <Label className="text-xs font-bold uppercase tracking-widest text-slate-400">Assistant Configuration</Label>
+                        <div className="p-4 bg-indigo-500/5 border border-indigo-500/20 rounded-2xl">
+                          <div className="flex items-center gap-3 mb-2">
+                            <Sparkles className="w-5 h-5 text-indigo-400" />
+                            <span className="font-bold text-slate-900 dark:text-white">AI Mode Active</span>
+                          </div>
+                          <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                            This step will use your <span className="text-indigo-400 font-bold">Knowledge Base</span> to generate a natural response to the customer's message.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        <Label className="text-xs font-bold uppercase tracking-widest text-slate-400">Recipient</Label>
+                        <Select 
+                          value={sel.recipientMode || 'customer'} 
+                          onValueChange={(v) => updStep({ recipientMode: v })}
+                        >
+                          <SelectTrigger className="h-12 bg-slate-50 dark:bg-white/5 border-none rounded-xl">
+                            <SelectValue placeholder="Choose recipient" />
+                          </SelectTrigger>
+                          <SelectContent className="dark:bg-[#11131d] border-none shadow-2xl rounded-xl">
+                            <SelectItem value="customer">{defaultRecipientLabel}</SelectItem>
+                            <SelectItem value="fixed_number">Fixed Number</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <p className="text-[11px] text-slate-500 ml-1">{sel.recipientMode === 'fixed_number' ? 'Enter a specific phone number with country code.' : defaultRecipientDescription}</p>
+                      </div>
+
+                      {sel.recipientMode === 'fixed_number' && (
+                        <div className="space-y-3">
+                          <Label className="text-xs font-bold uppercase tracking-widest text-slate-400">Phone Number</Label>
+                          <Input
+                            placeholder="e.g. 15551234567"
+                            value={sel.recipientNumber || ''}
+                            onChange={(e) => updStep({ recipientNumber: digitsOnly(e.target.value) })}
+                            className="h-12 bg-slate-50 dark:bg-white/5 border-none rounded-xl"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {sel.type === 'message' && (
                     <>
                       <div className="space-y-1.5">

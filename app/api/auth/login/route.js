@@ -42,8 +42,8 @@ export async function POST(request) {
     })
 
     // Set cookies
-    response.cookies.set('access_token', accessToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: 60 * 60 }) // 1 hour
-    response.cookies.set('refresh_token', refreshToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: 60 * 60 * 24 * 7 }) // 7 days
+    response.cookies.set('access_token', accessToken, { httpOnly: true, secure: false, sameSite: 'lax', maxAge: 60 * 60 }) // 1 hour
+    response.cookies.set('refresh_token', refreshToken, { httpOnly: true, secure: false, sameSite: 'lax', maxAge: 60 * 60 * 24 * 7 }) // 7 days
 
     return response
   } catch (error) {

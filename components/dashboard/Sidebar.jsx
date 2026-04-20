@@ -9,7 +9,8 @@ import {
   X,
   Send,
   Megaphone,
-  Workflow
+  Workflow,
+  Brain
 } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
@@ -37,6 +38,7 @@ export function Sidebar({ sidebarOpen, setSidebarOpen }) {
     { name: 'Chat', href: '/dashboard/chat', icon: MessageCircle },
     { name: 'Campaigns', href: '/dashboard/campaigns', icon: Megaphone },
     { name: 'Automations', href: '/dashboard/automations', icon: Workflow, badge: activeCount },
+    { name: 'AI Knowledge', href: '/dashboard/knowledge', icon: Brain },
     { name: 'Send Catalog', href: '/dashboard/send-catalog', icon: Send },
     { name: 'Orders', href: '/dashboard/orders', icon: CreditCard },
     { name: 'Settings', href: '/dashboard/settings', icon: Settings },

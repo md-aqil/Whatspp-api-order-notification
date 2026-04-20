@@ -42,7 +42,11 @@ export default function SettingsPage() {
   const [expandedWebhook, setExpandedWebhook] = useState(null)
   const [mounted, setMounted] = useState(false)
   const [notificationsEnabled, setNotificationsEnabled] = useState(true)
-  const [baseUrl, setBaseUrl] = useState(process.env.NEXT_PUBLIC_BASE_URL || '')
+   const [baseUrl, setBaseUrl] = useState(process.env.NEXT_PUBLIC_BASE_URL || '')
+ 
+   const [whatsappDialogOpen, setWhatsappDialogOpen] = useState(false)
+   const [shopifyDialogOpen, setShopifyDialogOpen] = useState(false)
+   const [stripeDialogOpen, setStripeDialogOpen] = useState(false)
 
   const toggleWebhook = (type) => {
     setExpandedWebhook(expandedWebhook === type ? null : type)
@@ -378,10 +382,16 @@ export default function SettingsPage() {
       })
       const payload = await response.json()
 
-      if (response.ok) {
-        await loadIntegrations()
-        toast.success(`${type.charAt(0).toUpperCase() + type.slice(1)} integration saved successfully!`)
-        if (payload.warning) {
+        if (response.ok) {
+          await loadIntegrations()
+          toast.success(`${type.charAt(0).toUpperCase() + type.slice(1)} integration saved successfully!`)
+          
+          // Close the corresponding dialog
+          if (type === 'whatsapp') setWhatsappDialogOpen(false)
+          if (type === 'shopify') setShopifyDialogOpen(false)
+          if (type === 'stripe') setStripeDialogOpen(false)
+
+          if (payload.warning) {
           toast.warning(payload.warning)
         }
       } else {
@@ -656,7 +666,7 @@ export default function SettingsPage() {
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {/* WhatsApp */}
-              <Dialog>
+              <Dialog open={whatsappDialogOpen} onOpenChange={setWhatsappDialogOpen}>
                 <DialogTrigger asChild>
                   <div className="flex flex-col gap-4 cursor-pointer">
                     <div className={`p-5 rounded-xl transition-colors group bg-[#f8f9ff] hover:bg-[#eff4ff]`}>
@@ -686,7 +696,7 @@ export default function SettingsPage() {
               </Dialog>
 
               {/* Shopify */}
-              <Dialog>
+              <Dialog open={shopifyDialogOpen} onOpenChange={setShopifyDialogOpen}>
                 <DialogTrigger asChild>
                   <div className="flex flex-col gap-4 cursor-pointer">
                     <div className={`p-5 rounded-xl transition-colors group ${integrations.shopify.connected ? 'border-2 border-dashed border-[#005cc0]/20 bg-[#f8f9ff]' : 'bg-[#f8f9ff] hover:bg-[#eff4ff]'}`}>
@@ -716,7 +726,7 @@ export default function SettingsPage() {
               </Dialog>
 
               {/* Stripe */}
-              <Dialog>
+              <Dialog open={stripeDialogOpen} onOpenChange={setStripeDialogOpen}>
                 <DialogTrigger asChild>
                   <div className="flex flex-col gap-4 cursor-pointer">
                     <div className={`p-5 rounded-xl transition-colors group bg-[#f8f9ff] hover:bg-[#eff4ff]`}>
@@ -819,8 +829,8 @@ export default function SettingsPage() {
             <div className="rounded-xl border border-[#e5eeff] bg-[#f8f9ff] p-4 space-y-4 mb-6">
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                 <div>
-                  <p className="text-xs font-bold uppercase tracking-wide text-[#3d618c]">WordPress Webhook Endpoint</p>
-                  <p className="text-sm text-[#05345c] font-medium mt-1">Use this endpoint in the plugin after connecting a site.</p>
+                  <p className="text-xs font-bold uppercase tracking-wide text-[#3d618c]">WordPress Callback URL</p>
+                  <p className="text-sm text-[#05345c] font-medium mt-1">Use this URL in the plugin after connecting a site.</p>
                 </div>
                 <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase ${customWebhookStatus?.status === 'ready' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
                   {customWebhookStatus?.status === 'ready' ? 'Endpoint Ready' : 'Endpoint Inactive'}
@@ -1146,7 +1156,7 @@ export default function SettingsPage() {
                   <div className="px-11 py-4 bg-[#f8f9ff] border-t border-[#e5eeff] text-sm">
                     <div className="flex justify-between items-start">
                       <div>
-                        <p className="font-semibold mb-2">Configure URL in Meta App</p>
+                        <p className="font-semibold mb-2">Configure Callback URL in Meta App</p>
                         <div className="flex items-center gap-2">
                           <Input readOnly value={buildWebhookUrl('/api/webhook/whatsapp')} className="w-[300px] bg-white border-[#e5eeff]" />
                           <Button variant="outline" size="sm" onClick={() => copyToClipboard(buildWebhookUrl('/api/webhook/whatsapp'))}>
@@ -1167,67 +1177,69 @@ export default function SettingsPage() {
               </div>
 
               {/* Shopify Webhook */}
-              <div className="border border-[#e5eeff] rounded-xl overflow-hidden transition-all duration-200">
-                <div onClick={() => toggleWebhook('shopify')} className="flex items-center gap-4 py-4 px-4 hover:bg-[#eff4ff] cursor-pointer transition-colors">
-                  <div className="flex-shrink-0">
-                    <div className={`w-3 h-3 rounded-full ${shopifyStatus === 'connected' ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : shopifyStatus === 'error' ? 'bg-red-500' : 'bg-slate-300'}`}></div>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-sm font-bold">Shopify Webhook</span>
-                      <span className="px-2 py-0.5 rounded text-[9px] font-black bg-[#d2e4ff] text-[#005cc0] uppercase">eCommerce</span>
+              {integrations.shopify.connected && (
+                <div className="border border-[#e5eeff] rounded-xl overflow-hidden transition-all duration-200">
+                  <div onClick={() => toggleWebhook('shopify')} className="flex items-center gap-4 py-4 px-4 hover:bg-[#eff4ff] cursor-pointer transition-colors">
+                    <div className="flex-shrink-0">
+                      <div className={`w-3 h-3 rounded-full ${shopifyStatus === 'connected' ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : shopifyStatus === 'error' ? 'bg-red-500' : 'bg-slate-300'}`}></div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <code className="text-xs text-[#3d618c] truncate bg-[#eff4ff] px-2 py-0.5 rounded">{buildWebhookUrl('/api/webhook/shopify')}</code>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-sm font-bold">Shopify Webhook</span>
+                        <span className="px-2 py-0.5 rounded text-[9px] font-black bg-[#d2e4ff] text-[#005cc0] uppercase">eCommerce</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <code className="text-xs text-[#3d618c] truncate bg-[#eff4ff] px-2 py-0.5 rounded">{buildWebhookUrl('/api/webhook/shopify')}</code>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <div className="text-right hidden sm:block">
+                        <div className="text-[10px] font-bold text-[#3d618c] uppercase">Status</div>
+                        <div className="text-xs font-semibold capitalize">{shopifyStatus}</div>
+                      </div>
+                      <ChevronDown className={`w-5 h-5 text-[#3d618c] transition-transform ${expandedWebhook === 'shopify' ? 'rotate-180' : ''}`} />
                     </div>
                   </div>
-                  <div className="flex items-center gap-4">
-                    <div className="text-right hidden sm:block">
-                      <div className="text-[10px] font-bold text-[#3d618c] uppercase">Status</div>
-                      <div className="text-xs font-semibold capitalize">{shopifyStatus}</div>
-                    </div>
-                    <ChevronDown className={`w-5 h-5 text-[#3d618c] transition-transform ${expandedWebhook === 'shopify' ? 'rotate-180' : ''}`} />
-                  </div>
-                </div>
-                {expandedWebhook === 'shopify' && (
-                  <div className="px-11 py-4 bg-[#f8f9ff] border-t border-[#e5eeff] text-sm">
-                    <div className="flex justify-between items-start mb-4">
-                      <div>
-                        <p className="font-semibold mb-2">Configure URL in Shopify App</p>
-                        <div className="flex items-center gap-2">
-                          <Input readOnly value={buildWebhookUrl('/api/webhook/shopify')} className="w-[300px] bg-white border-[#e5eeff]" />
-                          <Button variant="outline" size="sm" onClick={() => copyToClipboard(buildWebhookUrl('/api/webhook/shopify'))}>
-                            <Copy className="h-4 w-4 mr-2" />
-                            Copy
-                          </Button>
+                  {expandedWebhook === 'shopify' && (
+                    <div className="px-11 py-4 bg-[#f8f9ff] border-t border-[#e5eeff] text-sm">
+                      <div className="flex justify-between items-start mb-4">
+                        <div>
+                          <p className="font-semibold mb-2">Configure Callback URL in Shopify App</p>
+                          <div className="flex items-center gap-2">
+                            <Input readOnly value={buildWebhookUrl('/api/webhook/shopify')} className="w-[300px] bg-white border-[#e5eeff]" />
+                            <Button variant="outline" size="sm" onClick={() => copyToClipboard(buildWebhookUrl('/api/webhook/shopify'))}>
+                              <Copy className="h-4 w-4 mr-2" />
+                              Copy
+                            </Button>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                    <div className="space-y-2">
-                      <p className="font-semibold text-xs text-[#3d618c] uppercase">Registered Topics</p>
-                      <div className="grid grid-cols-2 gap-2">
-                        {shopifyWebhookTopics.map((wh) => {
-                          const isRegistered = shopifyWebhooks.some(sw => sw.topic === wh.topic)
-                          return (
-                            <div key={wh.topic} className="flex justify-between p-2 bg-white rounded border border-[#e5eeff]">
-                              <span className="text-xs font-medium">{wh.label}</span>
-                              <span className={`text-[10px] flex items-center font-semibold ${isRegistered ? 'text-green-600' : 'text-gray-400'}`}>
-                                {isRegistered ? <><CheckCircle className="w-3 h-3 mr-1" /> Active</> : <><AlertCircle className="w-3 h-3 mr-1" /> Not set</>}
-                              </span>
-                            </div>
-                          )
-                        })}
+                      <div className="space-y-2">
+                        <p className="font-semibold text-xs text-[#3d618c] uppercase">Registered Topics</p>
+                        <div className="grid grid-cols-2 gap-2">
+                          {shopifyWebhookTopics.map((wh) => {
+                            const isRegistered = shopifyWebhooks.some(sw => sw.topic === wh.topic)
+                            return (
+                              <div key={wh.topic} className="flex justify-between p-2 bg-white rounded border border-[#e5eeff]">
+                                <span className="text-xs font-medium">{wh.label}</span>
+                                <span className={`text-[10px] flex items-center font-semibold ${isRegistered ? 'text-green-600' : 'text-gray-400'}`}>
+                                  {isRegistered ? <><CheckCircle className="w-3 h-3 mr-1" /> Active</> : <><AlertCircle className="w-3 h-3 mr-1" /> Not set</>}
+                                </span>
+                              </div>
+                            )
+                          })}
+                        </div>
                       </div>
+                      {lastWebhook && lastWebhook.type === 'shopify' && (
+                        <div className="mt-4 p-3 bg-white border border-[#e5eeff] rounded-lg text-xs">
+                          <p className="font-semibold mb-1 flex items-center gap-2"><Clock className="w-3 h-3" /> Last Received</p>
+                          <p className="text-[#3d618c]">{new Date(lastWebhook.receivedAt).toLocaleString()}</p>
+                        </div>
+                      )}
                     </div>
-                    {lastWebhook && lastWebhook.type === 'shopify' && (
-                      <div className="mt-4 p-3 bg-white border border-[#e5eeff] rounded-lg text-xs">
-                        <p className="font-semibold mb-1 flex items-center gap-2"><Clock className="w-3 h-3" /> Last Received</p>
-                        <p className="text-[#3d618c]">{new Date(lastWebhook.receivedAt).toLocaleString()}</p>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
+                  )}
+                </div>
+              )}
 
               {/* User-Registered Webhooks */}
               {registeredWebhooks && registeredWebhooks.length > 0 && (
@@ -1301,11 +1313,8 @@ function IntegrationForm({ type, integration, loading, onSave }) {
   }
 
   const webhookUrl = useMemo(() => {
-    const publicBaseUrl = process.env.NEXT_PUBLIC_BASE_URL || ''
-    if (publicBaseUrl) {
-      return `${publicBaseUrl}/api/webhook/whatsapp`
-    }
     if (typeof window === 'undefined') return ''
+    // Prioritize actual browser origin for the webhook display
     return `${window.location.origin}/api/webhook/whatsapp`
   }, [])
 
@@ -1356,63 +1365,95 @@ function IntegrationForm({ type, integration, loading, onSave }) {
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       {type === 'whatsapp' && (
-        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-sm font-medium text-slate-900">Webhook Endpoint</div>
-              <p className="mt-1 break-all text-xs text-slate-600">{webhookUrl || 'Open this page in the browser to see the webhook URL.'}</p>
+        <div className="space-y-4">
+          {/* Main Credentials */}
+          {getFields().filter(f => !['webhookVerifyToken'].includes(f.key)).map(field => (
+            <div key={field.key} className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <Label htmlFor={field.key}>{field.label}</Label>
+                {field.key === 'catalogId' && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => copyValue(formData[field.key] || '', field.key)}
+                    disabled={!formData[field.key]}
+                  >
+                    {copiedField === field.key ? 'Copied' : 'Copy'}
+                  </Button>
+                )}
+              </div>
+              <Input
+                id={field.key}
+                type={field.type || 'text'}
+                placeholder={field.placeholder}
+                value={formData[field.key] || ''}
+                onChange={(e) => setFormData(prev => ({ ...prev, [field.key]: e.target.value }))}
+                required={field.key !== 'catalogId'}
+                className="bg-white"
+              />
             </div>
-            <Button type="button" variant="outline" size="sm" onClick={() => copyValue(webhookUrl, 'webhookUrl')} disabled={!webhookUrl}>
-              {copiedField === 'webhookUrl' ? 'Copied' : 'Copy'}
-            </Button>
+          ))}
+
+          {/* Meta Webhook Setup Group */}
+          <div className="rounded-xl border border-emerald-100 bg-emerald-50/30 p-4 space-y-4 mt-6">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+              <span className="text-xs font-black uppercase tracking-widest text-emerald-700">Meta Webhook Setup</span>
+            </div>
+            
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-emerald-900 font-bold">Callback URL</Label>
+                <Button type="button" variant="ghost" size="sm" className="h-7 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-100/50 px-2" onClick={() => copyValue(webhookUrl, 'webhookUrl')} disabled={!webhookUrl}>
+                  {copiedField === 'webhookUrl' ? 'Copied!' : <><Copy className="w-3 h-3 mr-1" /> Copy URL</>}
+                </Button>
+              </div>
+              <div className="p-3 bg-white border border-emerald-100 rounded-lg break-all font-mono text-[11px] text-emerald-800 shadow-sm">
+                {webhookUrl || 'Loading URL...'}
+              </div>
+              <p className="text-[10px] text-emerald-600/70 italic px-1">Paste this into the Meta App "Callback URL" field.</p>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-emerald-900 font-bold">Verify Token</Label>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-100/50 px-2"
+                  onClick={() => copyValue(formData.webhookVerifyToken || '', 'webhookVerifyToken')}
+                  disabled={!formData.webhookVerifyToken}
+                >
+                  {copiedField === 'webhookVerifyToken' ? 'Copied!' : <><Copy className="w-3 h-3 mr-1" /> Copy Token</>}
+                </Button>
+              </div>
+              <Input
+                id="webhookVerifyToken"
+                value={formData.webhookVerifyToken || ''}
+                readOnly
+                className="bg-white border-emerald-100 font-mono text-[11px] text-emerald-800"
+              />
+              <p className="text-[10px] text-emerald-600/70 italic px-1">
+                Paste this into the Meta App "Verify Token" field.
+              </p>
+            </div>
           </div>
         </div>
       )}
 
-      {getFields().map(field => (
+      {type !== 'whatsapp' && getFields().map(field => (
         <div key={field.key} className="space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <Label htmlFor={field.key}>{field.label}</Label>
-            {type === 'whatsapp' && field.key === 'webhookVerifyToken' && (
-              <div className="flex gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => copyValue(formData[field.key] || '', field.key)}
-                  disabled={!formData[field.key]}
-                >
-                  {copiedField === field.key ? 'Copied' : 'Copy'}
-                </Button>
-              </div>
-            )}
-            {type === 'whatsapp' && field.key === 'catalogId' && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => copyValue(formData[field.key] || '', field.key)}
-                disabled={!formData[field.key]}
-              >
-                {copiedField === field.key ? 'Copied' : 'Copy'}
-              </Button>
-            )}
-          </div>
+          <Label htmlFor={field.key}>{field.label}</Label>
           <Input
             id={field.key}
             type={field.type || 'text'}
             placeholder={field.placeholder}
             value={formData[field.key] || ''}
             onChange={(e) => setFormData(prev => ({ ...prev, [field.key]: e.target.value }))}
-            required={!(type === 'whatsapp' && (field.key === 'catalogId' || field.key === 'webhookVerifyToken'))}
-            readOnly={type === 'whatsapp' && field.key === 'webhookVerifyToken'}
-            className={type === 'whatsapp' && field.key === 'webhookVerifyToken' ? 'bg-slate-50 font-mono text-[11px]' : ''}
+            required
           />
-          {type === 'whatsapp' && field.key === 'webhookVerifyToken' && (
-            <p className="text-[10px] text-slate-500 italic">
-              This token is managed by the system environment variables.
-            </p>
-          )}
         </div>
       ))}
 

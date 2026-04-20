@@ -204,11 +204,11 @@ export default function DashboardChatPage() {
   }
 
   return (
-    <div className="flex h-full -ml-8 -mt-8 w-[calc(100%+4rem)] overflow-hidden bg-white dark:bg-[#0b0d14]">
-      <Toaster position="top-center" />
+    <div className="flex h-[calc(100%+2rem)] md:h-[calc(100%+3rem)] -m-4 md:-m-6 w-[calc(100%+2rem)] md:w-[calc(100%+3rem)] overflow-hidden bg-white dark:bg-[#0b0d14]">
+      <Toaster position="top-center" richColors />
       
       {/* Sidebar */}
-      <div className="w-[320px] lg:w-[400px] flex-shrink-0 border-r border-slate-200/60 dark:border-white/[0.05]">
+      <div className="w-[320px] lg:w-[380px] flex-shrink-0 z-30 border-r border-gray-100 hidden md:flex flex-col">
         <ChatList 
           chats={chats} 
           activeChatId={activeChat?.id} 
@@ -217,7 +217,7 @@ export default function DashboardChatPage() {
       </div>
       
       {/* Content */}
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 relative bg-[#f9fafb]">
         {activeChat ? (
           <ChatWindow 
             chat={activeChat} 
@@ -225,17 +225,22 @@ export default function DashboardChatPage() {
             onSendMessage={handleSendMessage} 
           />
         ) : (
-          <div className="flex h-full flex-col items-center justify-center bg-slate-50 dark:bg-[#11131d]">
-            <div className="flex flex-col items-center max-w-sm text-center px-6">
-              <div className="mb-6 h-24 w-24 rounded-full bg-emerald-100 dark:bg-emerald-500/10 flex items-center justify-center">
-                <svg viewBox="0 0 24 24" width="48" height="48" stroke="currentColor" strokeWidth="1.5" fill="none" className="text-emerald-600 dark:text-emerald-500">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                </svg>
+          <div className="flex h-full flex-col items-center justify-center bg-white">
+            <div className="flex flex-col items-center max-w-md text-center px-8">
+              <div className="relative mb-10">
+                <div className="absolute -inset-4 bg-emerald-500/5 rounded-full blur-2xl animate-pulse"></div>
+                <div className="relative h-28 w-28 rounded-3xl bg-emerald-50 flex items-center justify-center shadow-xl shadow-emerald-500/5 border border-emerald-100">
+                  <MessageSquare className="w-12 h-12 text-emerald-600" />
+                </div>
               </div>
-              <h3 className="text-2xl font-bold text-slate-800 dark:text-white mb-2">WhatsApp for Business</h3>
-              <p className="text-slate-500 dark:text-white/40 text-sm leading-relaxed">
-                Connect with your customers instantly. Messages are synced automatically every 3 seconds.
+              <h3 className="text-2xl font-black text-gray-900 mb-3 tracking-tight">Select a Chat</h3>
+              <p className="text-gray-500 text-sm leading-relaxed mb-8">
+                Pick a conversation from the left to start responding to your customers in real-time.
               </p>
+              <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-emerald-600 bg-emerald-50 px-4 py-2 rounded-full border border-emerald-100">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
+                Real-time Sync Active
+              </div>
             </div>
           </div>
         )}
