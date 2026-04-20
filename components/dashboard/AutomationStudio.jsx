@@ -1868,71 +1868,12 @@ export function AutomationStudio() {
                         </div>
                       </div>
 
-                      <div className="space-y-3">
-                        <Label className="text-xs font-bold uppercase tracking-widest text-slate-400">Recipient</Label>
-                        <Select 
-                          value={sel.recipientMode || 'customer'} 
-                          onValueChange={(v) => updStep({ recipientMode: v })}
-                        >
-                          <SelectTrigger className="h-12 bg-slate-50 dark:bg-white/5 border-none rounded-xl">
-                            <SelectValue placeholder="Choose recipient" />
-                          </SelectTrigger>
-                          <SelectContent className="dark:bg-[#11131d] border-none shadow-2xl rounded-xl">
-                            <SelectItem value="customer">{defaultRecipientLabel}</SelectItem>
-                            <SelectItem value="fixed_number">Fixed Number</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <p className="text-[11px] text-slate-500 ml-1">{sel.recipientMode === 'fixed_number' ? 'Enter a specific phone number with country code.' : defaultRecipientDescription}</p>
-                      </div>
 
-                      {sel.recipientMode === 'fixed_number' && (
-                        <div className="space-y-3">
-                          <Label className="text-xs font-bold uppercase tracking-widest text-slate-400">Phone Number</Label>
-                          <Input
-                            placeholder="e.g. 15551234567"
-                            value={sel.recipientNumber || ''}
-                            onChange={(e) => updStep({ recipientNumber: digitsOnly(e.target.value) })}
-                            className="h-12 bg-slate-50 dark:bg-white/5 border-none rounded-xl"
-                          />
-                        </div>
-                      )}
                     </div>
                   )}
 
                   {sel.type === 'message' && (
                     <>
-                      <div className="space-y-1.5">
-                        <Label htmlFor="recipient-mode" className="text-[10px] font-bold uppercase tracking-widest text-white/25">Recipient</Label>
-                        <Select
-                          value={sel.recipientMode || 'customer'}
-                          onValueChange={value => {
-                            if (msgLocked) return
-                            updStep({
-                              recipientMode: value,
-                              recipientNumber: value === 'fixed_number' ? (sel.recipientNumber || '') : ''
-                            })
-                          }}
-                          disabled={msgLocked}
-                        >
-                          <SelectTrigger id="recipient-mode" className={inputCls}><SelectValue /></SelectTrigger>
-                          <SelectContent className="z-[260] bg-[#13151f] border-white/10">
-                            <SelectItem value="customer" className="text-white/70 text-xs focus:bg-white/8 focus:text-white">{defaultRecipientLabel}</SelectItem>
-                            <SelectItem value="fixed_number" className="text-white/70 text-xs focus:bg-white/8 focus:text-white">Fixed number</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        {sel.recipientMode === 'fixed_number' && (
-                          <Input
-                            value={sel.recipientNumber || ''}
-                            onChange={e => updStep({ recipientNumber: e.target.value })}
-                            className={inputCls}
-                            placeholder="e.g. 919876543210"
-                            disabled={msgLocked}
-                          />
-                        )}
-                        <p className="text-[10px] text-white/35">
-                          {defaultRecipientDescription} Choose <span className="text-white/60 font-semibold">Fixed number</span> for admin or store-owner alerts.
-                        </p>
-                      </div>
                       <div className="space-y-1.5">
                         <Label htmlFor="tpl-sel" className="text-[10px] font-bold uppercase tracking-widest text-white/25">Template</Label>
                         <Select value={sel.template || '__none__'} onValueChange={v => {

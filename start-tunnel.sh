@@ -22,21 +22,7 @@ if ! command -v npm &> /dev/null; then
     exit 1
 fi
 
-# Check if config files exist
-if [ ! -f "tunnel-config/config.yaml" ]; then
-    echo "ERROR: config.yaml not found"
-    echo "Please run setup-cloudflare-tunnel.bat first"
-    exit 1
-fi
-
-if [ ! -f "tunnel-config/credentials.json" ]; then
-    echo "ERROR: credentials.json not found"
-    echo "Please run setup-cloudflare-tunnel.bat first"
-    exit 1
-fi
-
 echo "✅ npm and cloudflared are installed"
-echo "✅ Configuration files found"
 echo ""
 
 echo "=========================================="
@@ -44,7 +30,7 @@ echo "Starting Next.js app and Cloudflare Tunnel"
 echo "=========================================="
 echo ""
 echo "Next.js will start on http://localhost:3000"
-echo "Tunnel URL: https://lcsw.dpdns.org"
+echo "Tunnel: A temporary URL will be generated below..."
 echo ""
 echo "Press Ctrl+C to stop everything"
 echo ""

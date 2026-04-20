@@ -59,17 +59,17 @@ function getMysqlPool() {
 }
 
 async function queryOne(sql, params = []) {
-  const [rows] = await getMysqlPool().query(sql, params)
+  const [rows] = await getMysqlPool().execute(sql, params)
   return rows[0] || null
 }
 
 async function queryMany(sql, params = []) {
-  const [rows] = await getMysqlPool().query(sql, params)
+  const [rows] = await getMysqlPool().execute(sql, params)
   return rows
 }
 
 async function query(sql, params = []) {
-  return getMysqlPool().query(sql, params)
+  return getMysqlPool().execute(sql, params)
 }
 
 async function ensureAutomationConversationStateTable() {
@@ -569,6 +569,9 @@ async function copyAutomationsBetweenUsers(sourceUserId, targetUserId) {
   }
 
   for (const row of rows) {
+    const steps = typeof row.steps === 'string' ? row.steps : JSON.stringify(row.steps || [])
+    const metrics = typeof row.metrics === 'string' ? row.metrics : JSON.stringify(row.metrics || {})
+
     await query(
       `INSERT INTO automations (id, userId, name, status, source, summary, steps, metrics, createdAt, updatedAt)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
@@ -579,8 +582,8 @@ async function copyAutomationsBetweenUsers(sourceUserId, targetUserId) {
         row.status,
         row.source,
         row.summary || '',
-        row.steps,
-        row.metrics
+        steps,
+        metrics
       ]
     )
   }
