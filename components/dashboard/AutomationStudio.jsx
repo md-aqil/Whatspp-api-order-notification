@@ -1869,11 +1869,69 @@ export function AutomationStudio() {
                       </div>
 
 
+                      <div className="space-y-4 pt-4 border-t border-white/[0.05]">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-[10px] font-bold uppercase tracking-widest text-white/20">Recipient</Label>
+                          <div className="flex bg-white/5 p-0.5 rounded-lg border border-white/10">
+                            <button 
+                              onClick={() => updStep({ recipientMode: 'customer' })}
+                              className={`px-3 py-1 text-[10px] rounded-md transition-all ${(!sel.recipientMode || sel.recipientMode === 'customer') ? 'bg-indigo-500 text-white shadow-lg' : 'text-white/40 hover:text-white/70'}`}
+                            >
+                              Customer
+                            </button>
+                            <button 
+                              onClick={() => updStep({ recipientMode: 'fixed_number' })}
+                              className={`px-3 py-1 text-[10px] rounded-md transition-all ${sel.recipientMode === 'fixed_number' ? 'bg-indigo-500 text-white shadow-lg' : 'text-white/40 hover:text-white/70'}`}
+                            >
+                              Custom
+                            </button>
+                          </div>
+                        </div>
+                        {sel.recipientMode === 'fixed_number' && (
+                          <div className="animate-in fade-in slide-in-from-top-1 duration-200">
+                            <Input
+                              placeholder="e.g. 15551234567"
+                              value={sel.recipientNumber || ''}
+                              onChange={(e) => updStep({ recipientNumber: digitsOnly(e.target.value) })}
+                              className="h-10 bg-white/5 border-white/10 rounded-xl text-xs placeholder:text-white/20 focus:ring-1 focus:ring-indigo-500/50"
+                            />
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
 
                   {sel.type === 'message' && (
                     <>
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-[10px] font-bold uppercase tracking-widest text-white/20">Recipient</Label>
+                          <div className="flex bg-white/5 p-0.5 rounded-lg border border-white/10">
+                            <button 
+                              onClick={() => updStep({ recipientMode: 'customer' })}
+                              className={`px-3 py-1 text-[10px] rounded-md transition-all ${(!sel.recipientMode || sel.recipientMode === 'customer') ? 'bg-indigo-500 text-white shadow-lg' : 'text-white/40 hover:text-white/70'}`}
+                            >
+                              Customer
+                            </button>
+                            <button 
+                              onClick={() => updStep({ recipientMode: 'fixed_number' })}
+                              className={`px-3 py-1 text-[10px] rounded-md transition-all ${sel.recipientMode === 'fixed_number' ? 'bg-indigo-500 text-white shadow-lg' : 'text-white/40 hover:text-white/70'}`}
+                            >
+                              Custom
+                            </button>
+                          </div>
+                        </div>
+                        {sel.recipientMode === 'fixed_number' && (
+                          <div className="animate-in fade-in slide-in-from-top-1 duration-200">
+                            <Input
+                              placeholder="e.g. 15551234567"
+                              value={sel.recipientNumber || ''}
+                              onChange={(e) => updStep({ recipientNumber: digitsOnly(e.target.value) })}
+                              className="h-10 bg-white/5 border-white/10 rounded-xl text-xs placeholder:text-white/20 focus:ring-1 focus:ring-indigo-500/50"
+                            />
+                          </div>
+                        )}
+                      </div>
                       <div className="space-y-1.5">
                         <Label htmlFor="tpl-sel" className="text-[10px] font-bold uppercase tracking-widest text-white/25">Template</Label>
                         <Select value={sel.template || '__none__'} onValueChange={v => {
