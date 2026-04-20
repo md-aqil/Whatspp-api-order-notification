@@ -1874,54 +1874,68 @@ async function executeAutomationsForEvent(eventType, context, integrations, user
         console.log(`[AI Reply] Found KB entries: ${kbRows.length}, Total KB length: ${kbContent.length}`);
         const businessName = integrations.whatsapp?.name || "Our Business";
 
-        // Generate AI Response
-        const aiBody = await generateAIResponse(messageText, kbContent, businessName);
-
-        // Split into multiple messages for a human-like feel
-        const parts = aiBody.split(/\n\n+/).filter(p => p.trim().length > 0);
-        
-        console.log(`[AI Reply] Splitting response into ${parts.length} messages`);
-
-        for (let i = 0; i < parts.length; i++) {
-          const part = parts[i];
+        // Generate AI Response with Fallback support
+        let aiBody = "";
+        try {
+          aiBody = await generateAIResponse(messageText, kbContent, businessName);
           
-          // Small delay between messages to simulate "typing"
-          if (i > 0) {
-            const delayMs = Math.min(2500, 800 + (part.length * 15)); 
-            await sleep(delayMs);
+          // Split into multiple messages for a human-like feel
+          const parts = aiBody.split(/\n\n+/).filter(p => p.trim().length > 0);
+          
+          console.log(`[AI Reply] Splitting response into ${parts.length} messages`);
+
+          for (let i = 0; i < parts.length; i++) {
+            const part = parts[i];
+            
+            // Small delay between messages to simulate "typing"
+            if (i > 0) {
+              const delayMs = Math.min(2500, 800 + (part.length * 15)); 
+              await sleep(delayMs);
+            }
+
+            const messageData = {
+              messaging_product: 'whatsapp',
+              to: recipient,
+              type: 'text',
+              text: { body: part }
+            };
+
+            const partResult = await sendWhatsAppMessage(
+              integrations.whatsapp.phoneNumberId,
+              integrations.whatsapp.accessToken,
+              recipient,
+              messageData
+            );
+
+            messagesSentInThisRun++;
+
+            await insertStoredMessage({
+              id: uuidv4(),
+              userId,
+              recipient,
+              phone: recipient,
+              message: part,
+              isCustomer: false,
+              timestamp: new Date(),
+              whatsappMessageId: partResult?.messages?.[0]?.id || '',
+              status: 'sent',
+              messageType: 'ai_assistant'
+            });
           }
 
-          const messageData = {
-            messaging_product: 'whatsapp',
-            to: recipient,
-            type: 'text',
-            text: { body: part }
-          };
-
-          const partResult = await sendWhatsAppMessage(
-            integrations.whatsapp.phoneNumberId,
-            integrations.whatsapp.accessToken,
-            recipient,
-            messageData
-          );
-
-          messagesSentInThisRun++;
-
-          await insertStoredMessage({
-            id: uuidv4(),
-            userId,
-            recipient,
-            phone: recipient,
-            message: part,
-            isCustomer: false,
-            timestamp: new Date(),
-            whatsappMessageId: partResult?.messages?.[0]?.id || '',
-            status: 'sent',
-            messageType: 'ai_assistant'
-          });
+          currentStepId = getNextAutomationStepId(steps, step, 'main');
+        } catch (error) {
+          console.error(`[AI Reply] Error: ${error.message}`);
+          // Check if there is a fallback connection
+          const fallbackId = getNextAutomationStepId(steps, step, 'fallback');
+          if (fallbackId) {
+            console.log(`[AI Reply] AI Failed. Triggering fallback path: ${fallbackId}`);
+            currentStepId = fallbackId;
+          } else {
+            console.log(`[AI Reply] AI Failed and no fallback found. Stopping.`);
+            currentStepId = '';
+          }
         }
-
-        currentStepId = getNextAutomationStepId(steps, step, 'main');
         continue;
       }
 
