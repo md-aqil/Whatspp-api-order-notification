@@ -2650,6 +2650,47 @@ async function handleRoute(request, { params }) {
   console.log(`Full params:`, params)
 
   try {
+    // WhatsApp webhook verification - MUST BE FAST to avoid Meta timeout
+    if (route === '/webhook/whatsapp' && method === 'GET') {
+      const verifyToken = request.nextUrl.searchParams.get('hub.verify_token')
+      const challenge = request.nextUrl.searchParams.get('hub.challenge')
+
+      if (verifyToken) {
+        const envToken = process.env.WHATSAPP_VERIFY_TOKEN
+        const fallbackToken = '41ddad7ee4b44d0418876d444b36f4ac817c042c36265b5d'
+        
+        let isVerified = (verifyToken === envToken) || (verifyToken === fallbackToken)
+        
+        if (!isVerified) {
+          try {
+            const defaultIntegrations = await getStoredIntegrations()
+            const storedToken = defaultIntegrations?.whatsapp?.webhookVerifyToken
+            if (storedToken && verifyToken === storedToken) {
+              isVerified = true
+            }
+          } catch (e) {
+            // Ignore DB errors for speed, if tokens match fallback it's fine
+          }
+        }
+
+        if (isVerified) {
+          console.log('WhatsApp webhook verification successful')
+          return new NextResponse(challenge, {
+            headers: { 'Content-Type': 'text/plain' }
+          })
+        } else {
+          console.warn('WhatsApp webhook verification failed: Token mismatch')
+          return new NextResponse('Forbidden', { status: 403 })
+        }
+      }
+
+      // If no verify token provided, return a message indicating endpoint is configured
+      return handleCORS(NextResponse.json({
+        message: "WhatsApp webhook endpoint is configured. Provide hub.verify_token for verification.",
+        status: "ready"
+      }))
+    }
+
     await processDueAutomationJobs()
 
     // Root endpoint
@@ -3604,58 +3645,6 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
       }
     }
 
-    // Webhook endpoint for WhatsApp
-    if (route === '/webhook/whatsapp' && method === 'GET') {
-      try {
-        const verifyToken = request.nextUrl.searchParams.get('hub.verify_token')
-        const challenge = request.nextUrl.searchParams.get('hub.challenge')
-
-        // If no verify token provided, return a message indicating endpoint is configured
-        if (!verifyToken) {
-          return handleCORS(NextResponse.json({
-            message: "WhatsApp webhook endpoint is configured. Provide hub.verify_token for verification.",
-            status: "ready"
-          }))
-        }
-
-        let storedToken = ''
-
-        try {
-          const defaultIntegrations = await getStoredIntegrations()
-          storedToken = defaultIntegrations?.whatsapp?.webhookVerifyToken || ''
-          if (!storedToken) {
-            storedToken = await getAnyStoredWhatsAppWebhookVerifyToken()
-          }
-        } catch (error) {
-          console.error('Failed to load WhatsApp webhook token from storage:', error)
-        }
-
-        const envToken = process.env.WHATSAPP_VERIFY_TOKEN
-        const fallbackToken = '41ddad7ee4b44d0418876d444b36f4ac817c042c36265b5d'
-        
-        // Success if it matches env token, hardcoded fallback, or any stored token in the database
-        const isVerified = (verifyToken === envToken) || 
-                          (verifyToken === fallbackToken) || 
-                          (storedToken && verifyToken === storedToken)
-
-        console.log('WhatsApp webhook verification:', { 
-          verifyToken, 
-          isVerified,
-          hasEnvToken: !!envToken, 
-          hasStoredToken: !!storedToken 
-        })
-
-        if (isVerified) {
-          return handleCORS(new NextResponse(challenge))
-        } else {
-          console.warn('WhatsApp webhook verification failed: Token mismatch')
-          return handleCORS(new NextResponse('Forbidden', { status: 403 }))
-        }
-      } catch (error) {
-        console.error('WhatsApp webhook verification error:', error)
-        return handleCORS(new NextResponse('Internal server error', { status: 500 }))
-      }
-    }
 
     if (route === '/webhook/whatsapp' && method === 'POST') {
       try {
