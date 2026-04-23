@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
-import { BellRing, CheckCircle2, Clock3, CopyPlus, Copy, HelpCircle, History, MessageSquareText, PackageCheck, PlayCircle, Plus, Settings, Sparkles, Square, Trash2, Truck, Workflow, X, Zap, ZoomIn, ZoomOut, Maximize2, ArrowLeft } from 'lucide-react'
+import { BellRing, CheckCircle2, Clock3, CopyPlus, Copy, HelpCircle, History, MessageSquareText, PackageCheck, PlayCircle, Plus, Settings, Sparkles, Square, Trash2, Truck, Workflow, X, Zap, ZoomIn, ZoomOut, Maximize2, ArrowLeft, Download, Upload } from 'lucide-react'
 import { toast, Toaster } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -944,6 +944,41 @@ export function AutomationStudio() {
     if (activeId === id) { setActiveId(next[0].id); setSelId(next[0].steps[0]?.id || null) }
     persist(next, 'Flow deleted')
   }
+  function exportFlow() {
+    if (!active) return
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(active, null, 2));
+    const downloadAnchorNode = document.createElement('a');
+    downloadAnchorNode.setAttribute("href", dataStr);
+    downloadAnchorNode.setAttribute("download", `${active.name.replace(/\s+/g, '_')}_flow.json`);
+    document.body.appendChild(downloadAnchorNode);
+    downloadAnchorNode.click();
+    downloadAnchorNode.remove();
+    toast.success('Flow exported successfully');
+  }
+  function handleImport(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const imported = JSON.parse(event.target.result);
+        if (!imported.steps || !Array.isArray(imported.steps)) throw new Error('Invalid flow format');
+        const newFlow = {
+          ...imported,
+          id: `flow-${Date.now()}`,
+          status: false,
+          source: 'Custom'
+        };
+        setAutomations(cur => [...cur, normalize(newFlow)]);
+        setActiveId(newFlow.id);
+        toast.success('Flow imported successfully');
+      } catch (err) {
+        toast.error('Failed to import flow: ' + err.message);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = ''; // Reset input
+  }
   function startPan(e) {
     // Pan on left-click on canvas background, or middle mouse anywhere
     if (e.button === 1) { e.preventDefault(); setPanning(true); setPanOrg({ x: e.clientX - tr.x, y: e.clientY - tr.y }); return }
@@ -1080,10 +1115,20 @@ export function AutomationStudio() {
             )
           })}
         </div>
-        <button
-          aria-label="Create new automation flow"
-          onClick={() => setDlgOpen(true)}
-          className="ml-auto shrink-0 h-8 px-3.5 rounded-lg bg-violet-500/18 hover:bg-violet-500/28 text-violet-100 border border-violet-400/35 shadow-[0_8px_24px_rgba(109,40,217,0.18)] text-xs font-semibold flex items-center gap-1.5 transition-all">
+        <div className="ml-auto flex items-center gap-2">
+          <Button variant="ghost" size="sm" onClick={exportFlow} disabled={!active} className="h-8 px-2.5 text-white/40 hover:text-white/80 hover:bg-white/5 gap-1.5 text-xs">
+            <Download className="h-3.5 w-3.5" /> Export
+          </Button>
+          <div className="relative">
+            <input type="file" accept=".json" onChange={handleImport} className="absolute inset-0 opacity-0 cursor-pointer" title="Import Flow" />
+            <Button variant="ghost" size="sm" className="h-8 px-2.5 text-white/40 hover:text-white/80 hover:bg-white/5 gap-1.5 text-xs">
+              <Upload className="h-3.5 w-3.5" /> Import
+            </Button>
+          </div>
+          <button
+            aria-label="Create new automation flow"
+            onClick={() => setDlgOpen(true)}
+            className="shrink-0 h-8 px-3.5 rounded-lg bg-violet-500/18 hover:bg-violet-500/28 text-violet-100 border border-violet-400/35 shadow-[0_8px_24px_rgba(109,40,217,0.18)] text-xs font-semibold flex items-center gap-1.5 transition-all">
           <Plus className="h-3.5 w-3.5" />New flow
         </button>
       </div>
