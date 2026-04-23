@@ -1347,7 +1347,7 @@ export function AutomationStudio() {
                       {/* Disconnect Button */}
                       <g 
                         transform={`translate(${Math.round(midX)}, ${Math.round(midY)})`}
-                        className="opacity-20 peer-hover:opacity-100 hover:opacity-100 transition-all duration-200 cursor-pointer hover:scale-125"
+                        className="opacity-0 group-hover/edge:opacity-100 transition-opacity duration-150 cursor-pointer"
                         style={{ pointerEvents: 'all' }}
                       >
                         <circle 
@@ -1408,10 +1408,25 @@ export function AutomationStudio() {
                   <div role="button" aria-label={`Drag to move ${step.title}`} className={`flex items-center justify-between px-3.5 py-3 rounded-t-2xl cursor-grab active:cursor-grabbing ${c.hdr}`}
                     onMouseDown={e => startDrag(e, step.id)}>
                     <div className="flex items-center gap-2">
-                      <div className={`rounded-lg p-1.5 ${c.icon}`} aria-hidden="true"><Icon className="h-3.5 w-3.5" /></div>
-                      <span className={`text-[10px] font-bold uppercase tracking-widest ${c.lbl}`}>{step.type === 'test' ? 'Test' : step.type === 'trigger' ? 'Trigger' : step.type === 'message' ? 'WhatsApp' : step.type}</span>
+                      <div className={`rounded-lg p-2 ${c.iconBg || 'bg-white/5'} text-white`} aria-hidden="true">
+                        <Icon className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <h3 className="text-xs font-bold text-white leading-none">{step.title}</h3>
+                        <p className="text-[9px] text-white/40 mt-1 font-medium">{getBlock(step.type).label}</p>
+                      </div>
                     </div>
-                    {isSel && <div className="h-2 w-2 rounded-full bg-violet-400 dot-pulse shadow-[0_0_8px_rgba(167,139,250,0.9)]" aria-hidden="true" />}
+                    <button 
+                      aria-label={`Delete ${step.title}`}
+                      onMouseDown={e => e.stopPropagation()}
+                      onClick={e => { 
+                        e.stopPropagation(); 
+                        console.log('[Studio] Deleting node:', step.id);
+                        delNode(step.id);
+                      }}
+                      className="h-6 w-6 flex items-center justify-center text-white/20 hover:text-rose-400 hover:bg-rose-500/20 rounded-md transition-colors z-30">
+                      <X className="h-3.5 w-3.5" />
+                    </button>
                   </div>
                   {/* body */}
                   <div className="relative px-3.5 py-3.5 border-t border-white/[0.06]">
@@ -1462,19 +1477,6 @@ export function AutomationStudio() {
                         )}
                       </>
                     )}
-                    <button 
-                      aria-label={`Delete ${step.title}`}
-                      onMouseDown={e => {
-                        e.stopPropagation();
-                      }}
-                      onClick={e => { 
-                        e.stopPropagation(); 
-                        console.log('[Studio] Deleting node:', step.id);
-                        delNode(step.id);
-                      }}
-                      className="absolute -right-2 -top-2 h-7 w-7 flex items-center justify-center bg-[#1a1d2d] border border-white/10 text-white/40 hover:text-rose-400 hover:border-rose-500/30 rounded-full shadow-xl hover:bg-rose-500/10 z-[100]">
-                      <X className="h-4 w-4" />
-                    </button>
                   </div>
                   {/* input port */}
                   <button aria-label="Input connection port" 
