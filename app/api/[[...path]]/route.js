@@ -1738,8 +1738,9 @@ function sleep(ms) {
 function calcTypingDelay(text = '') {
   const chars = String(text || '').length
   // ~60 WPM typing speed ≈ 5 chars/sec. Add a 600ms base read delay.
-  const typingMs = Math.min(Math.ceil(chars / 5) * 100, 2400)
-  return 600 + typingMs
+  // Reduced base delay and faster character processing
+  const typingMs = Math.min(Math.ceil(chars / 10) * 100, 1500)
+  return 200 + typingMs
 }
 
 /**
@@ -1959,11 +1960,14 @@ async function executeAutomationsForEvent(eventType, context, integrations, user
           
           console.log(`[AI Reply] Splitting response into ${parts.length} messages`);
 
-          for (const part of parts) {
+          for (let i = 0; i < parts.length; i++) {
+            const part = parts[i];
             
-            // Small delay between messages to simulate "typing"
-            const delayMs = Math.min(2500, 800 + (part.length * 15)); 
-            await sleep(delayMs);
+            // Delay between messages to simulate "typing" (skip for first message)
+            if (i > 0) {
+              const delayMs = Math.min(1500, 400 + (part.length * 10)); 
+              await sleep(delayMs);
+            }
 
             const messageData = {
               messaging_product: 'whatsapp',
