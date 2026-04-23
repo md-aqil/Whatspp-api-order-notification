@@ -1132,6 +1132,7 @@ export function AutomationStudio() {
           <Plus className="h-3.5 w-3.5" />New flow
         </button>
       </div>
+    </div>
 
       {/* 3-COL */}
       <div className="flex flex-1 min-h-0">
