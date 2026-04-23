@@ -220,7 +220,11 @@ function mapStep(step, i, arr) {
       : [],
     variableMappings: Array.isArray(step.variableMappings) ? step.variableMappings : [],
     options: step.type === 'interactive' ? (Array.isArray(step.options) ? step.options : [{ id: 'opt0', label: 'Check Order Status' }, { id: 'opt1', label: 'Talk to Support' }]) : undefined,
-    connections: (step.type === 'condition' || step.type === 'ai_reply') ? { main: ex.main ?? nxt?.id ?? '', fallback: ex.fallback ?? '' } : step.type === 'interactive' ? Object.fromEntries((step.options || [{id:'opt0'}, {id:'opt1'}]).map((o, idx) => [`opt${idx}`, ex[`opt${idx}`] ?? ''])) : { main: ex.main ?? nxt?.id ?? '' }
+    connections: (step.type === 'condition' || step.type === 'ai_reply') 
+      ? { main: (ex.main && ex.main !== 'DISCONNECTED') ? ex.main : (ex.main === 'DISCONNECTED' ? 'DISCONNECTED' : ''), fallback: ex.fallback ?? '' } 
+      : step.type === 'interactive' 
+        ? Object.fromEntries((step.options || [{id:'opt0'}, {id:'opt1'}]).map((o, idx) => [`opt${idx}`, ex[`opt${idx}`] || ''])) 
+        : { main: (ex.main && ex.main !== 'DISCONNECTED') ? ex.main : (ex.main === 'DISCONNECTED' ? 'DISCONNECTED' : '') }
   }
 }
 const normalize = a => ({ ...a, metrics: a?.metrics || { sent: 0, openRate: 0, conversions: 0 }, steps: (Array.isArray(a?.steps) ? a.steps : []).map((s, i, arr) => mapStep(s, i, arr)) })
@@ -245,15 +249,8 @@ function buildEdges(steps) {
     let outs = [{ key: 'main', label: '' }]
     if (s.type === 'condition' || s.type === 'ai_reply') outs = [{ key: 'main', label: s.type === 'ai_reply' ? 'Success' : 'Yes' }, { key: 'fallback', label: s.type === 'ai_reply' ? 'Error' : 'No' }]
     else if (s.type === 'interactive') outs = (s.options || []).map((opt, i) => ({ key: `opt${i}`, label: '' }))
-    outs.forEach(({ key, label }) => { const tid = s.connections?.[key]; if (tid && m.has(tid)) edges.push({ id: `${s.id}-${key}`, sourceId: s.id, targetId: tid, key, label }) })
+    outs.forEach(({ key, label }) => { const tid = s.connections?.[key]; if (tid && tid !== 'DISCONNECTED' && m.has(tid)) edges.push({ id: `${s.id}-${key}`, sourceId: s.id, targetId: tid, key, label }) })
   }); return edges
-}
-function disconnectEdge(activeId, sourceId, key, updAuto) {
-  updAuto(activeId, a => ({
-    ...a,
-    steps: a.steps.map(s => s.id === sourceId ? { ...s, connections: { ...s.connections, [key]: '' } } : s)
-  }))
-  toast.success('Connection removed')
 }
 function outPt(s, key) {
   const x = s.position.x + 256
@@ -265,7 +262,7 @@ function outPt(s, key) {
   // Interactive menu option offsets
   if (s.type === 'interactive') {
     const idx = parseInt(key.replace('opt', ''), 10)
-    return { x, y: s.position.y + 130 + (idx * 32) } // Matches top-[120px] + 10px center + gap
+    return { x, y: s.position.y + 132 + (idx * 32) } // Base 120px + 12px center
   }
   // Default output (centered with the input port for straight lines)
   return { x, y: s.position.y + 60 }
@@ -572,7 +569,7 @@ export function AutomationStudio() {
   }, [hydrated, persist, saveState])
 
   const active = useMemo(() => automations.find(a => a.id === activeId) || automations[0], [activeId, automations])
-  const activeDef = !!active && isDefault(active.id)
+  const activeDef = !!active && isDefault(active.id) && active.source !== 'Custom'
   const activeDefaultTargetId = getDefaultTargetIdForAutomation(active)
   const sel = active?.steps.find(s => s.id === selId) || active?.steps[0]
   const selLocked = false
@@ -720,7 +717,23 @@ export function AutomationStudio() {
     }
   }, [libBlocks, selectedLibraryBlockType])
 
-  const updAuto = (id, fn) => setAutomations(cur => sortAutomations(cur.map(a => a.id === id ? normalize(fn(a)) : a)))
+  const updAuto = (id, fn) => setAutomations(cur => {
+    const next = sortAutomations(cur.map(a => a.id === id ? normalize(fn(a)) : a))
+    const updated = next.find(a => a.id === id)
+    if (updated) {
+      console.log('[Studio] Updated automation:', id, 'steps:', updated.steps.map(s => ({ id: s.id, type: s.type, connections: s.connections })))
+    }
+    return next
+  })
+  function disconnectEdge(sourceId, key) {
+    if (!active) return
+    console.log('[Studio] Disconnecting:', sourceId, 'key:', key)
+    updAuto(active.id, a => ({
+      ...a,
+      steps: a.steps.map(s => s.id === sourceId ? { ...s, connections: { ...s.connections, [key]: 'DISCONNECTED' } } : s)
+    }))
+    toast.success('Connection removed')
+  }
   function updStep(patch) {
     if (!active || !sel || selLocked) return
     updAuto(active.id, a => ({
@@ -1099,28 +1112,6 @@ export function AutomationStudio() {
 	                    : 'Ready to publish'}
 	              </span>
 	            </div>
-            {!activeDef && (
-              <div className="mt-3 flex gap-2">
-                <Button
-                  size="sm"
-                  onClick={promoteActiveFlowToDefault}
-                  disabled={!activeDefaultTargetId}
-                  className="flex-1 h-7 rounded-lg bg-white/[0.06] hover:bg-white/10 text-white/80 text-[11px] font-semibold border border-white/[0.08] disabled:opacity-35 disabled:hover:bg-white/[0.06]"
-                >
-                  <Sparkles className="mr-1.5 h-3.5 w-3.5" />
-                  Set Default
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={resetActiveFlowToDefault}
-                  disabled={!activeDefaultTargetId}
-                  className="h-7 rounded-lg border border-white/[0.08] bg-white/[0.03] px-2.5 text-[11px] font-semibold text-white/65 hover:bg-white/[0.06] hover:text-white disabled:opacity-35"
-                >
-                  Reset
-                </Button>
-              </div>
-            )}
             {activeDef && (
               <Button
                 size="sm"
@@ -1252,15 +1243,27 @@ export function AutomationStudio() {
                 const isAlt = edge.key === 'fallback'
                 const col = isAlt ? '#fbbf24' : '#8b5cf6'
                 
-                // Calculate midpoint for the delete button
+                // Calculate midpoint of the cubic bezier curve at t=0.5
                 const f = outPt(src, edge.key), t = inPt(tgt)
-                const midX = (f.x + t.x) / 2
-                const midY = (f.y + t.y) / 2
+                const cp1x = f.x + Math.max(80, Math.abs(t.x - f.x) * 0.5)
+                const cp2x = t.x - Math.max(80, Math.abs(t.x - f.x) * 0.5)
+                
+                // P0=f, P1=(cp1x, f.y), P2=(cp2x, t.y), P3=t
+                const midX = 0.125 * f.x + 0.375 * cp1x + 0.375 * cp2x + 0.125 * t.x
+                const midY = 0.125 * f.y + 0.375 * f.y + 0.375 * t.y + 0.125 * t.y
 
                 return (
-                    <g key={edge.id} className="group/edge pointer-events-none">
+                    <g key={edge.id} className="group/edge pointer-events-auto" style={{ pointerEvents: 'all' }}>
                       {/* Wider invisible hit area for easier hovering */}
-                      <path d={d} fill="none" stroke="transparent" strokeWidth="30" strokeLinecap="round" className="cursor-pointer pointer-events-auto" />
+                      <path 
+                        d={d} 
+                        fill="none" 
+                        stroke="rgba(0,0,0,0.001)" 
+                        strokeWidth="40" 
+                        strokeLinecap="round" 
+                        className="peer cursor-pointer" 
+                        style={{ pointerEvents: 'all' }}
+                      />
                       
                       {/* Decorative paths */}
                       <path d={d} fill="none" stroke={col} strokeOpacity="0.15" strokeWidth="12" strokeLinecap="round" />
@@ -1275,14 +1278,24 @@ export function AutomationStudio() {
                       {/* Disconnect Button */}
                       <g 
                         transform={`translate(${Math.round(midX)}, ${Math.round(midY)})`}
-                        className="opacity-40 group-hover/edge:opacity-100 transition-all duration-200 cursor-pointer pointer-events-auto hover:scale-125"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          disconnectEdge(active.id, edge.sourceId, edge.key, updAuto)
-                        }}
+                        className="opacity-20 peer-hover:opacity-100 hover:opacity-100 transition-all duration-200 cursor-pointer hover:scale-125"
+                        style={{ pointerEvents: 'all' }}
                       >
-                        <circle r="11" fill="#0b0d14" stroke={col} strokeWidth="2.5" className="shadow-xl" />
-                        <g stroke="white" strokeWidth="2.5" strokeLinecap="round" opacity="0.9">
+                        <circle 
+                          r="15" 
+                          fill="#0b0d14" 
+                          stroke={col} 
+                          strokeWidth="2.5" 
+                          className="shadow-xl" 
+                          style={{ pointerEvents: 'all' }}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            console.log('[Studio] Clicked X for edge:', edge.sourceId, '->', edge.targetId, 'key:', edge.key)
+                            toast.info(`Removing connection from ${edge.sourceId}...`)
+                            disconnectEdge(edge.sourceId, edge.key)
+                          }}
+                        />
+                        <g stroke="white" strokeWidth="2.5" strokeLinecap="round" opacity="0.9" style={{ pointerEvents: 'none' }}>
                           <line x1="-3.5" y1="-3.5" x2="3.5" y2="3.5" />
                           <line x1="3.5" y1="-3.5" x2="-3.5" y2="3.5" />
                         </g>
@@ -1320,7 +1333,7 @@ export function AutomationStudio() {
 	                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') setSelId(step.id); if (e.key === 'Delete') delNode(step.id) }}
 	                  onClick={() => setSelId(step.id)}
 	                  className={`absolute w-[256px] rounded-2xl border backdrop-blur-sm select-none transition-all duration-200 ${c.border} ${c.bg} ${isNew ? 'node-in' : ''} ${isSel ? 'shadow-[0_0_0_2px_rgba(139,92,246,0.6),0_20px_56px_-8px_rgba(109,40,217,0.35)] scale-[1.03] z-10' : 'shadow-[0_6px_24px_-6px_rgba(0,0,0,0.7)] hover:scale-[1.015] hover:shadow-[0_12px_36px_-8px_rgba(0,0,0,0.85)] z-0'} ${hasError ? 'ring-1 ring-rose-500/40' : hasWarning ? 'ring-1 ring-amber-500/30' : ''}`}
-	                  style={{ left: step.position.x, top: step.position.y, cursor: drag?.id === step.id ? 'grabbing' : 'default' }}>
+	                  style={{ left: step.position.x, top: step.position.y, minHeight: step.type === 'interactive' ? 260 : 'auto', cursor: drag?.id === step.id ? 'grabbing' : 'default' }}>
                   {/* header */}
                   <div role="button" aria-label={`Drag to move ${step.title}`} className={`flex items-center justify-between px-3.5 py-3 rounded-t-2xl cursor-grab active:cursor-grabbing ${c.hdr}`}
                     onMouseDown={e => startDrag(e, step.id)}>
@@ -1333,7 +1346,7 @@ export function AutomationStudio() {
                   {/* body */}
                   <div className="relative px-3.5 py-3.5 border-t border-white/[0.06]">
                     <div className="text-sm font-bold text-white/90 leading-tight pr-6">{step.title}</div>
-                    <p className="mt-1.5 text-[11px] text-white/35 line-clamp-2 leading-relaxed">{tMeta?.description || step.description || body}</p>
+                    <p className="mt-1.5 text-[11px] text-white/35 line-clamp-2 leading-relaxed h-[32px] overflow-hidden">{tMeta?.description || step.description || body}</p>
                     {step.type === 'interactive' && (
                       <div className="mt-4 flex flex-col gap-2" style={{ minHeight: `${(step.options?.length || 0) * 32}px` }}>
                         {(step.options || []).map((opt, idx) => (
@@ -1396,7 +1409,7 @@ export function AutomationStudio() {
                   ) : step.type === 'interactive' ? (
                     <>
                       {(step.options || []).map((opt, idx) => {
-                        const topOff = 120 + (idx * 32);
+                        const topOff = 122 + (idx * 32);
                         return <button key={idx} aria-label={`Option: ${opt.label}`} onMouseDown={e => startConn(e, step.id, `opt${idx}`)} className={`absolute -right-2.5 h-5 w-5 rounded-full border-2 border-[#0b0d14] ${c.dot} hover:brightness-125 transition-all ring-1 ring-transparent hover:ring-fuchsia-400/40 z-20`} style={{ top: topOff }} />
                       })}
                     </>
