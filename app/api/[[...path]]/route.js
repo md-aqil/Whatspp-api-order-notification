@@ -1863,7 +1863,19 @@ async function executeAutomationsForEvent(eventType, context, integrations, user
           isReplyingToMenu = true
           console.log(`[executeAutomationsForEvent] FOUND BRANCH: id=${context._chosenOptionId}, title="${rawTitle}", clean="${cleanTitle}" -> target=${currentStepId}`)
           
-          // CRITICAL: Clear the awaiting state immediately so it doesn't stay "stuck"
+          // Clear the awaiting state
+          conversationState = await saveAutomationConversationState(
+            automation.id, conversationRecipient, conversationState,
+            { state: 'active', awaitingInteractiveStepId: null, lastReplyKey: context._chosenOptionId, lastReplyAt: now },
+            userId
+          )
+        } else if (lastStep?.type === 'ai_reply') {
+          // If it's an AI reply but no specific branch, loop back to the AI node
+          // The option label will be treated as the next customer message.
+          currentStepId = lastStep.id
+          isReplyingToMenu = true
+          console.log(`[executeAutomationsForEvent] AI OPTION CLICKED: title="${rawTitle}". Re-triggering AI node ${currentStepId}`)
+          
           conversationState = await saveAutomationConversationState(
             automation.id, conversationRecipient, conversationState,
             { state: 'active', awaitingInteractiveStepId: null, lastReplyKey: context._chosenOptionId, lastReplyAt: now },
@@ -1955,13 +1967,22 @@ async function executeAutomationsForEvent(eventType, context, integrations, user
         try {
           aiBody = await generateAIResponse(messageText, kbContent, businessName, lastFewMessages);
           
-          // Split into multiple messages for a human-like feel
-          const parts = aiBody.split(/\n\n+/).filter(p => p.trim().length > 0);
-          
-          console.log(`[AI Reply] Splitting response into ${parts.length} messages`);
+          // Parse options from AI body: [[Option: Label]]
+          const optionRegex = /\[\[Option:\s*(.*?)\s*\]\]/g;
+          const aiOptions = [];
+          let match;
+          while ((match = optionRegex.exec(aiBody)) !== null) {
+            if (aiOptions.length < 3) aiOptions.push(match[1].trim());
+          }
+          const cleanedAiBody = aiBody.replace(optionRegex, '').trim();
+
+          // Split cleaned body into multiple messages
+          const parts = cleanedAiBody.split(/\n\n+/).filter(p => p.trim().length > 0);
+          console.log(`[AI Reply] Splitting response into ${parts.length} messages. Options: ${aiOptions.join(', ')}`);
 
           for (let i = 0; i < parts.length; i++) {
             const part = parts[i];
+            const isLastPart = i === parts.length - 1;
             
             // Delay between messages to simulate "typing" (skip for first message)
             if (i > 0) {
@@ -1969,12 +1990,33 @@ async function executeAutomationsForEvent(eventType, context, integrations, user
               await sleep(delayMs);
             }
 
-            const messageData = {
-              messaging_product: 'whatsapp',
-              to: recipient,
-              type: 'text',
-              text: { body: part }
-            };
+            let messageData;
+            if (isLastPart && aiOptions.length > 0) {
+              // Send last part as interactive message with buttons
+              messageData = {
+                messaging_product: 'whatsapp',
+                to: recipient,
+                type: 'interactive',
+                interactive: {
+                  type: 'button',
+                  body: { text: part },
+                  action: {
+                    buttons: aiOptions.map((opt, idx) => ({
+                      type: 'reply',
+                      reply: { id: `ai_opt_${idx}`, title: opt.substring(0, 20) }
+                    }))
+                  }
+                }
+              };
+            } else {
+              // Regular text message
+              messageData = {
+                messaging_product: 'whatsapp',
+                to: recipient,
+                type: 'text',
+                text: { body: part }
+              };
+            }
 
             const partResult = await sendWhatsAppMessage(
               integrations.whatsapp.phoneNumberId,
@@ -1986,32 +2028,34 @@ async function executeAutomationsForEvent(eventType, context, integrations, user
             messagesSentInThisRun++;
 
             // AUTOMATIC HANDOFF DETECTION
-            // If AI response suggests a handoff, update the conversation state to 'handoff'
             const isHandoffResponse = part.toLowerCase().includes('human agent') || 
                                      part.toLowerCase().includes('transfer') ||
                                      part.toLowerCase().includes('wait a moment');
 
             if (isHandoffResponse && conversationRecipient) {
-              console.log('[AI Assistant] Handoff detected in response, updating state');
               conversationState = await saveAutomationConversationState(
                 automation.id, conversationRecipient, conversationState,
-                { state: 'handoff', handoffUntil: new Date(Date.now() + 86400000) }, // 24h handoff
+                { state: 'handoff', handoffUntil: new Date(Date.now() + 86400000) },
                 userId
               );
             }
 
             await insertStoredMessage({
-              id: uuidv4(),
-              userId,
-              recipient,
-              phone: recipient,
-              message: part,
-              isCustomer: false,
-              timestamp: new Date(),
+              id: uuidv4(), userId, recipient, phone: recipient,
+              message: aiOptions.length > 0 && isLastPart ? `[AI Menu] ${part}` : part,
+              isCustomer: false, timestamp: new Date(),
               whatsappMessageId: partResult?.messages?.[0]?.id || '',
-              status: 'sent',
-              messageType: 'ai_assistant'
+              status: 'sent', messageType: 'ai_assistant'
             });
+
+            // If we sent buttons, set state to awaiting choice
+            if (isLastPart && aiOptions.length > 0 && isIncomingWhatsAppAutomation && conversationRecipient) {
+              conversationState = await saveAutomationConversationState(
+                automation.id, conversationRecipient, conversationState,
+                { state: 'awaiting_choice', awaitingInteractiveStepId: step.id, lastReplyKey: step.id, lastReplyAt: now },
+                userId
+              );
+            }
           }
 
           currentStepId = getNextAutomationStepId(steps, step, 'main');
