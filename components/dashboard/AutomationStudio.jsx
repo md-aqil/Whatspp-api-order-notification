@@ -219,7 +219,7 @@ function mapStep(step, i, arr) {
       }))
       : [],
     variableMappings: Array.isArray(step.variableMappings) ? step.variableMappings : [],
-    options: step.type === 'interactive' ? (Array.isArray(step.options) ? step.options : [{ id: 'opt0', label: 'Check Order Status' }, { id: 'opt1', label: 'Talk to Support' }]) : undefined,
+    options: step.type === 'interactive' ? (Array.isArray(step.options) ? step.options.map((o, idx) => ({ ...o, id: o.id || `opt${idx}` })) : [{ id: 'opt0', label: 'Check Order Status' }, { id: 'opt1', label: 'Talk to Support' }]) : undefined,
     connections: (() => {
       const validate = (tid) => (tid && tid !== 'DISCONNECTED' && arr.some(n => n.id === tid)) ? tid : (tid === 'DISCONNECTED' ? 'DISCONNECTED' : '');
       if (step.type === 'condition' || step.type === 'ai_reply') {

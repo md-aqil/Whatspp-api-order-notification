@@ -2295,7 +2295,7 @@ async function executeAutomationsForEvent(eventType, context, integrations, user
                 sections: [{
                   title: 'Options',
                   rows: options.map((opt, idx) => ({
-                    id: `opt${idx}`,
+                    id: opt.id || `opt${idx}`,
                     title: String(opt.label || `Option ${idx + 1}`).substring(0, 24),
                     description: ''
                   }))
