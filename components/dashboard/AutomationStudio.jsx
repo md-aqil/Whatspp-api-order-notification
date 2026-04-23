@@ -223,7 +223,7 @@ function mapStep(step, i, arr) {
     connections: (step.type === 'condition' || step.type === 'ai_reply') 
       ? { main: (ex.main && ex.main !== 'DISCONNECTED') ? ex.main : (ex.main === 'DISCONNECTED' ? 'DISCONNECTED' : ''), fallback: ex.fallback ?? '' } 
       : step.type === 'interactive' 
-        ? Object.fromEntries((step.options || [{id:'opt0'}, {id:'opt1'}]).map((o, idx) => [`opt${idx}`, ex[`opt${idx}`] || ''])) 
+        ? Object.fromEntries((step.options || [{id:'opt0'}, {id:'opt1'}]).map((o) => [o.id, ex[o.id] || ''])) 
         : { main: (ex.main && ex.main !== 'DISCONNECTED') ? ex.main : (ex.main === 'DISCONNECTED' ? 'DISCONNECTED' : '') }
   }
 }
