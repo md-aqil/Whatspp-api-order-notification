@@ -1415,6 +1415,7 @@ export function AutomationStudio() {
 	                      <>
                         <Button
                           size="sm"
+                          onMouseDown={e => e.stopPropagation()}
                           onClick={e => { e.stopPropagation(); runFlowTest(step.id) }}
                           className="mt-3 h-7 rounded-lg bg-pink-600 hover:bg-pink-700 text-white text-[11px] font-bold"
                         >
@@ -1438,30 +1439,41 @@ export function AutomationStudio() {
                         )}
                       </>
                     )}
-                    <Button size="icon" variant="ghost" aria-label={`Delete ${step.title}`}
+                    <button aria-label={`Delete ${step.title}`}
+                      onMouseDown={e => e.stopPropagation()}
                       onClick={e => { e.stopPropagation(); delNode(step.id) }}
-                      className="absolute right-1.5 top-1.5 h-6 w-6 text-white/15 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-all">
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
+                      className="absolute right-1 top-1 h-6 w-6 flex items-center justify-center text-white/20 hover:text-rose-400 hover:bg-rose-500/10 rounded-full transition-all group/del z-30">
+                      <X className="h-3.5 w-3.5" />
+                    </button>
                   </div>
                   {/* input port */}
-                  <button aria-label="Input connection port" onMouseUp={e => { e.stopPropagation(); finishConn(step.id) }}
+                  <button aria-label="Input connection port" 
+                    onMouseDown={e => e.stopPropagation()}
+                    onMouseUp={e => { e.stopPropagation(); finishConn(step.id) }}
                     className="absolute -left-2.5 top-[50px] h-5 w-5 rounded-full border-2 border-[#0b0d14] bg-white/15 hover:bg-white/40 transition-all ring-1 ring-transparent hover:ring-white/20 z-20" />
                   {/* output port(s) */}
                   {(step.type === 'condition' || step.type === 'ai_reply') ? (
                     <>
-                      <button aria-label={step.type === 'ai_reply' ? "Success output" : "True branch output"} onMouseDown={e => startConn(e, step.id, 'main')} className={`absolute -right-2.5 top-[32px] h-5 w-5 rounded-full border-2 border-[#0b0d14] ${c.dot} hover:brightness-125 transition-all ring-1 ring-transparent hover:ring-violet-400/40 z-20`} />
-                      <button aria-label={step.type === 'ai_reply' ? "Error/Fallback output" : "False branch output"} onMouseDown={e => startConn(e, step.id, 'fallback')} className={`absolute -right-2.5 top-[82px] h-5 w-5 rounded-full border-2 border-[#0b0d14] ${step.type === 'ai_reply' ? 'bg-indigo-400/60' : 'bg-amber-500'} hover:brightness-125 transition-all ring-1 ring-transparent hover:ring-amber-400/40 z-20`} />
+                      <button aria-label={step.type === 'ai_reply' ? "Success output" : "True branch output"} 
+                        onMouseDown={e => { e.stopPropagation(); startConn(e, step.id, 'main') }} 
+                        className={`absolute -right-2.5 top-[32px] h-5 w-5 rounded-full border-2 border-[#0b0d14] ${c.dot} hover:brightness-125 transition-all ring-1 ring-transparent hover:ring-violet-400/40 z-20`} />
+                      <button aria-label={step.type === 'ai_reply' ? "Error/Fallback output" : "False branch output"} 
+                        onMouseDown={e => { e.stopPropagation(); startConn(e, step.id, 'fallback') }} 
+                        className={`absolute -right-2.5 top-[82px] h-5 w-5 rounded-full border-2 border-[#0b0d14] ${step.type === 'ai_reply' ? 'bg-indigo-400/60' : 'bg-amber-500'} hover:brightness-125 transition-all ring-1 ring-transparent hover:ring-amber-400/40 z-20`} />
                     </>
                   ) : step.type === 'interactive' ? (
                     <>
                       {(step.options || []).map((opt, idx) => {
                         const topOff = 122 + (idx * 32);
-                        return <button key={opt.id} aria-label={`Option: ${opt.label}`} onMouseDown={e => startConn(e, step.id, opt.id)} className={`absolute -right-2.5 h-5 w-5 rounded-full border-2 border-[#0b0d14] ${c.dot} hover:brightness-125 transition-all ring-1 ring-transparent hover:ring-fuchsia-400/40 z-20`} style={{ top: topOff }} />
+                        return <button key={opt.id} aria-label={`Option: ${opt.label}`} 
+                          onMouseDown={e => { e.stopPropagation(); startConn(e, step.id, opt.id) }} 
+                          className={`absolute -right-2.5 h-5 w-5 rounded-full border-2 border-[#0b0d14] ${c.dot} hover:brightness-125 transition-all ring-1 ring-transparent hover:ring-fuchsia-400/40 z-20`} style={{ top: topOff }} />
                       })}
                     </>
                   ) : (
-                    <button aria-label="Output connection port" onMouseDown={e => startConn(e, step.id, 'main')} className={`absolute -right-2.5 top-[50px] h-5 w-5 rounded-full border-2 border-[#0b0d14] ${c.dot} hover:brightness-125 transition-all ring-1 ring-transparent hover:ring-violet-400/40 z-20`} />
+                    <button aria-label="Output connection port" 
+                      onMouseDown={e => { e.stopPropagation(); startConn(e, step.id, 'main') }} 
+                      className={`absolute -right-2.5 top-[50px] h-5 w-5 rounded-full border-2 border-[#0b0d14] ${c.dot} hover:brightness-125 transition-all ring-1 ring-transparent hover:ring-violet-400/40 z-20`} />
                   )}
                 </div>
               )
