@@ -1357,6 +1357,7 @@ export function AutomationStudio() {
                           strokeWidth="2.5" 
                           className="shadow-xl" 
                           style={{ pointerEvents: 'all' }}
+                          onMouseDown={(e) => e.stopPropagation()}
                           onClick={(e) => {
                             e.stopPropagation()
                             console.log('[Studio] Clicked X for edge:', edge.sourceId, '->', edge.targetId, 'key:', edge.key)
