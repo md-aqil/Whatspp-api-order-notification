@@ -248,7 +248,7 @@ function buildEdges(steps) {
   steps.forEach(s => {
     let outs = [{ key: 'main', label: '' }]
     if (s.type === 'condition' || s.type === 'ai_reply') outs = [{ key: 'main', label: s.type === 'ai_reply' ? 'Success' : 'Yes' }, { key: 'fallback', label: s.type === 'ai_reply' ? 'Error' : 'No' }]
-    else if (s.type === 'interactive') outs = (s.options || []).map((opt, i) => ({ key: `opt${i}`, label: '' }))
+    else if (s.type === 'interactive') outs = (s.options || []).map((opt) => ({ key: opt.id, label: '' }))
     outs.forEach(({ key, label }) => { const tid = s.connections?.[key]; if (tid && tid !== 'DISCONNECTED' && m.has(tid)) edges.push({ id: `${s.id}-${key}`, sourceId: s.id, targetId: tid, key, label }) })
   }); return edges
 }
@@ -261,7 +261,8 @@ function outPt(s, key) {
   }
   // Interactive menu option offsets
   if (s.type === 'interactive') {
-    const idx = parseInt(key.replace('opt', ''), 10)
+    const idx = (s.options || []).findIndex(o => o.id === key)
+    if (idx === -1) return { x, y: s.position.y + 132 }
     return { x, y: s.position.y + 132 + (idx * 32) } // Base 120px + 12px center
   }
   // Default output (centered with the input port for straight lines)
@@ -1456,7 +1457,7 @@ export function AutomationStudio() {
                     <>
                       {(step.options || []).map((opt, idx) => {
                         const topOff = 122 + (idx * 32);
-                        return <button key={idx} aria-label={`Option: ${opt.label}`} onMouseDown={e => startConn(e, step.id, `opt${idx}`)} className={`absolute -right-2.5 h-5 w-5 rounded-full border-2 border-[#0b0d14] ${c.dot} hover:brightness-125 transition-all ring-1 ring-transparent hover:ring-fuchsia-400/40 z-20`} style={{ top: topOff }} />
+                        return <button key={opt.id} aria-label={`Option: ${opt.label}`} onMouseDown={e => startConn(e, step.id, opt.id)} className={`absolute -right-2.5 h-5 w-5 rounded-full border-2 border-[#0b0d14] ${c.dot} hover:brightness-125 transition-all ring-1 ring-transparent hover:ring-fuchsia-400/40 z-20`} style={{ top: topOff }} />
                       })}
                     </>
                   ) : (
