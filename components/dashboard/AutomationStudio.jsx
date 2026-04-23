@@ -786,8 +786,25 @@ export function AutomationStudio() {
     setSelId(nxt.id); setNewId(nxt.id); setTimeout(() => setNewId(null), 500)
   }
   function delNode(id) {
-    if (!active || active.steps.length <= 1) return
-    updAuto(active.id, a => ({ ...a, steps: a.steps.filter(s => s.id !== id).map(s => ({ ...s, connections: Object.fromEntries(Object.entries(s.connections || {}).map(([k, v]) => [k, v === id ? '' : v])) })) }))
+    if (!active) return;
+    if (active.steps.length <= 1) {
+      toast.error('Cannot delete the last node in a flow');
+      return;
+    }
+    const step = active.steps.find(s => s.id === id);
+    if (step?.type === 'trigger') {
+      toast.error('The trigger node cannot be deleted');
+      return;
+    }
+    
+    updAuto(active.id, a => ({ 
+      ...a, 
+      steps: a.steps.filter(s => s.id !== id).map(s => ({ 
+        ...s, 
+        connections: Object.fromEntries(Object.entries(s.connections || {}).map(([k, v]) => [k, v === id ? '' : v])) 
+      })) 
+    }));
+    toast.success('Node removed');
   }
   function promoteActiveFlowToDefault() {
     if (!active || activeDef) return
@@ -1444,11 +1461,18 @@ export function AutomationStudio() {
                         )}
                       </>
                     )}
-                    <button aria-label={`Delete ${step.title}`}
-                      onMouseDown={e => e.stopPropagation()}
-                      onClick={e => { e.stopPropagation(); delNode(step.id) }}
-                      className="absolute right-1 top-1 h-6 w-6 flex items-center justify-center text-white/20 hover:text-rose-400 hover:bg-rose-500/10 rounded-full transition-all group/del z-30">
-                      <X className="h-3.5 w-3.5" />
+                    <button 
+                      aria-label={`Delete ${step.title}`}
+                      onMouseDown={e => {
+                        e.stopPropagation();
+                      }}
+                      onClick={e => { 
+                        e.stopPropagation(); 
+                        console.log('[Studio] Deleting node:', step.id);
+                        delNode(step.id);
+                      }}
+                      className="absolute -right-2 -top-2 h-7 w-7 flex items-center justify-center bg-[#1a1d2d] border border-white/10 text-white/40 hover:text-rose-400 hover:border-rose-500/30 rounded-full shadow-xl hover:bg-rose-500/10 z-[100]">
+                      <X className="h-4 w-4" />
                     </button>
                   </div>
                   {/* input port */}
