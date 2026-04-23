@@ -1631,6 +1631,46 @@ function getNextAutomationStepId(steps, step, key = 'main') {
   return '';
 }
 
+/**
+ * Defensive Routing: Robustly matches an interactive button/list choice to a next step.
+ * Uses multiple fallback layers: Direct ID -> Precise Title -> Normalized Title -> Index Fallback.
+ */
+function resolveInteractiveBranch(step, chosenId, chosenTitle) {
+  if (!step || !step.connections) return '';
+  
+  // 1. Precise ID Match (The Gold Standard)
+  if (chosenId && step.connections[chosenId]) return step.connections[chosenId];
+  
+  // 2. Precise Title Match
+  if (chosenTitle && step.connections[chosenTitle]) return step.connections[chosenTitle];
+  
+  // 3. Normalized Title Match (Case-insensitive, trimmed)
+  const cleanTitle = (chosenTitle || '').trim().toLowerCase().replace(/^✅\s*/, '');
+  if (cleanTitle) {
+    for (const [key, target] of Object.entries(step.connections)) {
+      if (key.trim().toLowerCase() === cleanTitle) return target;
+    }
+    // Also check if any option label matches this title, and use that option's ID
+    if (Array.isArray(step.options)) {
+      const matchingOpt = step.options.find(o => (o.label || '').trim().toLowerCase() === cleanTitle);
+      if (matchingOpt && step.connections[matchingOpt.id]) return step.connections[matchingOpt.id];
+    }
+  }
+
+  // 4. Index-based Fallback (For legacy data or out-of-sync 'opt0' labels)
+  const optMatch = (chosenId || '').match(/^opt(\d+)$/);
+  if (optMatch && Array.isArray(step.options)) {
+    const idx = parseInt(optMatch[1]);
+    const optionAtIdx = step.options[idx];
+    if (optionAtIdx && optionAtIdx.id && step.connections[optionAtIdx.id]) {
+      console.log(`[Defensive Routing] Index fallback matched: idx=${idx}, optId=${optionAtIdx.id}`);
+      return step.connections[optionAtIdx.id];
+    }
+  }
+
+  return '';
+}
+
 function matchesCondition(rule, context) {
   if (!rule) return true
   const trimmed = rule.trim()
@@ -1851,17 +1891,14 @@ async function executeAutomationsForEvent(eventType, context, integrations, user
         const lastStep = steps.find(s => s.id === conversationState.awaitingInteractiveStepId)
         console.log(`[executeAutomationsForEvent] Awaiting step found: id=${lastStep?.id}, type=${lastStep?.type}`)
         
-        // Try matching by ID first, then by the Title/Label of the button
+        // Try the new Defensive Routing
         const rawTitle = context.customer_message || ''
-        const cleanTitle = rawTitle.replace(/^✅\s*/, '')
-        const branchTarget = lastStep?.connections?.[context._chosenOptionId] || 
-                            lastStep?.connections?.[rawTitle] ||
-                            lastStep?.connections?.[cleanTitle]
+        const branchTarget = resolveInteractiveBranch(lastStep, context._chosenOptionId, rawTitle)
         
         if (branchTarget) {
           currentStepId = branchTarget
           isReplyingToMenu = true
-          console.log(`[executeAutomationsForEvent] FOUND BRANCH: id=${context._chosenOptionId}, title="${rawTitle}", clean="${cleanTitle}" -> target=${currentStepId}`)
+          console.log(`[executeAutomationsForEvent] FOUND BRANCH (Defensive): id=${context._chosenOptionId}, title="${rawTitle}" -> target=${currentStepId}`)
           
           // Clear the awaiting state
           conversationState = await saveAutomationConversationState(
@@ -2249,16 +2286,12 @@ async function executeAutomationsForEvent(eventType, context, integrations, user
           context._isInteractiveReply &&
           conversationState?.awaitingInteractiveStepId === step.id
         ) {
-          const chosenKey = context._chosenOptionId   // 'opt0', 'opt1', ...
+          const chosenId = context._chosenOptionId
           const rawTitle = context.customer_message || ''
-          const cleanTitle = rawTitle.replace(/^✅\s*/, '')
-          
-          const nextId = step.connections?.[chosenKey] || 
-                         step.connections?.[rawTitle] ||
-                         step.connections?.[cleanTitle] || ''
+          const nextId = resolveInteractiveBranch(step, chosenId, rawTitle)
           
           if (nextId) {
-            console.log(`[Interactive Step] Local jump successful: ${chosenKey}/${rawTitle} -> ${nextId}`)
+            console.log(`[Interactive Step] Local jump successful (Defensive): ${chosenId}/${rawTitle} -> ${nextId}`)
             // Clear awaiting state and follow the chosen branch
             conversationState = await saveAutomationConversationState(
               automation.id, conversationRecipient, conversationState,
