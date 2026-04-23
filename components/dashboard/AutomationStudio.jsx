@@ -739,7 +739,17 @@ export function AutomationStudio() {
     const fallbackPosition = sel?.position
       ? { x: sel.position.x + 340, y: sel.position.y + (connectHint === 'fallback' ? 140 : 0) }
       : { x: Math.round(200 + Math.random() * 300), y: Math.round(200 + Math.random() * 200) }
-    const baseStep = { id: uid('step'), type: bl.type, ...bl.defaults, position: pt || fallbackPosition }
+    const baseStep = { 
+      id: uid('step'), 
+      type: bl.type, 
+      ...Object.fromEntries(
+        Object.entries(bl.defaults || {}).map(([k, v]) => [
+          k, 
+          Array.isArray(v) ? v.map(item => typeof item === 'object' ? { ...item } : item) : v
+        ])
+      ),
+      position: pt || fallbackPosition 
+    }
     const ns = applyDefaultTemplateToMessageStep(baseStep, templates, activeTriggerEvent)
     const nxt = normalize({ ...active, steps: [...active.steps, ns] }).steps.at(-1)
     updAuto(active.id, a => {
@@ -1221,7 +1231,7 @@ export function AutomationStudio() {
           <div className="absolute bottom-3 right-3 z-20 px-2 py-0.5 rounded-md bg-white/[0.05] border border-white/[0.06] text-[10px] text-white/30 font-mono" aria-live="polite">{Math.round(tr.scale * 100)}%</div>
           {/* Canvas inner (transformed) */}
           <div ref={canvasRef} style={{ transform: `translate(${tr.x}px,${tr.y}px) scale(${tr.scale})`, transformOrigin: 'top left', width: bnd.width, height: bnd.height, position: 'relative' }}>
-            <svg className="pointer-events-none absolute inset-0" style={{ width: bnd.width, height: bnd.height }} aria-hidden="true">
+            <svg className="absolute inset-0" style={{ width: bnd.width, height: bnd.height }} aria-hidden="true">
               <defs>
                 <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
                   <feGaussianBlur stdDeviation="3" result="b" />
@@ -1248,34 +1258,37 @@ export function AutomationStudio() {
                 const midY = (f.y + t.y) / 2
 
                 return (
-                  <g key={edge.id} className="group/edge">
-                    {/* Wider invisible hit area for easier hovering */}
-                    <path d={d} fill="none" stroke="transparent" strokeWidth="24" strokeLinecap="round" className="cursor-pointer" />
-                    <path d={d} fill="none" stroke={col} strokeOpacity="0.15" strokeWidth="12" strokeLinecap="round" className="pointer-events-none" />
-                    <path d={d} fill="none" stroke={col} strokeOpacity="0.9" strokeWidth="2.5" strokeLinecap="round" markerEnd={isAlt ? 'url(#arr-alt)' : 'url(#arr-main)'} filter="url(#glow)" className="edge-path pointer-events-none" />
-                    {edge.label && (
-                      <text x={midX} y={midY - 12} fill={col} textAnchor="middle" fontSize="10" fontVariant="all-small-caps" fontWeight="800" className="drop-shadow-sm pointer-events-none">
-                        {edge.label}
-                      </text>
-                    )}
-                    
-                    {/* Disconnect Button */}
-                    <g 
-                      transform={`translate(${Math.round(midX)}, ${Math.round(midY)})`}
-                      className="opacity-0 group-hover/edge:opacity-100 transition-all duration-200 cursor-pointer pointer-events-auto hover:scale-110"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        disconnectEdge(active.id, edge.sourceId, edge.key, updAuto)
-                      }}
-                    >
-                      <circle r="10" fill="#0b0d14" stroke={col} strokeWidth="2" className="shadow-lg" />
-                      <g stroke={col} strokeWidth="2" strokeLinecap="round" opacity="0.8">
-                        <line x1="-3.5" y1="-3.5" x2="3.5" y2="3.5" />
-                        <line x1="3.5" y1="-3.5" x2="-3.5" y2="3.5" />
+                    <g key={edge.id} className="group/edge pointer-events-none">
+                      {/* Wider invisible hit area for easier hovering */}
+                      <path d={d} fill="none" stroke="transparent" strokeWidth="30" strokeLinecap="round" className="cursor-pointer pointer-events-auto" />
+                      
+                      {/* Decorative paths */}
+                      <path d={d} fill="none" stroke={col} strokeOpacity="0.15" strokeWidth="12" strokeLinecap="round" />
+                      <path d={d} fill="none" stroke={col} strokeOpacity="0.9" strokeWidth="2.5" strokeLinecap="round" markerEnd={isAlt ? 'url(#arr-alt)' : 'url(#arr-main)'} filter="url(#glow)" className="edge-path" />
+                      
+                      {edge.label && (
+                        <text x={midX} y={midY - 12} fill={col} textAnchor="middle" fontSize="10" fontVariant="all-small-caps" fontWeight="800" className="drop-shadow-sm">
+                          {edge.label}
+                        </text>
+                      )}
+                      
+                      {/* Disconnect Button */}
+                      <g 
+                        transform={`translate(${Math.round(midX)}, ${Math.round(midY)})`}
+                        className="opacity-40 group-hover/edge:opacity-100 transition-all duration-200 cursor-pointer pointer-events-auto hover:scale-125"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          disconnectEdge(active.id, edge.sourceId, edge.key, updAuto)
+                        }}
+                      >
+                        <circle r="11" fill="#0b0d14" stroke={col} strokeWidth="2.5" className="shadow-xl" />
+                        <g stroke="white" strokeWidth="2.5" strokeLinecap="round" opacity="0.9">
+                          <line x1="-3.5" y1="-3.5" x2="3.5" y2="3.5" />
+                          <line x1="3.5" y1="-3.5" x2="-3.5" y2="3.5" />
+                        </g>
+                        <title>Remove Connection</title>
                       </g>
-                      <title>Remove Connection</title>
                     </g>
-                  </g>
                 )
               })}
               {conn && (() => {
@@ -1833,9 +1846,9 @@ export function AutomationStudio() {
                         {(sel.options || []).map((opt, idx) => (
                           <div key={idx} className="flex gap-2 items-center bg-white/[0.02] p-1.5 rounded-lg border border-white/[0.05]">
                             <Input value={opt.label || ''} onChange={e => {
-                               const newOpts = [...(sel.options || [])];
-                               newOpts[idx].label = e.target.value;
-                               updStep({ options: newOpts });
+                               updStep({ 
+                                  options: (sel.options || []).map((o, i) => i === idx ? { ...o, label: e.target.value } : o) 
+                                });
                             }} className={`${inputCls} flex-1`} placeholder={`Option ${idx + 1}`} />
                             <Button variant="ghost" size="icon" className="h-8 w-8 text-white/40 hover:text-rose-400 bg-rose-500/5 hover:bg-rose-500/20" onClick={() => {
                                const newOpts = (sel.options || []).filter((_, i) => i !== idx);
