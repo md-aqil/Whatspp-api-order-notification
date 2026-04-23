@@ -220,11 +220,16 @@ function mapStep(step, i, arr) {
       : [],
     variableMappings: Array.isArray(step.variableMappings) ? step.variableMappings : [],
     options: step.type === 'interactive' ? (Array.isArray(step.options) ? step.options : [{ id: 'opt0', label: 'Check Order Status' }, { id: 'opt1', label: 'Talk to Support' }]) : undefined,
-    connections: (step.type === 'condition' || step.type === 'ai_reply') 
-      ? { main: (ex.main && ex.main !== 'DISCONNECTED') ? ex.main : (ex.main === 'DISCONNECTED' ? 'DISCONNECTED' : ''), fallback: ex.fallback ?? '' } 
-      : step.type === 'interactive' 
-        ? Object.fromEntries((step.options || [{id:'opt0'}, {id:'opt1'}]).map((o) => [o.id, ex[o.id] || ''])) 
-        : { main: (ex.main && ex.main !== 'DISCONNECTED') ? ex.main : (ex.main === 'DISCONNECTED' ? 'DISCONNECTED' : '') }
+    connections: (() => {
+      const validate = (tid) => (tid && tid !== 'DISCONNECTED' && arr.some(n => n.id === tid)) ? tid : (tid === 'DISCONNECTED' ? 'DISCONNECTED' : '');
+      if (step.type === 'condition' || step.type === 'ai_reply') {
+        return { main: validate(ex.main), fallback: validate(ex.fallback) };
+      } else if (step.type === 'interactive') {
+        return Object.fromEntries((step.options || []).map(o => [o.id, validate(ex[o.id])]));
+      } else {
+        return { main: validate(ex.main) };
+      }
+    })()
   }
 }
 const normalize = a => ({ ...a, metrics: a?.metrics || { sent: 0, openRate: 0, conversions: 0 }, steps: (Array.isArray(a?.steps) ? a.steps : []).map((s, i, arr) => mapStep(s, i, arr)) })
