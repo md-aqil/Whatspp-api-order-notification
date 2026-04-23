@@ -72,6 +72,51 @@ async function query(sql, params = []) {
   return getMysqlPool().execute(sql, params)
 }
 
+async function ensureKnowledgeBaseTable() {
+  try {
+    const pool = getMysqlPool()
+    if (!pool) return
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS knowledge_base (
+        id VARCHAR(255) PRIMARY KEY,
+        userId VARCHAR(255) NOT NULL,
+        title VARCHAR(255),
+        content TEXT NOT NULL,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_kb_user (userId)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `)
+  } catch (error) {
+    console.error('Failed to ensure knowledge_base table:', error.message)
+  }
+}
+
+async function ensureAutomationJobsTable() {
+  try {
+    const pool = getMysqlPool()
+    if (!pool) return
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS automation_jobs (
+        id VARCHAR(255) PRIMARY KEY,
+        automationId VARCHAR(255) NOT NULL,
+        userId VARCHAR(255) NOT NULL DEFAULT 'default',
+        recipient VARCHAR(255) NOT NULL,
+        message TEXT,
+        template TEXT,
+        payload JSON,
+        status VARCHAR(50) DEFAULT 'pending',
+        runAt DATETIME,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_jobs_status_run (status, runAt),
+        INDEX idx_jobs_user (userId)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `)
+  } catch (error) {
+    console.error('Failed to ensure automation_jobs table:', error.message)
+  }
+}
+
 async function ensureAutomationConversationStateTable() {
   if (!automationConversationStateReadyPromise) {
     automationConversationStateReadyPromise = (async () => {
@@ -386,6 +431,21 @@ async function saveStoredIntegration(type, data, userId = 'default') {
         `UPDATE integrations SET ${column} = ?, updatedAt = NOW() WHERE id = ?`,
         [JSON.stringify(data), existing[0][0].id]
       )
+      
+      // Keep whatsapp_accounts mapping in sync for fast lookup in webhooks
+      if (type === 'whatsapp' && data.phoneNumberId) {
+        try {
+          await pool.execute(
+            `INSERT INTO whatsapp_accounts (id, userId, accountName, phoneNumberId, accessToken, businessAccountId, phoneNumber, createdAt, updatedAt) 
+             VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+             ON DUPLICATE KEY UPDATE accountName = VALUES(accountName), phoneNumberId = VALUES(phoneNumberId), accessToken = VALUES(accessToken), businessAccountId = VALUES(businessAccountId), updatedAt = NOW()`,
+            [`wa_${data.phoneNumberId}`, String(userId || 'default'), data.accountName || 'Primary Account', data.phoneNumberId, data.accessToken, data.businessAccountId, data.phoneNumber || '']
+          )
+        } catch (waErr) {
+          console.error('Failed to sync whatsapp_accounts:', waErr.message)
+        }
+      }
+
       await saveLocalIntegrationRecord(type, data)
       return
     }
@@ -398,6 +458,20 @@ async function saveStoredIntegration(type, data, userId = 'default') {
       : `INSERT INTO integrations (userId, stripe, createdAt, updatedAt) VALUES (?, ?, NOW(), NOW())`
     
     await pool.execute(insertSql, [String(userId || 'default'), JSON.stringify(data)])
+
+    // Keep whatsapp_accounts mapping in sync for fast lookup in webhooks
+    if (type === 'whatsapp' && data.phoneNumberId) {
+      try {
+        await pool.execute(
+          `INSERT INTO whatsapp_accounts (id, userId, accountName, phoneNumberId, accessToken, businessAccountId, phoneNumber, createdAt, updatedAt) 
+           VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+           ON DUPLICATE KEY UPDATE accountName = VALUES(accountName), phoneNumberId = VALUES(phoneNumberId), accessToken = VALUES(accessToken), businessAccountId = VALUES(businessAccountId), updatedAt = NOW()`,
+          [`wa_${data.phoneNumberId}`, String(userId || 'default'), data.accountName || 'Primary Account', data.phoneNumberId, data.accessToken, data.businessAccountId, data.phoneNumber || '']
+        )
+      } catch (waErr) {
+        console.error('Failed to sync whatsapp_accounts:', waErr.message)
+      }
+    }
 
     await saveLocalIntegrationRecord(type, data)
   } catch (error) {
@@ -454,42 +528,27 @@ async function getUserIdByWhatsAppPhoneNumberId(phoneNumberId) {
     const pool = getMysqlPool()
 
     const [accountRows] = await pool.execute(
-      `SELECT userId
-       FROM whatsapp_accounts
-       WHERE phoneNumberId = ?
-       ORDER BY updatedAt DESC, createdAt DESC
-       LIMIT 1`,
+      `SELECT userId FROM whatsapp_accounts WHERE phoneNumberId = ? ORDER BY updatedAt DESC LIMIT 1`,
       [normalizedId]
     )
 
-    if (accountRows[0]?.userId) {
-      return String(accountRows[0].userId)
+    if (accountRows[0]) {
+      return accountRows[0].userId
     }
 
-    const [integrationRows] = await pool.execute(
-      `SELECT userId
-       FROM integrations
-       WHERE JSON_UNQUOTE(JSON_EXTRACT(whatsapp, '$.phoneNumberId')) = ?
-       ORDER BY updatedAt DESC, createdAt DESC, id DESC
-       LIMIT 1`,
-      [normalizedId]
-    )
-
-    if (integrationRows[0]?.userId) {
-      return String(integrationRows[0].userId)
+    // Fallback: Check integrations table directly
+    const [integrationRows] = await pool.execute('SELECT userId, whatsapp FROM integrations')
+    for (const row of integrationRows) {
+      const wa = typeof row.whatsapp === 'string' ? JSON.parse(row.whatsapp) : row.whatsapp
+      if (wa?.phoneNumberId === normalizedId) {
+        return row.userId
+      }
     }
   } catch (error) {
     console.error('[getUserIdByWhatsAppPhoneNumberId] Error:', error.message)
   }
 
-    // Fallback if no specific user integration found for this phone ID
-    // Check if there is a 'default' integration as last resort
-    const [defaultRow] = await pool.execute(
-      "SELECT userId FROM integrations WHERE userId = 'default' LIMIT 1"
-    )
-    if (defaultRow[0]?.userId) return 'default'
-
-    return 'default'
+  return 'default'
 }
 
 async function ensureAutomationsTable() {
@@ -533,6 +592,7 @@ async function ensureAutomationsTable() {
     // Index already exists.
   }
 }
+
 
 async function seedDefaultAutomationsForUser(userId) {
   const { defaultAutomations } = await import('@/lib/automation-defaults')
@@ -1615,7 +1675,7 @@ function buildIncomingWhatsAppAutomationContext(messageData, savedMessage, conta
     customer_name: displayName,
     customer_phone: messageData?.from || savedMessage?.recipient || '',
     customerPhone: messageData?.from || savedMessage?.recipient || '',
-    customer_message: textBody || chosenButtonTitle,
+    customer_message: messageData?.text?.body || chosenButtonTitle || savedMessage?.message || '',
     financial_status: '',
     order_number: '',
     tracking_number: '',
@@ -1791,12 +1851,16 @@ async function executeAutomationsForEvent(eventType, context, integrations, user
         console.log(`[executeAutomationsForEvent] Awaiting step found: id=${lastStep?.id}, type=${lastStep?.type}`)
         
         // Try matching by ID first, then by the Title/Label of the button
-        const branchTarget = lastStep?.connections?.[context._chosenOptionId] || lastStep?.connections?.[context.customer_message]
+        const rawTitle = context.customer_message || ''
+        const cleanTitle = rawTitle.replace(/^✅\s*/, '')
+        const branchTarget = lastStep?.connections?.[context._chosenOptionId] || 
+                            lastStep?.connections?.[rawTitle] ||
+                            lastStep?.connections?.[cleanTitle]
         
         if (branchTarget) {
           currentStepId = branchTarget
           isReplyingToMenu = true
-          console.log(`[executeAutomationsForEvent] FOUND BRANCH: ${context._chosenOptionId}/${context.customer_message} -> ${currentStepId}`)
+          console.log(`[executeAutomationsForEvent] FOUND BRANCH: id=${context._chosenOptionId}, title="${rawTitle}", clean="${cleanTitle}" -> target=${currentStepId}`)
           
           // CRITICAL: Clear the awaiting state immediately so it doesn't stay "stuck"
           conversationState = await saveAutomationConversationState(
@@ -1881,24 +1945,25 @@ async function executeAutomationsForEvent(eventType, context, integrations, user
         console.log(`[AI Reply] Found KB entries: ${kbRows.length}, Total KB length: ${kbContent.length}`);
         const businessName = integrations.whatsapp?.name || "Our Business";
 
-        // Generate AI Response with Fallback support
+        // Fetch recent conversation history for better AI context
+        const recentMessages = await getStoredMessagesByPhone(recipient, userId);
+        const lastFewMessages = recentMessages.slice(-8); // Get last 8 messages for context
+
+        // Generate AI Response with History and Fallback support
         let aiBody = "";
         try {
-          aiBody = await generateAIResponse(messageText, kbContent, businessName);
+          aiBody = await generateAIResponse(messageText, kbContent, businessName, lastFewMessages);
           
           // Split into multiple messages for a human-like feel
           const parts = aiBody.split(/\n\n+/).filter(p => p.trim().length > 0);
           
           console.log(`[AI Reply] Splitting response into ${parts.length} messages`);
 
-          for (let i = 0; i < parts.length; i++) {
-            const part = parts[i];
+          for (const part of parts) {
             
             // Small delay between messages to simulate "typing"
-            if (i > 0) {
-              const delayMs = Math.min(2500, 800 + (part.length * 15)); 
-              await sleep(delayMs);
-            }
+            const delayMs = Math.min(2500, 800 + (part.length * 15)); 
+            await sleep(delayMs);
 
             const messageData = {
               messaging_product: 'whatsapp',
@@ -1915,6 +1980,21 @@ async function executeAutomationsForEvent(eventType, context, integrations, user
             );
 
             messagesSentInThisRun++;
+
+            // AUTOMATIC HANDOFF DETECTION
+            // If AI response suggests a handoff, update the conversation state to 'handoff'
+            const isHandoffResponse = part.toLowerCase().includes('human agent') || 
+                                     part.toLowerCase().includes('transfer') ||
+                                     part.toLowerCase().includes('wait a moment');
+
+            if (isHandoffResponse && conversationRecipient) {
+              console.log('[AI Assistant] Handoff detected in response, updating state');
+              conversationState = await saveAutomationConversationState(
+                automation.id, conversationRecipient, conversationState,
+                { state: 'handoff', handoffUntil: new Date(Date.now() + 86400000) }, // 24h handoff
+                userId
+              );
+            }
 
             await insertStoredMessage({
               id: uuidv4(),
@@ -2119,22 +2199,30 @@ async function executeAutomationsForEvent(eventType, context, integrations, user
         if (
           isIncomingWhatsAppAutomation &&
           context._isInteractiveReply &&
-          context._chosenOptionId &&
           conversationState?.awaitingInteractiveStepId === step.id
         ) {
           const chosenKey = context._chosenOptionId   // 'opt0', 'opt1', ...
-          const nextId = step.connections?.[chosenKey] || ''
-          // Clear awaiting state and follow the chosen branch
-          conversationState = await saveAutomationConversationState(
-            automation.id, conversationRecipient, conversationState,
-            { state: 'active', awaitingInteractiveStepId: null, lastInboundAt: now },
-            userId
-          )
-          // Mark that the next message must be the ONLY reply (don't chain siblings)
-          sentAfterChoice = false
-          currentStepId = nextId
-          // If nextId is another interactive step, loop will handle it. Otherwise send one msg.
-          continue
+          const rawTitle = context.customer_message || ''
+          const cleanTitle = rawTitle.replace(/^✅\s*/, '')
+          
+          const nextId = step.connections?.[chosenKey] || 
+                         step.connections?.[rawTitle] ||
+                         step.connections?.[cleanTitle] || ''
+          
+          if (nextId) {
+            console.log(`[Interactive Step] Local jump successful: ${chosenKey}/${rawTitle} -> ${nextId}`)
+            // Clear awaiting state and follow the chosen branch
+            conversationState = await saveAutomationConversationState(
+              automation.id, conversationRecipient, conversationState,
+              { state: 'active', awaitingInteractiveStepId: null, lastInboundAt: now },
+              userId
+            )
+            // Mark that the next message must be the ONLY reply (don't chain siblings)
+            sentAfterChoice = false
+            currentStepId = nextId
+            // If nextId is another interactive step, loop will handle it. Otherwise send one msg.
+            continue
+          }
         }
 
         // Otherwise – send the interactive menu and STOP waiting for choice
@@ -3460,7 +3548,9 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
     // Automations PUT handler - delegate to separate route file or handle here
     if (route === '/automations' && method === 'PUT') {
       try {
-        await ensureAutomationsTable()
+        await ensureAutomationJobsTable()
+        await ensureKnowledgeBaseTable()
+        console.log('All settings tables ensured')
         const body = await request.json()
         const automations = Array.isArray(body) ? body : body.automations
 

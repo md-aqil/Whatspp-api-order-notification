@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Sidebar } from '@/components/dashboard/Sidebar'
 import { Header } from '@/components/dashboard/Header'
+import { NotificationListener } from '@/components/dashboard/NotificationListener'
 
 export default function DashboardLayout({ children }) {
   const router = useRouter()
@@ -40,6 +41,7 @@ export default function DashboardLayout({ children }) {
 
   return (
     <div className="dashboard-shell flex h-screen bg-[var(--surface)] dark:bg-[#0b0d14]">
+      <NotificationListener />
       <Sidebar sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen} user={user} />
       <div className="flex flex-col flex-1 overflow-hidden">
         <Header setSidebarOpen={setSidebarOpen} user={user} />

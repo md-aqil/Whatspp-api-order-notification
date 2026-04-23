@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { ChatWindow } from '@/components/dashboard/ChatWindow'
 import { ChatList } from '@/components/dashboard/ChatList'
 import { Button } from '@/components/ui/button'
-import { toast, Toaster } from 'sonner'
+import { toast } from 'sonner'
 
 export default function DashboardChatPage() {
   const router = useRouter()
@@ -88,19 +88,7 @@ export default function DashboardChatPage() {
           
           // Only update if message count changed
           if (data.length !== lastMessageCountRef.current) {
-            // Check for new incoming messages for toast
-            if (lastMessageCountRef.current > 0) {
-              const newMessages = data.slice(lastMessageCountRef.current)
-              newMessages.forEach(msg => {
-                if (msg.isCustomer) {
-                  toast(`New message from ${activeChat.name}`, {
-                    description: msg.message,
-                    icon: '💬'
-                  })
-                }
-              })
-            }
-            
+            // Count is updated, ChatList will reflect unread status
             setMessages(data)
             lastMessageCountRef.current = data.length
           }
@@ -205,7 +193,6 @@ export default function DashboardChatPage() {
 
   return (
     <div className="flex h-[calc(100%+2rem)] md:h-[calc(100%+3rem)] -m-4 md:-m-6 w-[calc(100%+2rem)] md:w-[calc(100%+3rem)] overflow-hidden bg-white dark:bg-[#0b0d14]">
-      <Toaster position="top-center" richColors />
       
       {/* Sidebar */}
       <div className="w-[320px] lg:w-[380px] flex-shrink-0 z-30 border-r border-gray-100 hidden md:flex flex-col">

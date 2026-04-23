@@ -220,7 +220,7 @@ function mapStep(step, i, arr) {
       : [],
     variableMappings: Array.isArray(step.variableMappings) ? step.variableMappings : [],
     options: step.type === 'interactive' ? (Array.isArray(step.options) ? step.options : [{ id: 'opt0', label: 'Check Order Status' }, { id: 'opt1', label: 'Talk to Support' }]) : undefined,
-    connections: step.type === 'condition' ? { main: ex.main ?? nxt?.id ?? '', fallback: ex.fallback ?? '' } : step.type === 'interactive' ? Object.fromEntries((step.options || [{id:'opt0'}, {id:'opt1'}]).map((o, idx) => [`opt${idx}`, ex[`opt${idx}`] ?? ''])) : { main: ex.main ?? nxt?.id ?? '' }
+    connections: (step.type === 'condition' || step.type === 'ai_reply') ? { main: ex.main ?? nxt?.id ?? '', fallback: ex.fallback ?? '' } : step.type === 'interactive' ? Object.fromEntries((step.options || [{id:'opt0'}, {id:'opt1'}]).map((o, idx) => [`opt${idx}`, ex[`opt${idx}`] ?? ''])) : { main: ex.main ?? nxt?.id ?? '' }
   }
 }
 const normalize = a => ({ ...a, metrics: a?.metrics || { sent: 0, openRate: 0, conversions: 0 }, steps: (Array.isArray(a?.steps) ? a.steps : []).map((s, i, arr) => mapStep(s, i, arr)) })
@@ -243,7 +243,7 @@ function buildEdges(steps) {
   const m = new Map(steps.map(s => [s.id, s])); const edges = []
   steps.forEach(s => {
     let outs = [{ key: 'main', label: '' }]
-    if (s.type === 'condition') outs = [{ key: 'main', label: 'Yes' }, { key: 'fallback', label: 'No' }]
+    if (s.type === 'condition' || s.type === 'ai_reply') outs = [{ key: 'main', label: s.type === 'ai_reply' ? 'Success' : 'Yes' }, { key: 'fallback', label: s.type === 'ai_reply' ? 'Error' : 'No' }]
     else if (s.type === 'interactive') outs = (s.options || []).map((opt, i) => ({ key: `opt${i}`, label: '' }))
     outs.forEach(({ key, label }) => { const tid = s.connections?.[key]; if (tid && m.has(tid)) edges.push({ id: `${s.id}-${key}`, sourceId: s.id, targetId: tid, key, label }) })
   }); return edges
@@ -257,8 +257,8 @@ function disconnectEdge(activeId, sourceId, key, updAuto) {
 }
 function outPt(s, key) {
   const x = s.position.x + 256
-  // Condition branch offsets
-  if (s.type === 'condition') {
+  // Condition/AI branch offsets
+  if (s.type === 'condition' || s.type === 'ai_reply') {
     if (key === 'main') return { x, y: s.position.y + 42 } // Matches top-[32px] + 10px center
     if (key === 'fallback') return { x, y: s.position.y + 92 } // Matches top-[82px] + 10px center
   }
@@ -279,7 +279,7 @@ function reorder(a) {
   const steps = Array.isArray(a?.steps) ? a.steps : []; if (steps.length <= 1) return steps
   const m = new Map(steps.map(s => [s.id, s])); const vis = new Set(); const ord = []
   const trig = steps.find(s => s.type === 'trigger') || steps[0]
-  function v(id) { if (!id || vis.has(id) || !m.has(id)) return; vis.add(id); const s = m.get(id); ord.push(s); (s.type === 'condition' ? [s.connections?.main, s.connections?.fallback] : [s.connections?.main]).forEach(v) }
+  function v(id) { if (!id || vis.has(id) || !m.has(id)) return; vis.add(id); const s = m.get(id); ord.push(s); ((s.type === 'condition' || s.type === 'ai_reply') ? [s.connections?.main, s.connections?.fallback] : s.type === 'interactive' ? Object.values(s.connections || {}) : [s.connections?.main]).forEach(v) }
   v(trig.id); steps.forEach(s => v(s.id)); return ord
 }
 const bounds = steps => ({ width: Math.max(1800, ...steps.map(s => s.position.x + 450)), height: Math.max(1000, ...steps.map(s => s.position.y + 320)) })
@@ -1375,10 +1375,10 @@ export function AutomationStudio() {
                   <button aria-label="Input connection port" onMouseUp={e => { e.stopPropagation(); finishConn(step.id) }}
                     className="absolute -left-2.5 top-[50px] h-5 w-5 rounded-full border-2 border-[#0b0d14] bg-white/15 hover:bg-white/40 transition-all ring-1 ring-transparent hover:ring-white/20 z-20" />
                   {/* output port(s) */}
-                  {step.type === 'condition' ? (
+                  {(step.type === 'condition' || step.type === 'ai_reply') ? (
                     <>
-                      <button aria-label="True branch output" onMouseDown={e => startConn(e, step.id, 'main')} className={`absolute -right-2.5 top-[32px] h-5 w-5 rounded-full border-2 border-[#0b0d14] ${c.dot} hover:brightness-125 transition-all ring-1 ring-transparent hover:ring-violet-400/40 z-20`} />
-                      <button aria-label="False branch output" onMouseDown={e => startConn(e, step.id, 'fallback')} className="absolute -right-2.5 top-[82px] h-5 w-5 rounded-full border-2 border-[#0b0d14] bg-amber-500 hover:brightness-125 transition-all ring-1 ring-transparent hover:ring-amber-400/40 z-20" />
+                      <button aria-label={step.type === 'ai_reply' ? "Success output" : "True branch output"} onMouseDown={e => startConn(e, step.id, 'main')} className={`absolute -right-2.5 top-[32px] h-5 w-5 rounded-full border-2 border-[#0b0d14] ${c.dot} hover:brightness-125 transition-all ring-1 ring-transparent hover:ring-violet-400/40 z-20`} />
+                      <button aria-label={step.type === 'ai_reply' ? "Error/Fallback output" : "False branch output"} onMouseDown={e => startConn(e, step.id, 'fallback')} className={`absolute -right-2.5 top-[82px] h-5 w-5 rounded-full border-2 border-[#0b0d14] ${step.type === 'ai_reply' ? 'bg-indigo-400/60' : 'bg-amber-500'} hover:brightness-125 transition-all ring-1 ring-transparent hover:ring-amber-400/40 z-20`} />
                     </>
                   ) : step.type === 'interactive' ? (
                     <>
