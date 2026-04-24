@@ -37,7 +37,7 @@ echo ""
 
 # Start Next.js in background
 echo "Starting Next.js..."
-NODE_OPTIONS="--max-old-space-size=512" npx next dev --hostname 0.0.0.0 --port 3000 &
+NODE_OPTIONS="--max-old-space-size=1024" npx next dev --hostname 0.0.0.0 --port 3000 &
 NEXT_PID=$!
 
 # Wait for Next.js to start

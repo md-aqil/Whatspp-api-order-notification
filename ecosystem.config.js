@@ -7,14 +7,15 @@ module.exports = {
       instances: 1,
       autorestart: true,
       watch: false,
-      max_memory_restart: '512M',
+      max_memory_restart: '1G',
       env: {
         NODE_ENV: 'production',
         PORT: 3000,
       },
-      error_file: '/var/log/pm2/whatsapp-commerce-hub-error.log',
-      out_file: '/var/log/pm2/whatsapp-commerce-hub-out.log',
+      error_file: './logs/error.log',
+      out_file: './logs/out.log',
       merge_logs: true,
     },
   ],
 };
+

@@ -28,8 +28,9 @@ const WHATSAPP_SUPPORT_HANDOFF_MS = 2 * 60 * 60 * 1000
 const WHATSAPP_MENU_STEP_IDS = new Set(['step-message-4', 'step-message-6'])
 const WHATSAPP_SUPPORT_STEP_IDS = new Set(['step-message-11'])
 
+
 function getMysqlPool() {
-  if (globalThis.mysqlPoolRoute) return globalThis.mysqlPoolRoute
+  if (globalThis.mysqlPool) return globalThis.mysqlPool
 
   if (!mysqlPool) {
     const connectionString = process.env.DATABASE_URL || process.env.DB_URL
@@ -52,7 +53,7 @@ function getMysqlPool() {
         ...poolConfig
       })
     }
-    globalThis.mysqlPoolRoute = mysqlPool
+    globalThis.mysqlPool = mysqlPool
   }
 
   return mysqlPool
@@ -2859,8 +2860,11 @@ async function handleRoute(request, { params }) {
         status: "ready"
       }))
     }
-
-    await processDueAutomationJobs()
+    // Run background jobs without blocking the main request
+    // This prevents 502/timeouts on slow DB operations
+    if (method === 'GET' || route.includes('webhook')) {
+      processDueAutomationJobs().catch(err => console.error('Background job error:', err))
+    }
 
     // Root endpoint
     if (route === '/' && method === 'GET') {

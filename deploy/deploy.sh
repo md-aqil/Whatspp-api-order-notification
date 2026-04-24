@@ -11,22 +11,22 @@ echo "[1/6] Pulling latest code..."
 cd "$APP_DIR"
 git pull origin main
 
-# Install dependencies
+# Install dependencies (need devDeps for build)
 echo "[2/6] Installing dependencies..."
-npm ci --production
+npm install
 
 # Build
 echo "[3/6] Building..."
 npm run build
 
-# Clean old static files before copying new ones
-echo "[4/6] Cleaning old static files..."
-rm -rf "$APP_DIR/.next/static"
-rm -rf "$APP_DIR/public"
-
-# Copy standalone output
-echo "[5/6] Preparing standalone output..."
+# Copy standalone output (DO THIS BEFORE CLEANING)
+echo "[4/6] Preparing standalone output..."
 node scripts/prepare-standalone.js
+
+# Clean old static files from the ROOT (optional, but standalone now has its own copies)
+# We should keep the root public folder as it's a source folder
+echo "[5/6] Cleaning build artifacts..."
+rm -rf "$APP_DIR/.next/cache"
 
 # Restart app with PM2
 echo "[6/6] Restarting app..."
@@ -35,3 +35,4 @@ pm2 restart "$APP_NAME" || pm2 start ecosystem.config.js
 echo "=== Deployment complete! ==="
 echo "App running on port 3000"
 pm2 status
+
