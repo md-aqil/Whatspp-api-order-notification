@@ -141,27 +141,20 @@ async function ensureAutomationConversationStateTable() {
         );
       `)
       
-      // Migration: Ensure new column exists for existing tables
+      // Migration: Ensure awaitingInteractiveStepId column exists
       try {
-        await getMysqlPool().query(`
-          ALTER TABLE automation_conversation_state 
-          ADD COLUMN IF NOT EXISTS awaitingInteractiveStepId VARCHAR(255) DEFAULT NULL 
-          AFTER handoffUntil
-        `)
-      } catch (colErr) {
-        // MariaDB/MySQL doesn't always support ADD COLUMN IF NOT EXISTS without specific plugins
-        if (!colErr.message.includes('Duplicate column name')) {
-          console.warn('[DB Migration] Notice:', colErr.message)
+        const [columns] = await getMysqlPool().query('SHOW COLUMNS FROM automation_conversation_state LIKE "awaitingInteractiveStepId"')
+        if (columns.length === 0) {
+          console.log('[DB Migration] Adding awaitingInteractiveStepId column...')
+          await getMysqlPool().query(`
+            ALTER TABLE automation_conversation_state 
+            ADD COLUMN awaitingInteractiveStepId VARCHAR(255) DEFAULT NULL 
+            AFTER handoffUntil
+          `)
+          console.log('[DB Migration] Column added successfully.')
         }
-      }
-      // Add the column if it doesn't exist yet (safe for MySQL 5.7+)
-      try {
-        await getMysqlPool().query(
-          `ALTER TABLE automation_conversation_state
-           ADD COLUMN awaitingInteractiveStepId VARCHAR(255) DEFAULT NULL`
-        )
-      } catch (e) {
-        // Column already exists — ignore the Duplicate column error
+      } catch (err) {
+        console.error('[DB Migration] Error checking/adding column:', err.message)
       }
     })()
   }
