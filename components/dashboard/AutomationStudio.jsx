@@ -391,7 +391,7 @@ function validateAutomationFlow(automation) {
       if (!step.options || step.options.length === 0) {
         pushIssue('errors', step.id, 'Add at least one option to the menu.')
       }
-      const allEmpty = (step.options || []).every((_, i) => !step.connections?.[`opt${i}`])
+      const allEmpty = (step.options || []).every((o) => !step.connections?.[o.id])
       if (allEmpty) {
         pushIssue('errors', step.id, 'Connect at least one option to a follow-up step.')
       }
