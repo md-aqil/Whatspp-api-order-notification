@@ -7,13 +7,12 @@ export default function Home() {
   const router = useRouter()
 
   useEffect(() => {
-    // Redirect to the dashboard since all features have been moved there
     router.push('/login')
   }, [router])
 
   return (
     <div className="flex items-center justify-center min-h-screen">
-      <p>Redirecting...</p>
+      <p>Redirecting....</p>
     </div>
   )
 }
