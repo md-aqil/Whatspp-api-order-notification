@@ -254,14 +254,47 @@ export default function CampaignsPage() {
               })}
             </div>
             {campaignForm.audience === 'custom' && (
-              <div className="mt-4">
+              <div className="mt-4 space-y-4">
+                <div className="flex items-center justify-between">
+                   <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Phone List</label>
+                   <button 
+                     onClick={() => document.getElementById('csv-upload').click()}
+                     className="text-[10px] font-bold text-blue-600 hover:underline flex items-center gap-1"
+                   >
+                     <PlusCircle className="w-3 h-3" /> Upload CSV
+                   </button>
+                   <input 
+                     id="csv-upload" 
+                     type="file" 
+                     accept=".csv" 
+                     className="hidden" 
+                     onChange={(e) => {
+                       const file = e.target.files[0]
+                       if (file) {
+                         const reader = new FileReader()
+                         reader.onload = (event) => {
+                           const text = event.target.result
+                           const phones = text.split(/[\n,]/).map(p => p.trim()).filter(p => /^\d+$/.test(p))
+                           if (phones.length > 0) {
+                             setCampaignForm(c => ({...c, recipientPhones: phones.join(', ')}))
+                             toast.success(`Loaded ${phones.length} phone numbers from CSV`)
+                           } else {
+                             toast.error('No valid phone numbers found in CSV')
+                           }
+                         }
+                         reader.readAsText(file)
+                       }
+                     }}
+                   />
+                </div>
                 <Textarea 
-                   placeholder="Phone numbers (comma separated)"
+                   placeholder="e.g. 919876543210, 919876543211"
                    value={campaignForm.recipientPhones}
                    onChange={e => setCampaignForm(c => ({...c, recipientPhones: e.target.value}))}
-                   className="bg-white rounded-xl resize-none"
-                   rows={3}
+                   className="bg-white rounded-xl resize-none text-[12px] font-mono"
+                   rows={4}
                 />
+                <p className="text-[10px] text-slate-400">Include country code without + (e.g. 91...)</p>
               </div>
             )}
           </div>

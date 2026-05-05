@@ -36,6 +36,7 @@ export function Sidebar({ sidebarOpen, setSidebarOpen, user }) {
   
   const navigation = [
     { name: 'Dashboard', href: '/dashboard', icon: Store },
+    { name: 'Analytics', href: '/dashboard/analytics', icon: Shield },
     { name: 'Chat', href: '/dashboard/chat', icon: MessageCircle },
     { name: 'Campaigns', href: '/dashboard/campaigns', icon: Megaphone },
     { name: 'Automations', href: '/dashboard/automations', icon: Workflow, badge: activeCount },

@@ -12,7 +12,7 @@ A comprehensive solution for integrating WhatsApp with Shopify for order notific
 ## Prerequisites
 
 - Node.js (v18+)
-- PostgreSQL
+- MySQL
 - Facebook/WhatsApp Business Account
 - Shopify Store
 - Cloudflare Account with Argo Tunnel
@@ -42,7 +42,7 @@ CORS_ORIGINS=*
 ### 3. Initialize Database
 
 ```bash
-node setup-postgres-tables.js
+node scripts/setup-mysql-tables.js
 ```
 
 ### 4. Cloudflare Tunnel Setup

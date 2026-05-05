@@ -777,6 +777,10 @@ function resolveCustomWebhookTrigger(eventType) {
         return eventType
     }
 
+    if (eventType.startsWith('whatsapp.')) {
+        return eventType
+    }
+
     const isWooCommerceEvent = eventType.startsWith('woocommerce.')
     return triggerMappings[eventType] || (isWooCommerceEvent ? eventType : 'custom.webhook')
 }
@@ -813,6 +817,36 @@ function interpolateAutomationMessage(message = '', context = {}) {
         const value = context[key]
         return value === undefined || value === null ? '' : String(value)
     })
+}
+
+async function executeAutomationHttpRequest(step, context) {
+    const method = step.method || 'POST'
+    const url = interpolateAutomationMessage(step.url || '', context)
+    const headersText = interpolateAutomationMessage(step.headers || '{}', context)
+    const bodyText = interpolateAutomationMessage(step.body || '{}', context)
+
+    let headers = {}
+    try {
+        headers = JSON.parse(headersText)
+    } catch (error) {
+        throw new Error(`Invalid HTTP headers JSON for "${step.title || step.id}": ${error.message}`)
+    }
+
+    let body = undefined
+    if (!['GET', 'HEAD'].includes(method.toUpperCase())) {
+        try {
+            body = JSON.stringify(JSON.parse(bodyText))
+        } catch (_error) {
+            body = bodyText
+        }
+    }
+
+    const response = await fetch(url, { method, headers, body })
+
+    if (!response.ok) {
+        const responseText = await response.text().catch(() => '')
+        throw new Error(`HTTP ${response.status} from ${url}${responseText ? `: ${responseText.slice(0, 200)}` : ''}`)
+    }
 }
 
 async function getMatchingAutomations(eventType) {
@@ -906,6 +940,16 @@ async function executeCustomWebhookAutomations(eventType, context, whatsappConfi
 
                     if (step.type === 'delay') {
                         totalDelayMs += parseDelayToMs(step)
+                        currentStepId = getNextAutomationStepId(steps, step, 'main')
+                        continue
+                    }
+
+                    if (step.type === 'http_request') {
+                        try {
+                            await executeAutomationHttpRequest(step, automationContext)
+                        } catch (httpError) {
+                            warnings.push(`HTTP request "${step.title || step.id}" failed: ${httpError.message}`)
+                        }
                         currentStepId = getNextAutomationStepId(steps, step, 'main')
                         continue
                     }

@@ -13,6 +13,12 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog'
 import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from '@/components/ui/tabs'
+import {
   AlertCircle,
   CheckCircle,
   Copy,
@@ -25,7 +31,8 @@ import {
   Monitor,
   ChevronDown,
   Plus,
-  Trash2
+  Trash2,
+  Workflow
 } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { toast } from 'sonner'
@@ -37,6 +44,7 @@ export default function SettingsPage() {
   const [shopifyStatus, setShopifyStatus] = useState('unknown')
   const [lastWebhook, setLastWebhook] = useState(null)
   const [lastCustomWebhook, setLastCustomWebhook] = useState(null)
+  const [lastZohoWebhook, setLastZohoWebhook] = useState(null)
   const [checking, setChecking] = useState(false)
   const [shopifyWebhooks, setShopifyWebhooks] = useState([])
   const [expandedWebhook, setExpandedWebhook] = useState(null)
@@ -499,17 +507,15 @@ export default function SettingsPage() {
         if (logsResponse.ok) {
           const data = await logsResponse.json()
           if (data.logs && data.logs.length > 0) {
-            // Find latest for each type
             const shopifyLog = data.logs.find(l => l.type === 'shopify')
             const whatsappLog = data.logs.find(l => l.type === 'whatsapp')
             const customLog = data.logs.find(l => l.type === 'custom')
+            const zohoLog = data.logs.find(l => l.type === 'zoho')
 
-            if (shopifyLog || whatsappLog) {
-              setLastWebhook(shopifyLog || whatsappLog)
-            }
-            if (customLog) {
-              setLastCustomWebhook(customLog)
-            }
+            if (shopifyLog) setShopifyStatus('connected')
+            if (whatsappLog) setWhatsappStatus('connected')
+            if (customLog) setLastCustomWebhook(customLog)
+            if (zohoLog) setLastZohoWebhook(zohoLog)
           }
         }
       } catch (e) {
@@ -559,9 +565,14 @@ export default function SettingsPage() {
   }, [lastCustomWebhook, latestWordPressPayload])
 
   const latestWordPressRawPayload = useMemo(() => {
-    if (!latestWordPressPayload) return ''
-    return JSON.stringify(latestWordPressPayload, null, 2)
-  }, [latestWordPressPayload])
+    if (!lastCustomWebhook?.payload) return ''
+    return JSON.stringify(lastCustomWebhook.payload, null, 2)
+  }, [lastCustomWebhook])
+
+  const latestZohoRawPayload = useMemo(() => {
+    if (!lastZohoWebhook?.payload) return ''
+    return JSON.stringify(lastZohoWebhook.payload, null, 2)
+  }, [lastZohoWebhook])
 
   const buildWebhookUrl = (path) => {
     if (!baseUrl) return path
@@ -582,86 +593,41 @@ export default function SettingsPage() {
 
   return (
     <div className="settings-scene p-8 mx-auto space-y-12 bg-[#f8f9ff] text-[#05345c] min-h-screen">
-      {/* Bento Layout Content */}
-      <div className="grid grid-cols-12 gap-8">
-        {/* Left Column */}
-        <div className="col-span-12 lg:col-span-4 space-y-8">
-          {/* Health Dashboard */}
-          <div className="bg-white p-6 rounded-xl shadow-sm border-none ring-1 ring-black/[0.03]">
-            <h3 className="text-sm font-bold uppercase tracking-wider text-[#3d618c] mb-6 flex items-center gap-2">
-              <Monitor className="text-[#005cc0] w-4 h-4" />
-              Workspace Health
-            </h3>
-            <div className="space-y-6">
-              <div className="space-y-2">
-                <div className="flex justify-between text-xs font-bold">
-                  <span>API Request Limit</span>
-                  <span className="text-[#005cc0]">12.4K / 50K</span>
-                </div>
-                <div className="h-2 w-full bg-[#e5eeff] rounded-full overflow-hidden">
-                  <div className="h-full bg-[#005cc0] rounded-full" style={{ width: '24.8%' }}></div>
-                </div>
-                <p className="text-[10px] text-[#3d618c]">Resets in 12 days</p>
-              </div>
-              <div className="grid grid-cols-2 gap-4 pt-4">
-                <div className="p-4 bg-[#eff4ff] rounded-lg text-center">
-                  <div className="text-2xl font-black">{activeWebhookCount}</div>
-                  <div className="text-[10px] uppercase font-bold text-[#3d618c] mt-1">Active Hooks</div>
-                </div>
-                <div className="p-4 bg-[#eff4ff] rounded-lg text-center">
-                  <div className="text-2xl font-black">99.9%</div>
-                  <div className="text-[10px] uppercase font-bold text-[#3d618c] mt-1">Uptime</div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Preferences */}
-          <div className="bg-[#eff4ff] p-6 rounded-xl space-y-6">
-            <h3 className="text-sm font-bold uppercase tracking-wider text-[#3d618c] flex items-center gap-2">
-              <Settings className="text-[#005cc0] w-4 h-4" />
-              App Preferences
-            </h3>
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-semibold">Dark Mode</span>
-                <button
-                  type="button"
-                  aria-pressed={isDarkMode}
-                  onClick={toggleDarkMode}
-                  className={`w-10 h-6 rounded-full relative p-1 transition-colors ${isDarkMode ? 'bg-[#005cc0] flex justify-end' : 'bg-[#d2e4ff]'}`}
-                >
-                  <div className="w-4 h-4 bg-white rounded-full shadow-sm"></div>
-                </button>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-semibold">Instant Notifications</span>
-                <button
-                  type="button"
-                  aria-pressed={notificationsEnabled}
-                  onClick={() => setNotificationsEnabled((current) => !current)}
-                  className={`w-10 h-6 rounded-full relative p-1 transition-colors ${notificationsEnabled ? 'bg-[#005cc0] flex justify-end' : 'bg-[#d2e4ff]'}`}
-                >
-                  <div className="w-4 h-4 bg-white rounded-full shadow-sm"></div>
-                </button>
-              </div>
-              <div className="space-y-1.5 pt-2">
-                <label className="text-[11px] font-bold text-[#3d618c] uppercase">Language</label>
-                <div className="w-full bg-white px-3 py-2 rounded-lg border-none flex items-center justify-between cursor-pointer">
-                  <span className="text-sm font-medium">English (US)</span>
-                  <ChevronDown className="w-4 h-4" />
-                </div>
-              </div>
-            </div>
-          </div>
+      {/* Header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-2">
+        <div>
+          <h1 className="text-3xl font-black tracking-tight text-[#05345c] font-headline">Settings</h1>
+          <p className="text-[#3d618c] mt-1 font-medium">Configure your platform integrations, webhooks, and preferences.</p>
         </div>
+        <div className="flex items-center gap-3">
+          <Button variant="outline" onClick={checkWebhookStatus} disabled={checking} className="bg-white border-[#e5eeff] text-[#3d618c] font-bold">
+            <RefreshCw className={`w-4 h-4 mr-2 ${checking ? 'animate-spin' : ''}`} />
+            Refresh Status
+          </Button>
+        </div>
+      </div>
 
-        {/* Right Column */}
-        <div className="col-span-12 lg:col-span-8 space-y-8">
-          {/* Integrations */}
-          <div className="bg-white p-8 rounded-xl shadow-sm border-none ring-1 ring-black/[0.03]">
+      <Tabs defaultValue="integrations" className="space-y-8">
+        <TabsList className="bg-[#e5eeff] p-1 rounded-xl">
+          <TabsTrigger value="integrations" className="rounded-lg px-6 py-2.5 font-bold data-[state=active]:bg-white data-[state=active]:text-[#005cc0]">
+            Integrations
+          </TabsTrigger>
+          <TabsTrigger value="wordpress" className="rounded-lg px-6 py-2.5 font-bold data-[state=active]:bg-white data-[state=active]:text-[#005cc0]">
+            WordPress
+          </TabsTrigger>
+          <TabsTrigger value="webhooks" className="rounded-lg px-6 py-2.5 font-bold data-[state=active]:bg-white data-[state=active]:text-[#005cc0]">
+            Webhooks & API
+          </TabsTrigger>
+          <TabsTrigger value="preferences" className="rounded-lg px-6 py-2.5 font-bold data-[state=active]:bg-white data-[state=active]:text-[#005cc0]">
+            Preferences
+          </TabsTrigger>
+        </TabsList>
+
+        {/* Integrations Tab */}
+        <TabsContent value="integrations" className="space-y-8 mt-0 focus-visible:outline-none">
+          <div className="bg-white p-8 rounded-2xl shadow-sm border-none ring-1 ring-black/[0.03]">
             <div className="flex items-center justify-between mb-8">
-              <h3 className="text-xl font-bold font-headline">Service Integrations</h3>
+              <h3 className="text-xl font-bold font-headline">Service Connections</h3>
               <div className="text-[#3d618c] text-sm font-semibold">{activeWebhookCount} active endpoints</div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -756,12 +722,15 @@ export default function SettingsPage() {
               </Dialog>
             </div>
           </div>
+        </TabsContent>
 
-          <div className="bg-white p-8 rounded-xl shadow-sm border-none ring-1 ring-black/[0.03]">
+        {/* WordPress Tab */}
+        <TabsContent value="wordpress" className="space-y-8 mt-0 focus-visible:outline-none">
+          <div className="bg-white p-8 rounded-2xl shadow-sm border-none ring-1 ring-black/[0.03]">
             <div className="flex items-center justify-between mb-8">
               <div>
                 <h3 className="text-xl font-bold font-headline">WordPress Sites</h3>
-                <p className="text-sm text-[#3d618c] mt-1">Manage the WordPress connection, webhook endpoint, and the latest activity from the connected plugin in one place.</p>
+                <p className="text-sm text-[#3d618c] mt-1">Manage the WordPress connection and the latest activity from the connected plugin.</p>
               </div>
               <div className="flex gap-2">
                 <button
@@ -789,7 +758,7 @@ export default function SettingsPage() {
                         <Label htmlFor="wp-site-name">Site Name</Label>
                         <Input
                           id="wp-site-name"
-                          placeholder="Vaclav Fashion"
+                          placeholder="My Store"
                           value={newWordPressConnection.site_name}
                           onChange={(e) => setNewWordPressConnection({ ...newWordPressConnection, site_name: e.target.value })}
                         />
@@ -823,57 +792,6 @@ export default function SettingsPage() {
                     </div>
                   </DialogContent>
                 </Dialog>
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-[#e5eeff] bg-[#f8f9ff] p-4 space-y-4 mb-6">
-              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                <div>
-                  <p className="text-xs font-bold uppercase tracking-wide text-[#3d618c]">WordPress Callback URL</p>
-                  <p className="text-sm text-[#05345c] font-medium mt-1">Use this URL in the plugin after connecting a site.</p>
-                </div>
-                <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase ${customWebhookStatus?.status === 'ready' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
-                  {customWebhookStatus?.status === 'ready' ? 'Endpoint Ready' : 'Endpoint Inactive'}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Input readOnly value={buildWebhookUrl('/api/webhook/custom')} className="bg-white border-[#e5eeff]" />
-                <Button variant="outline" size="sm" onClick={() => copyToClipboard(buildWebhookUrl('/api/webhook/custom'))}>
-                  <Copy className="h-4 w-4 mr-2" />
-                  Copy
-                </Button>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-                <div className="bg-white rounded-lg border border-[#e5eeff] px-3 py-3">
-                  <div className="text-[10px] font-bold uppercase text-[#3d618c] mb-2">WooCommerce Triggers</div>
-                  {woocommerceTriggers.length > 0 ? (
-                    <div className="space-y-1">
-                      {woocommerceTriggers.map((trigger, idx) => (
-                        <div key={`${trigger.value || trigger.label}-${idx}`} className="flex items-center justify-between gap-2">
-                          <span className="text-[#05345c]">{trigger.label}</span>
-                          <span className="text-green-600 font-semibold">Active</span>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-[#3d618c]">No WooCommerce triggers loaded for the selected WordPress site yet.</p>
-                  )}
-                </div>
-                <div className="bg-white rounded-lg border border-[#e5eeff] px-3 py-3">
-                  <div className="text-[10px] font-bold uppercase text-[#3d618c] mb-2">Custom Tables</div>
-                  {customTables.length > 0 ? (
-                    <div className="space-y-1">
-                      {customTables.map((table, idx) => (
-                        <div key={`${table.name}-${idx}`} className="flex items-center justify-between gap-2">
-                          <span className="text-[#05345c]">{table.name}</span>
-                          {table.label ? <span className="text-[#3d618c]">{table.label}</span> : <span className="text-green-600 font-semibold">Mapped</span>}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-[#3d618c]">No custom tables loaded for the selected WordPress site yet.</p>
-                  )}
-                </div>
               </div>
             </div>
 
@@ -1003,292 +921,241 @@ export default function SettingsPage() {
                   </div>
                 </div>
               ))}
-
               {wordpressConnections.length === 0 && (
                 <div className="p-4 text-center text-sm text-gray-500 border border-dashed border-[#e5eeff] rounded-xl">
-                  No WordPress sites connected yet. Use "Connect WordPress" to save the first site.
-                </div>
-              )}
-            </div>
-
-            <div className="mt-6 pt-6 border-t border-[#e5eeff]">
-              <p className="font-semibold text-xs text-[#3d618c] uppercase mb-3 flex items-center gap-2">
-                <Clock className="w-3 h-3" /> Latest activity from WordPress
-              </p>
-              {lastCustomWebhook ? (
-                <div className="bg-[#f8f9ff] p-4 rounded-xl border border-[#e5eeff] space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    {latestWordPressRows.map((row) => (
-                      <div key={row.label} className="flex justify-between items-center gap-4 text-xs bg-white rounded-lg px-3 py-2 border border-[#e5eeff]">
-                        <span className="text-gray-500">{row.label}:</span>
-                        {row.tone === 'badge' ? (
-                          <span className="font-bold text-[#005cc0] bg-[#eff4ff] px-2 py-0.5 rounded">{row.value}</span>
-                        ) : (
-                          <span
-                            className={[
-                              'font-medium text-right',
-                              row.monospace ? 'font-mono text-[11px]' : '',
-                              row.tone === 'success' ? 'font-bold text-green-600' : '',
-                              row.missing ? 'text-amber-600' : ''
-                            ].join(' ')}
-                          >
-                            {row.value}
-                          </span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="rounded-xl border border-[#e5eeff] overflow-hidden bg-white">
-                    <div className="flex items-center justify-between px-3 py-2 bg-[#f8f9ff] border-b border-[#e5eeff]">
-                      <p className="text-[11px] font-bold uppercase tracking-wide text-[#3d618c]">Raw Webhook Payload</p>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => copyToClipboard(latestWordPressRawPayload)}
-                      >
-                        <Copy className="h-4 w-4 mr-2" />
-                        Copy JSON
-                      </Button>
-                    </div>
-                    <pre className="max-h-72 overflow-auto p-3 text-[11px] leading-5 bg-[#05345c] text-[#dff3ff] whitespace-pre-wrap break-words">
-                      {latestWordPressRawPayload}
-                    </pre>
-                  </div>
-                </div>
-              ) : (
-                <div className="bg-white/50 p-4 rounded-xl border border-dashed border-[#e5eeff] text-center">
-                  <p className="text-xs text-gray-500">Waiting for your first WordPress activity...</p>
-                  <p className="text-[10px] text-gray-400 mt-1">Send a test webhook or place a WooCommerce order to see it here.</p>
+                  No WordPress sites connected yet.
                 </div>
               )}
             </div>
           </div>
+        </TabsContent>
 
-          {/* Webhooks */}
-          <div className="bg-white p-8 rounded-xl shadow-sm border-none ring-1 ring-black/[0.03]">
-            <div className="flex items-center justify-between mb-8">
-              <h3 className="text-xl font-bold font-headline">Registered Webhooks</h3>
-              <div className="flex gap-2">
-                <button onClick={checkWebhookStatus} disabled={checking} className="bg-[#eff4ff] hover:bg-[#dce9ff] px-3 py-2 rounded-lg text-sm font-bold transition-colors">
-                  <RefreshCw className={`w-4 h-4 text-[#005cc0] ${checking ? 'animate-spin' : ''}`} />
-                </button>
-                <Dialog open={addWebhookOpen} onOpenChange={setAddWebhookOpen}>
-                  <DialogTrigger asChild>
-                    <button className="bg-[#eff4ff] hover:bg-[#dce9ff] px-4 py-2 rounded-lg text-sm font-bold text-[#005cc0] transition-colors flex items-center gap-2">
-                      <Plus className="w-4 h-4" /> Add Webhook
-                    </button>
-                  </DialogTrigger>
-                  <DialogContent className="sm:max-w-[425px]">
-                    <DialogHeader>
-                      <DialogTitle>Add New Webhook</DialogTitle>
-                      <DialogDescription>
-                        Configure a new webhook endpoint to receive notifications from external services.
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="grid gap-4 py-4">
-                      <div className="grid gap-2">
-                        <Label htmlFor="webhook-name">Webhook Name</Label>
-                        <Input
-                          id="webhook-name"
-                          placeholder="My WooCommerce Store"
-                          value={newWebhook.name}
-                          onChange={(e) => setNewWebhook({ ...newWebhook, name: e.target.value })}
-                        />
-                      </div>
-                      <div className="grid gap-2">
-                        <Label htmlFor="webhook-url">Target URL</Label>
-                        <Input
-                          id="webhook-url"
-                          placeholder="https://your-site.com/webhook"
-                          value={newWebhook.target_url}
-                          onChange={(e) => setNewWebhook({ ...newWebhook, target_url: e.target.value })}
-                        />
-                      </div>
-                      <div className="grid gap-2">
-                        <Label htmlFor="webhook-secret">Secret Key (Optional)</Label>
-                        <Input
-                          id="webhook-secret"
-                          placeholder="Your webhook secret for verification"
-                          value={newWebhook.secret_key}
-                          onChange={(e) => setNewWebhook({ ...newWebhook, secret_key: e.target.value })}
-                        />
-                      </div>
-                    </div>
-                    <div className="flex justify-end gap-3">
-                      <Button variant="outline" onClick={() => setAddWebhookOpen(false)}>
-                        Cancel
-                      </Button>
-                      <Button onClick={handleAddWebhook} disabled={loading}>
-                        {loading ? 'Adding...' : 'Add Webhook'}
-                      </Button>
-                    </div>
-                  </DialogContent>
-                </Dialog>
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              {/* WhatsApp Webhook */}
-              <div className="border border-[#e5eeff] rounded-xl overflow-hidden transition-all duration-200">
-                <div onClick={() => toggleWebhook('whatsapp')} className="flex items-center gap-4 py-4 px-4 hover:bg-[#eff4ff] cursor-pointer transition-colors">
-                  <div className="flex-shrink-0">
-                    <div className={`w-3 h-3 rounded-full ${whatsappStatus === 'connected' ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : whatsappStatus === 'error' ? 'bg-red-500' : 'bg-slate-300'}`}></div>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-sm font-bold">WhatsApp Webhook</span>
-                      <span className="px-2 py-0.5 rounded text-[9px] font-black bg-[#e4ceff] text-[#53436c] uppercase">System</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <code className="text-xs text-[#3d618c] truncate bg-[#eff4ff] px-2 py-0.5 rounded">{buildWebhookUrl('/api/webhook/whatsapp')}</code>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <div className="text-right hidden sm:block">
-                      <div className="text-[10px] font-bold text-[#3d618c] uppercase">Status</div>
-                      <div className="text-xs font-semibold capitalize">{whatsappStatus}</div>
-                    </div>
-                    <ChevronDown className={`w-5 h-5 text-[#3d618c] transition-transform ${expandedWebhook === 'whatsapp' ? 'rotate-180' : ''}`} />
-                  </div>
-                </div>
-                {expandedWebhook === 'whatsapp' && (
-                  <div className="px-11 py-4 bg-[#f8f9ff] border-t border-[#e5eeff] text-sm">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <p className="font-semibold mb-2">Configure Callback URL in Meta App</p>
-                        <div className="flex items-center gap-2">
-                          <Input readOnly value={buildWebhookUrl('/api/webhook/whatsapp')} className="w-[300px] bg-white border-[#e5eeff]" />
-                          <Button variant="outline" size="sm" onClick={() => copyToClipboard(buildWebhookUrl('/api/webhook/whatsapp'))}>
-                            <Copy className="h-4 w-4 mr-2" />
-                            Copy
-                          </Button>
+        {/* Webhooks Tab */}
+        <TabsContent value="webhooks" className="space-y-8 mt-0 focus-visible:outline-none">
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-8">
+            <div className="md:col-span-7 space-y-6">
+              <div className="bg-white p-8 rounded-2xl shadow-sm border-none ring-1 ring-black/[0.03]">
+                <div className="flex items-center justify-between mb-8">
+                  <h3 className="text-xl font-bold font-headline">Webhook Endpoints</h3>
+                  <Dialog open={addWebhookOpen} onOpenChange={setAddWebhookOpen}>
+                    <DialogTrigger asChild>
+                      <button className="bg-[#eff4ff] hover:bg-[#dce9ff] px-4 py-2 rounded-lg text-sm font-bold text-[#005cc0] transition-colors flex items-center gap-2">
+                        <Plus className="w-4 h-4" /> Add Custom
+                      </button>
+                    </DialogTrigger>
+                    <DialogContent className="sm:max-w-[425px]">
+                      <DialogHeader>
+                        <DialogTitle>Add New Webhook</DialogTitle>
+                        <DialogDescription>Configure a new webhook endpoint.</DialogDescription>
+                      </DialogHeader>
+                      <div className="grid gap-4 py-4">
+                        <div className="grid gap-2">
+                          <Label htmlFor="webhook-name">Webhook Name</Label>
+                          <Input id="webhook-name" placeholder="My App" value={newWebhook.name} onChange={(e) => setNewWebhook({ ...newWebhook, name: e.target.value })} />
+                        </div>
+                        <div className="grid gap-2">
+                          <Label htmlFor="webhook-url">Target URL</Label>
+                          <Input id="webhook-url" placeholder="https://your-site.com/webhook" value={newWebhook.target_url} onChange={(e) => setNewWebhook({ ...newWebhook, target_url: e.target.value })} />
                         </div>
                       </div>
+                      <div className="flex justify-end gap-3">
+                        <Button variant="outline" onClick={() => setAddWebhookOpen(false)}>Cancel</Button>
+                        <Button onClick={handleAddWebhook} disabled={loading}>{loading ? 'Adding...' : 'Add Webhook'}</Button>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                </div>
+
+                <div className="space-y-3">
+                  {/* WhatsApp Webhook */}
+                  <div className="border border-[#e5eeff] rounded-xl overflow-hidden">
+                    <div onClick={() => toggleWebhook('whatsapp')} className="flex items-center gap-4 py-4 px-4 hover:bg-[#eff4ff] cursor-pointer transition-colors">
+                      <div className="flex-shrink-0">
+                        <div className={`w-3 h-3 rounded-full ${whatsappStatus === 'connected' ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : 'bg-slate-300'}`}></div>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-sm font-bold">WhatsApp Webhook</span>
+                          <span className="px-2 py-0.5 rounded text-[9px] font-black bg-[#e4ceff] text-[#53436c] uppercase">System</span>
+                        </div>
+                        <code className="text-[10px] text-[#3d618c] bg-[#eff4ff] px-2 py-0.5 rounded truncate">{buildWebhookUrl('/api/webhook/whatsapp')}</code>
+                      </div>
+                      <ChevronDown className={`w-5 h-5 text-[#3d618c] transition-transform ${expandedWebhook === 'whatsapp' ? 'rotate-180' : ''}`} />
                     </div>
-                    {lastWebhook && lastWebhook.type === 'whatsapp' && (
-                      <div className="mt-4 p-3 bg-white border border-[#e5eeff] rounded-lg text-xs">
-                        <p className="font-semibold mb-1 flex items-center gap-2"><Clock className="w-3 h-3" /> Last Received</p>
-                        <p className="text-[#3d618c]">{new Date(lastWebhook.receivedAt).toLocaleString()}</p>
+                    {expandedWebhook === 'whatsapp' && (
+                      <div className="px-11 py-4 bg-[#f8f9ff] border-t border-[#e5eeff] text-xs">
+                        <p className="font-semibold mb-2 text-[#3d618c] uppercase">Meta Developer Setup</p>
+                        <div className="flex items-center gap-2">
+                          <Input readOnly value={buildWebhookUrl('/api/webhook/whatsapp')} className="bg-white border-[#e5eeff]" />
+                          <Button variant="outline" size="sm" onClick={() => copyToClipboard(buildWebhookUrl('/api/webhook/whatsapp'))}><Copy className="h-4 w-4" /></Button>
+                        </div>
                       </div>
                     )}
                   </div>
-                )}
-              </div>
 
-              {/* Shopify Webhook */}
-              {integrations.shopify.connected && (
-                <div className="border border-[#e5eeff] rounded-xl overflow-hidden transition-all duration-200">
-                  <div onClick={() => toggleWebhook('shopify')} className="flex items-center gap-4 py-4 px-4 hover:bg-[#eff4ff] cursor-pointer transition-colors">
-                    <div className="flex-shrink-0">
-                      <div className={`w-3 h-3 rounded-full ${shopifyStatus === 'connected' ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : shopifyStatus === 'error' ? 'bg-red-500' : 'bg-slate-300'}`}></div>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-sm font-bold">Shopify Webhook</span>
-                        <span className="px-2 py-0.5 rounded text-[9px] font-black bg-[#d2e4ff] text-[#005cc0] uppercase">eCommerce</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <code className="text-xs text-[#3d618c] truncate bg-[#eff4ff] px-2 py-0.5 rounded">{buildWebhookUrl('/api/webhook/shopify')}</code>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-4">
-                      <div className="text-right hidden sm:block">
-                        <div className="text-[10px] font-bold text-[#3d618c] uppercase">Status</div>
-                        <div className="text-xs font-semibold capitalize">{shopifyStatus}</div>
-                      </div>
-                      <ChevronDown className={`w-5 h-5 text-[#3d618c] transition-transform ${expandedWebhook === 'shopify' ? 'rotate-180' : ''}`} />
-                    </div>
-                  </div>
-                  {expandedWebhook === 'shopify' && (
-                    <div className="px-11 py-4 bg-[#f8f9ff] border-t border-[#e5eeff] text-sm">
-                      <div className="flex justify-between items-start mb-4">
-                        <div>
-                          <p className="font-semibold mb-2">Configure Callback URL in Shopify App</p>
-                          <div className="flex items-center gap-2">
-                            <Input readOnly value={buildWebhookUrl('/api/webhook/shopify')} className="w-[300px] bg-white border-[#e5eeff]" />
-                            <Button variant="outline" size="sm" onClick={() => copyToClipboard(buildWebhookUrl('/api/webhook/shopify'))}>
-                              <Copy className="h-4 w-4 mr-2" />
-                              Copy
-                            </Button>
+                  {/* Shopify Webhook */}
+                  {integrations.shopify.connected && (
+                    <div className="border border-[#e5eeff] rounded-xl overflow-hidden">
+                      <div onClick={() => toggleWebhook('shopify')} className="flex items-center gap-4 py-4 px-4 hover:bg-[#eff4ff] cursor-pointer transition-colors">
+                        <div className="flex-shrink-0">
+                          <div className={`w-3 h-3 rounded-full ${shopifyStatus === 'connected' ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : 'bg-slate-300'}`}></div>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-sm font-bold">Shopify Webhook</span>
+                            <span className="px-2 py-0.5 rounded text-[9px] font-black bg-[#d2e4ff] text-[#005cc0] uppercase">eCommerce</span>
                           </div>
+                          <code className="text-[10px] text-[#3d618c] bg-[#eff4ff] px-2 py-0.5 rounded truncate">{buildWebhookUrl('/api/webhook/shopify')}</code>
                         </div>
+                        <ChevronDown className={`w-5 h-5 text-[#3d618c] transition-transform ${expandedWebhook === 'shopify' ? 'rotate-180' : ''}`} />
                       </div>
-                      <div className="space-y-2">
-                        <p className="font-semibold text-xs text-[#3d618c] uppercase">Registered Topics</p>
-                        <div className="grid grid-cols-2 gap-2">
-                          {shopifyWebhookTopics.map((wh) => {
-                            const isRegistered = shopifyWebhooks.some(sw => sw.topic === wh.topic)
-                            return (
-                              <div key={wh.topic} className="flex justify-between p-2 bg-white rounded border border-[#e5eeff]">
-                                <span className="text-xs font-medium">{wh.label}</span>
-                                <span className={`text-[10px] flex items-center font-semibold ${isRegistered ? 'text-green-600' : 'text-gray-400'}`}>
-                                  {isRegistered ? <><CheckCircle className="w-3 h-3 mr-1" /> Active</> : <><AlertCircle className="w-3 h-3 mr-1" /> Not set</>}
-                                </span>
-                              </div>
-                            )
-                          })}
-                        </div>
-                      </div>
-                      {lastWebhook && lastWebhook.type === 'shopify' && (
-                        <div className="mt-4 p-3 bg-white border border-[#e5eeff] rounded-lg text-xs">
-                          <p className="font-semibold mb-1 flex items-center gap-2"><Clock className="w-3 h-3" /> Last Received</p>
-                          <p className="text-[#3d618c]">{new Date(lastWebhook.receivedAt).toLocaleString()}</p>
+                      {expandedWebhook === 'shopify' && (
+                        <div className="px-11 py-4 bg-[#f8f9ff] border-t border-[#e5eeff] text-xs">
+                          <p className="font-semibold mb-2 text-[#3d618c] uppercase">Shopify Admin Setup</p>
+                          <div className="flex items-center gap-2">
+                            <Input readOnly value={buildWebhookUrl('/api/webhook/shopify')} className="bg-white border-[#e5eeff]" />
+                            <Button variant="outline" size="sm" onClick={() => copyToClipboard(buildWebhookUrl('/api/webhook/shopify'))}><Copy className="h-4 w-4" /></Button>
+                          </div>
                         </div>
                       )}
                     </div>
                   )}
-                </div>
-              )}
 
-              {/* User-Registered Webhooks */}
-              {registeredWebhooks && registeredWebhooks.length > 0 && (
-                <>
-                  {registeredWebhooks.map((webhook) => (
-                    <div key={webhook.id} className="border border-[#e5eeff] rounded-xl overflow-hidden transition-all duration-200">
-                      <div className="flex items-center gap-4 py-4 px-4 hover:bg-[#eff4ff] cursor-pointer transition-colors">
-                        <div className="flex-shrink-0">
-                          <div className={`w-3 h-3 rounded-full ${webhook.is_active ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : 'bg-slate-300'}`}></div>
+                  {/* Zoho Webhook */}
+                  <div className="border border-[#e5eeff] rounded-xl overflow-hidden">
+                    <div onClick={() => toggleWebhook('zoho')} className="flex items-center gap-4 py-4 px-4 hover:bg-[#eff4ff] cursor-pointer transition-colors">
+                      <div className="flex-shrink-0">
+                        <div className={`w-3 h-3 rounded-full ${lastZohoWebhook ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : 'bg-slate-300'}`}></div>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-sm font-bold">Zoho CRM Webhook</span>
+                          <span className="px-2 py-0.5 rounded text-[9px] font-black bg-[#fff3d2] text-[#8c6d3d] uppercase">CRM</span>
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="text-sm font-bold">{webhook.name}</span>
-                            <span className="px-2 py-0.5 rounded text-[9px] font-black bg-[#d2e4ff] text-[#005cc0] uppercase">Custom</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <code className="text-xs text-[#3d618c] truncate bg-[#eff4ff] px-2 py-0.5 rounded">{webhook.target_url}</code>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-4">
-                          <div className="text-right hidden sm:block">
-                            <div className="text-[10px] font-bold text-[#3d618c] uppercase">Status</div>
-                            <div className="text-xs font-semibold capitalize">{webhook.is_active ? 'Active' : 'Inactive'}</div>
-                          </div>
-                          <button
-                            onClick={() => handleDeleteWebhook(webhook.id)}
-                            className="text-red-500 hover:text-red-700 p-1"
-                            title="Delete webhook"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                        <code className="text-[10px] text-[#3d618c] bg-[#eff4ff] px-2 py-0.5 rounded truncate">{buildWebhookUrl('/api/webhook/zoho')}</code>
+                      </div>
+                      <ChevronDown className={`w-5 h-5 text-[#3d618c] transition-transform ${expandedWebhook === 'zoho' ? 'rotate-180' : ''}`} />
+                    </div>
+                    {expandedWebhook === 'zoho' && (
+                      <div className="px-11 py-4 bg-[#f8f9ff] border-t border-[#e5eeff] text-xs">
+                        <p className="font-semibold mb-2 text-[#3d618c] uppercase">Zoho CRM Workflow Setup</p>
+                        <div className="flex items-center gap-2">
+                          <Input readOnly value={buildWebhookUrl('/api/webhook/zoho')} className="bg-white border-[#e5eeff]" />
+                          <Button variant="outline" size="sm" onClick={() => copyToClipboard(buildWebhookUrl('/api/webhook/zoho'))}><Copy className="h-4 w-4" /></Button>
                         </div>
                       </div>
+                    )}
+                  </div>
+
+                  {/* Custom Webhook URL */}
+                  <div className="border border-[#e5eeff] rounded-xl overflow-hidden">
+                    <div onClick={() => toggleWebhook('custom')} className="flex items-center gap-4 py-4 px-4 hover:bg-[#eff4ff] cursor-pointer transition-colors">
+                      <div className="flex-shrink-0">
+                        <div className={`w-3 h-3 rounded-full ${customWebhookStatus?.status === 'ready' ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : 'bg-slate-300'}`}></div>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-sm font-bold">WordPress/Custom Hook</span>
+                          <span className="px-2 py-0.5 rounded text-[9px] font-black bg-[#dcfce7] text-[#166534] uppercase">Plugin</span>
+                        </div>
+                        <code className="text-[10px] text-[#3d618c] bg-[#eff4ff] px-2 py-0.5 rounded truncate">{buildWebhookUrl('/api/webhook/custom')}</code>
+                      </div>
+                      <ChevronDown className={`w-5 h-5 text-[#3d618c] transition-transform ${expandedWebhook === 'custom' ? 'rotate-180' : ''}`} />
                     </div>
-                  ))}
-                </>
-              )}
-
-              {registeredWebhooks.length === 0 && (
-                <div className="p-4 text-center text-sm text-gray-500 border border-dashed border-[#e5eeff] rounded-xl">
-                  No custom webhooks added yet. Click "Add Webhook" to connect additional sites.
+                    {expandedWebhook === 'custom' && (
+                      <div className="px-11 py-4 bg-[#f8f9ff] border-t border-[#e5eeff] text-xs">
+                        <p className="font-semibold mb-2 text-[#3d618c] uppercase">Generic/WordPress Plugin URL</p>
+                        <div className="flex items-center gap-2">
+                          <Input readOnly value={buildWebhookUrl('/api/webhook/custom')} className="bg-white border-[#e5eeff]" />
+                          <Button variant="outline" size="sm" onClick={() => copyToClipboard(buildWebhookUrl('/api/webhook/custom'))}><Copy className="h-4 w-4" /></Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              )}
+              </div>
+            </div>
 
+            <div className="md:col-span-5 space-y-6">
+              <div className="bg-white p-8 rounded-2xl shadow-sm border-none ring-1 ring-black/[0.03]">
+                <h3 className="text-xl font-bold font-headline mb-6 flex items-center gap-2">
+                  <Monitor className="w-5 h-5 text-[#005cc0]" /> Live Feed
+                </h3>
+                
+                <div className="space-y-8">
+                  {/* WordPress Activity */}
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-[#3d618c] mb-3 flex items-center gap-2">
+                      <Clock className="w-3 h-3" /> Latest WordPress
+                    </p>
+                    {lastCustomWebhook ? (
+                      <div className="bg-[#f8f9ff] p-3 rounded-xl border border-[#e5eeff] space-y-3">
+                        <div className="flex items-center justify-between text-[10px]">
+                          <span className="text-gray-500">{lastCustomWebhook.topic || 'Event'}</span>
+                          <span className="font-mono text-white bg-[#05345c] px-1.5 py-0.5 rounded">{new Date(lastCustomWebhook.receivedAt).toLocaleTimeString()}</span>
+                        </div>
+                        <pre className="max-h-32 overflow-auto p-2 text-[9px] bg-[#05345c] text-[#dff3ff] rounded-lg whitespace-pre-wrap break-words">
+                          {latestWordPressRawPayload}
+                        </pre>
+                      </div>
+                    ) : (
+                      <div className="p-3 border border-dashed border-[#e5eeff] rounded-xl text-center text-[10px] text-gray-400">Waiting for WordPress activity...</div>
+                    )}
+                  </div>
+
+                  {/* Zoho Activity */}
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-[#3d618c] mb-3 flex items-center gap-2">
+                      <Workflow className="w-3 h-3" /> Latest Zoho CRM
+                    </p>
+                    {lastZohoWebhook ? (
+                      <div className="bg-[#f8f9ff] p-3 rounded-xl border border-[#e5eeff] space-y-3">
+                        <div className="flex items-center justify-between text-[10px]">
+                          <span className="text-gray-500">CRM Update</span>
+                          <span className="font-mono text-white bg-[#05345c] px-1.5 py-0.5 rounded">{new Date(lastZohoWebhook.receivedAt).toLocaleTimeString()}</span>
+                        </div>
+                        <pre className="max-h-32 overflow-auto p-2 text-[9px] bg-[#05345c] text-[#dff3ff] rounded-lg whitespace-pre-wrap break-words">
+                          {latestZohoRawPayload}
+                        </pre>
+                      </div>
+                    ) : (
+                      <div className="p-3 border border-dashed border-[#e5eeff] rounded-xl text-center text-[10px] text-gray-400">Waiting for Zoho activity...</div>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-      </div>
-    </div >
+        </TabsContent>
+
+        {/* Preferences Tab */}
+        <TabsContent value="preferences" className="space-y-8 mt-0 focus-visible:outline-none">
+          <div className="bg-white p-8 rounded-2xl shadow-sm border-none ring-1 ring-black/[0.03] max-w-2xl">
+            <h3 className="text-xl font-bold font-headline mb-8">App Preferences</h3>
+            <div className="space-y-6">
+              <div className="flex items-center justify-between p-4 bg-[#f8f9ff] rounded-xl">
+                <div>
+                  <p className="font-bold">Dark Mode</p>
+                  <p className="text-xs text-[#3d618c]">Toggle between light and dark themes</p>
+                </div>
+                <button type="button" onClick={toggleDarkMode} className={`w-12 h-7 rounded-full relative p-1 transition-colors ${isDarkMode ? 'bg-[#005cc0]' : 'bg-[#d2e4ff]'}`}>
+                  <div className={`w-5 h-5 bg-white rounded-full shadow-sm transition-transform ${isDarkMode ? 'translate-x-5' : 'translate-x-0'}`}></div>
+                </button>
+              </div>
+              <div className="flex items-center justify-between p-4 bg-[#f8f9ff] rounded-xl">
+                <div>
+                  <p className="font-bold">Notifications</p>
+                  <p className="text-xs text-[#3d618c]">Instant browser alerts for new events</p>
+                </div>
+                <button type="button" onClick={() => setNotificationsEnabled(!notificationsEnabled)} className={`w-12 h-7 rounded-full relative p-1 transition-colors ${notificationsEnabled ? 'bg-[#005cc0]' : 'bg-[#d2e4ff]'}`}>
+                  <div className={`w-5 h-5 bg-white rounded-full shadow-sm transition-transform ${notificationsEnabled ? 'translate-x-5' : 'translate-x-0'}`}></div>
+                </button>
+              </div>
+            </div>
+          </div>
+        </TabsContent>
+      </Tabs>
+    </div>
   )
 }
 

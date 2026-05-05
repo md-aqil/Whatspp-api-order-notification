@@ -6,6 +6,7 @@ import { ChatWindow } from '@/components/dashboard/ChatWindow'
 import { ChatList } from '@/components/dashboard/ChatList'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
+import { MessageSquare } from 'lucide-react'
 
 export default function DashboardChatPage() {
   const router = useRouter()

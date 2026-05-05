@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
-import { BellRing, CheckCircle2, Clock3, CopyPlus, Copy, HelpCircle, History, MessageSquareText, PackageCheck, PlayCircle, Plus, Settings, Sparkles, Square, Trash2, Truck, Workflow, X, Zap, ZoomIn, ZoomOut, Maximize2, ArrowLeft, Download, Upload } from 'lucide-react'
+import Link from 'next/link'
+import { BellRing, CheckCircle2, Clock3, CopyPlus, Copy, HelpCircle, History, MessageSquareText, PackageCheck, PlayCircle, Plus, Settings, Sparkles, Square, Trash2, Truck, Workflow, X, Zap, ZoomIn, ZoomOut, Maximize2, ArrowLeft, Download, Upload, LayoutGrid, MousePointer2, Search, Rocket, Activity, ChevronRight, ArrowRight, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, ToggleLeft } from 'lucide-react'
 import { toast, Toaster } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -28,15 +29,18 @@ const TRIGGERS = [
   { value: 'custom.webhook', label: 'Generic Webhook', icon: Workflow, description: 'When a webhook is received from any source' },
   { value: 'custom.order_created', label: 'Generic Order', icon: Workflow, description: 'When a custom order is created' },
   { value: 'custom.payment_received', label: 'Generic Payment', icon: Workflow, description: 'When payment is received' },
+  { value: 'zoho.lead_updated', label: 'Lead Updated (Zoho)', icon: Workflow, description: 'When a lead status changes in Zoho CRM' },
+  { value: 'custom.event_subscription', label: 'Event Subscribed', icon: Sparkles, description: 'When a user registers for an upcoming event' },
 ]
 const BLOCKS = [
   { type: 'test', tab: 'Triggers', label: 'Test Node', icon: PlayCircle, color: 'pink', description: 'Manual test with latest order or dummy data', defaults: { title: 'Test Flow', event: 'shopify.order_created', testSource: 'latest_order', description: 'Run this flow with latest order data or dummy values' } },
   { type: 'trigger', tab: 'Triggers', label: 'Integration Trigger', icon: BellRing, color: 'violet', description: 'Start from a commerce event', defaults: { title: 'Order Trigger', event: 'shopify.order_created', description: 'When an order is placed' } },
   { type: 'delay', tab: 'Actions', label: 'Delay', icon: Clock3, color: 'blue', description: 'Pause before next action', defaults: { title: 'Wait 2 Hours', delayValue: '2', delayUnit: 'hours', description: 'Fixed time offset' } },
-  { type: 'message', tab: 'Actions', label: 'WhatsApp', icon: MessageSquareText, color: 'emerald', description: 'Send a WhatsApp message', defaults: { title: 'Order Confirmation', channel: 'whatsapp', template: '', templateLanguage: '', message: 'Hi {{customer_name}}, your order #{{order_number}} is confirmed!', description: 'Confirmation message', recipientMode: 'customer', recipientNumber: '', variableMappings: [{ label: 'Customer Name', value: '{{shopify.customer.first_name}}' }, { label: 'Order Amount', value: '{{shopify.total_price}}' }] } },
+  { type: 'message', tab: 'Actions', label: 'WhatsApp', icon: MessageSquareText, color: 'emerald', description: 'Send a WhatsApp message', defaults: { title: 'Order Confirmation', channel: 'whatsapp', template: '', templateLanguage: '', message: 'Hello {{customer_name}}, thank you for choosing us! ✨ Your order #{{order_number}} is confirmed and we are getting it ready for you. 📦', description: 'Premium confirmation message', recipientMode: 'customer', recipientNumber: '', variableMappings: [{ label: 'Customer Name', value: '{{shopify.customer.first_name}}' }, { label: 'Order Amount', value: '{{shopify.total_price}}' }] } },
   { type: 'condition', tab: 'Actions', label: 'Condition', icon: Workflow, color: 'amber', description: 'Branch logic on a rule', defaults: { title: 'Order > $100', rule: 'total_price > 100', description: 'Conditional branch' } },
-  { type: 'interactive', tab: 'Actions', label: 'Interactive Menu', icon: HelpCircle, color: 'fuchsia', description: 'Send a menu with reply options', defaults: { title: 'Auto Reply Menu', message: 'Hello! Please choose an option:', options: [{ id: 'opt0', label: 'Check Order Status' }, { id: 'opt1', label: 'Talk to Support' }], description: 'Send a 4-option menu' } },
+  { type: 'interactive', tab: 'Actions', label: 'Interactive Menu', icon: HelpCircle, color: 'fuchsia', description: 'Send a menu with reply options', defaults: { title: 'Auto Reply Menu', message: 'Hello {{customer_name}}, welcome! 👋 We\'re here to provide you with a premium experience. How can we assist you today? Please select an option below:', options: [{ id: 'opt0', label: '📦 Order Status' }, { id: 'opt1', label: '💬 Talk to Specialist' }], description: 'Professional interactive menu' } },
   { type: 'ai_reply', tab: 'Actions', label: 'AI Assistant', icon: Sparkles, color: 'indigo', description: 'Natural AI response using knowledge base', defaults: { title: 'AI Assistant', description: 'AI-powered reply', recipientMode: 'customer' } },
+  { type: 'http_request', tab: 'Actions', label: 'External API', icon: Workflow, color: 'sky', description: 'Connect to CRMs like Zoho, Salesforce, or custom APIs', defaults: { title: 'Zoho CRM Sync', method: 'POST', url: 'https://www.zohoapis.com/crm/v2/Leads', headers: '{\n  "Authorization": "Zoho-oauthtoken {{zoho_token}}",\n  "Content-Type": "application/json"\n}', body: '{\n  "data": [\n    {\n      "Last_Name": "{{customer_name}}",\n      "Phone": "{{customer_phone}}",\n      "Description": "Lead from WhatsApp Automation"\n    }\n  ]\n}', description: 'Send data to external CRM' } },
 ]
 const COLORS = {
   test: { border: 'border-pink-500/40', bg: 'bg-[#1d0f18]', hdr: 'bg-pink-600/15', icon: 'bg-pink-600/25 text-pink-300', lbl: 'text-pink-300', dot: 'bg-pink-500' },
@@ -46,6 +50,7 @@ const COLORS = {
   condition: { border: 'border-amber-500/40', bg: 'bg-[#1a1508]', hdr: 'bg-amber-600/15', icon: 'bg-amber-600/25 text-amber-300', lbl: 'text-amber-300', dot: 'bg-amber-500' },
   interactive: { border: 'border-fuchsia-500/40', bg: 'bg-[#1a0f18]', hdr: 'bg-fuchsia-600/15', icon: 'bg-fuchsia-600/25 text-fuchsia-300', lbl: 'text-fuchsia-300', dot: 'bg-fuchsia-500' },
   ai_reply: { border: 'border-indigo-500/40', bg: 'bg-[#0f1125]', hdr: 'bg-indigo-600/15', icon: 'bg-indigo-600/25 text-indigo-300', lbl: 'text-indigo-300', dot: 'bg-indigo-500' },
+  http_request: { border: 'border-sky-500/40', bg: 'bg-[#0f1a25]', hdr: 'bg-sky-600/15', icon: 'bg-sky-600/25 text-sky-300', lbl: 'text-sky-300', dot: 'bg-sky-500' },
 }
 const uid = p => `${p}-${Math.random().toString(36).slice(2, 9)}`
 const isDefault = id => defaultAutomations.some(a => a.id === id)
@@ -60,7 +65,8 @@ const DEFAULT_FLOW_IDS_BY_EVENT = {
   'woocommerce.cart_abandoned': 'default-woocommerce-cart-recovery',
   'custom.webhook': 'default-custom-webhook',
   'custom.order_created': 'default-custom-webhook',
-  'custom.payment_received': 'default-custom-webhook'
+  'custom.payment_received': 'default-custom-webhook',
+  'zoho.lead_updated': 'default-zoho-lead-status-notification'
 }
 const getTrig = ev => TRIGGERS.find(t => t.value === ev) || TRIGGERS[0]
 const getBlock = type => BLOCKS.find(b => b.type === type) || BLOCKS[0]
@@ -448,6 +454,21 @@ export function AutomationStudio() {
   const [saveState, setSaveState] = useState('saved')
   const [lastSavedAt, setLastSavedAt] = useState(null)
 
+  const [chats, setChats] = useState([])
+  const [selectedChatPhone, setSelectedChatPhone] = useState('')
+  
+  // New UI states for redesign
+  const [viewMode, setViewMode] = useState('editor') // 'gallery' or 'editor'
+  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [rightSidebarOpen, setRightSidebarOpen] = useState(true)
+  const [searchQuery, setSearchQuery] = useState('')
+
+  useEffect(() => {
+    fetch('/api/chats?limit=50').then(r => r.json()).then(d => {
+      setChats(Array.isArray(d) ? d : [])
+    }).catch(console.error)
+  }, [])
+
   useEffect(() => {
     latestAutomationsRef.current = automations
   }, [automations])
@@ -671,6 +692,7 @@ export function AutomationStudio() {
       if (sel.event.startsWith('shopify.')) setTriggerCategory('shopify')
       else if (sel.event.startsWith('woocommerce.')) setTriggerCategory('woocommerce')
       else if (sel.event.startsWith('whatsapp.')) setTriggerCategory('whatsapp')
+      else if (sel.event.startsWith('zoho.')) setTriggerCategory('zoho')
       else if (sel.event.startsWith('custom.')) setTriggerCategory('custom')
     }
   }, [sel?.event, sel?.type])
@@ -890,19 +912,30 @@ export function AutomationStudio() {
     setAutomations(n)
     persist(n, msg)
   }
+  function handleToggleFlowStatus(id) {
+    const flow = automations.find(a => a.id === id)
+    if (!flow) return
+    
+    if (flow.status) {
+      setStatus(id, false, 'Stopped')
+      return
+    }
+    
+    // Validate before publishing
+    const validation = validateAutomationFlow(flow)
+    if (validation.errors.length > 0) {
+      setActiveId(id)
+      if (validation.firstErrorStepId) setSelId(validation.firstErrorStepId)
+      setPropTab('logs')
+      toast.error(`Fix ${validation.errors.length} issue${validation.errors.length === 1 ? '' : 's'} before publishing`)
+      return
+    }
+    setStatus(id, true, validation.warnings.length > 0 ? 'Published with warnings' : 'Live!')
+  }
+
   function handleTogglePublish() {
     if (!active) return
-    if (active.status) {
-      setStatus(active.id, false, 'Stopped')
-      return
-    }
-    if (activeValidation.errors.length > 0) {
-      if (activeValidation.firstErrorStepId) setSelId(activeValidation.firstErrorStepId)
-      setPropTab('logs')
-      toast.error(`Fix ${activeValidation.errors.length} issue${activeValidation.errors.length === 1 ? '' : 's'} before publishing`)
-      return
-    }
-    setStatus(active.id, true, activeValidation.warnings.length > 0 ? 'Published with warnings' : 'Live!')
+    handleToggleFlowStatus(active.id)
   }
   async function runFlowTest(nodeId = activeTestNode?.id) {
     if (!active?.id) return
@@ -911,13 +944,27 @@ export function AutomationStudio() {
       return
     }
 
+    const step = active.steps.find(s => s.id === nodeId)
+
     try {
       setTesting(true)
       setTestingNodeId(nodeId)
+
+      const payload = { automationId: active.id, nodeId }
+      if (step?.testSource === 'history') {
+        if (!selectedChatPhone) {
+          toast.error('Please select a chat from history')
+          setTesting(false)
+          setTestingNodeId(null)
+          return
+        }
+        payload.phone = selectedChatPhone
+      }
+
       const response = await fetch('/api/automations/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ automationId: active.id, nodeId })
+        body: JSON.stringify(payload)
       })
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || 'Test failed')
@@ -1054,6 +1101,22 @@ export function AutomationStudio() {
     ? `Last saved ${new Date(lastSavedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
     : (saveState === 'error' ? 'Autosave failed. Retry from the top bar.' : 'Changes save automatically.')
 
+  const filteredAutomations = useMemo(() => {
+    if (!searchQuery) return automations
+    const q = searchQuery.toLowerCase()
+    return automations.filter(a => a.name.toLowerCase().includes(q) || a.summary?.toLowerCase().includes(q) || a.source?.toLowerCase().includes(q))
+  }, [automations, searchQuery])
+
+  const automationsBySource = useMemo(() => {
+    const groups = {}
+    filteredAutomations.forEach(a => {
+      const src = a.source || 'Custom'
+      if (!groups[src]) groups[src] = []
+      groups[src].push(a)
+    })
+    return groups
+  }, [filteredAutomations])
+
   return (
     <div className="fixed inset-0 z-[100] flex flex-col bg-[#0b0d14] text-white overflow-hidden" role="application" aria-label="Flow Studio — Automation Canvas" style={{ fontFamily: 'Inter,system-ui,sans-serif' }}>
       <style>{`
@@ -1063,102 +1126,246 @@ export function AutomationStudio() {
         .node-in{animation:nodeIn .35s cubic-bezier(.34,1.56,.64,1) forwards}
         .edge-path{stroke-dasharray:500;animation:edgeIn .5s ease forwards}
         .dot-pulse{animation:spinPulse 1.4s ease infinite}
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.05); border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.1); }
       `}</style>
       <Toaster theme="dark" richColors position="top-right" />
 
       {/* NAV */}
-      <header role="banner" className="flex items-center justify-between px-5 h-12 border-b border-white/[0.06] bg-[#0b0d14]/95 backdrop-blur-xl shrink-0 z-40">
-        <div className="flex items-center gap-5">
-          <div className="flex items-center gap-2">
-            <div className="h-6 w-6 rounded-md bg-violet-600 flex items-center justify-center" aria-hidden="true"><Workflow className="h-3.5 w-3.5 text-white" /></div>
-            <span className="font-bold text-sm tracking-tight">Flow Studio</span>
-          </div>
-          <nav aria-label="Studio sections" className="hidden md:flex gap-0.5">
-            <Button variant="ghost" size="sm" onClick={() => window.location.href = '/dashboard'} className="text-white/50 hover:text-white hover:bg-white/8 rounded-lg gap-2">
-              <ArrowLeft className="h-4 w-4" />
-              Back
-            </Button>
-          </nav>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <Button variant="ghost" size="icon" aria-label="History" className="h-7 w-7 text-white/30 hover:text-white hover:bg-white/8 rounded-lg"><History className="h-3.5 w-3.5" /></Button>
-          <Button variant="ghost" size="icon" aria-label="Settings" className="h-7 w-7 text-white/30 hover:text-white hover:bg-white/8 rounded-lg"><Settings className="h-3.5 w-3.5" /></Button>
-          <div className="w-px h-4 bg-white/10 mx-1" aria-hidden="true" />
-	          <Button
-	            size="sm"
-	            aria-label={saveState === 'error' ? 'Retry saving changes' : 'Autosave status'}
-	            onClick={saveState === 'error' ? () => persist(automations, 'Draft saved') : undefined}
-	            disabled={saveState !== 'error'}
-	            className={`h-7 px-3 rounded-lg text-xs font-semibold border ${saveState === 'error'
-	              ? 'bg-rose-500/12 hover:bg-rose-500/18 text-rose-200 border-rose-500/25'
-	              : 'bg-white/8 text-white/60 border-white/8 cursor-default opacity-100 disabled:opacity-100'}`}
-	          >
-	            {saveLabel}
-	          </Button>
-	          <Button size="sm" aria-label="Run flow test" onClick={runFlowTest} disabled={!activeTestNode || testing}
-	            className="h-7 px-3 rounded-lg bg-white/[0.06] hover:bg-white/10 text-white/80 text-xs font-semibold border border-white/8 disabled:opacity-40">
-	            <PlayCircle className="mr-1 h-3 w-3" />{testing ? 'Testing...' : 'Run Test'}
-	          </Button>
-	          <Button size="sm" aria-label={active?.status ? 'Stop automation' : 'Publish automation'} disabled={!active}
-	            onClick={handleTogglePublish}
-	            className={`h-7 px-3 rounded-lg text-xs font-bold transition-all ${active?.status ? 'bg-rose-600 hover:bg-rose-700 text-white' : 'bg-violet-600 hover:bg-violet-700 text-white'}`}>
-	            {active?.status ? <><Square className="mr-1 h-3 w-3" />Stop</> : <><PlayCircle className="mr-1 h-3 w-3" />Publish</>}
-	          </Button>
-        </div>
-      </header>
+      {/* NAV */}
+      <header role="banner" className="flex items-center justify-between px-4 h-14 border-b border-white/[0.06] bg-[#0b0d14]/95 backdrop-blur-xl shrink-0 z-50">
+        <div className="flex items-center gap-4">
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className={`h-9 w-9 rounded-xl transition-all ${sidebarOpen ? 'text-violet-400 bg-violet-500/10' : 'text-white/30 hover:bg-white/5'}`}
+          >
+            {sidebarOpen ? <PanelLeftClose className="w-5 h-5" /> : <PanelLeftOpen className="w-5 h-5" />}
+          </Button>
 
-      {/* FLOW TABS */}
-      <div role="tablist" aria-label="Automation flows" className="flex items-center gap-2 px-5 h-10 border-b border-white/[0.06] bg-[#0d0f17] shrink-0 overflow-x-auto">
-        <div className="flex items-center gap-1.5 text-[11px] text-white/25 shrink-0 pr-2 border-r border-white/[0.07]" aria-label={`${activeCount} active, ${automations.length} total`}>
-          <span>{activeCount} active</span><span aria-hidden="true">·</span><span>{automations.length} flows</span>
+          <Button asChild variant="ghost" size="icon" className="h-9 w-9 rounded-xl text-white/30 hover:text-white hover:bg-white/5 mr-1">
+            <Link href="/dashboard" title="Back to Dashboard"><ArrowLeft className="h-4 w-4" /></Link>
+          </Button>
+
+          <div className="flex items-center gap-2.5">
+            <div className="h-7 w-7 rounded-lg bg-violet-600 flex items-center justify-center shadow-lg shadow-violet-500/20" aria-hidden="true"><Workflow className="h-4 w-4 text-white" /></div>
+            <span className="font-bold text-base tracking-tight hidden sm:inline-block">Flow Studio</span>
+          </div>
+          
+          <div className="h-6 w-px bg-white/10 mx-2" />
+          
+          <div className="flex bg-white/5 p-1 rounded-xl border border-white/10">
+            <button 
+              onClick={() => setViewMode('gallery')}
+              className={`px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider rounded-lg transition-all flex items-center gap-2 ${viewMode === 'gallery' ? 'bg-white/10 text-white shadow-sm' : 'text-white/30 hover:text-white/70'}`}
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+              Gallery
+            </button>
+            <button 
+              onClick={() => setViewMode('editor')}
+              className={`px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider rounded-lg transition-all flex items-center gap-2 ${viewMode === 'editor' ? 'bg-white/10 text-white shadow-sm' : 'text-white/30 hover:text-white/70'}`}
+            >
+              <MousePointer2 className="w-3.5 h-3.5" />
+              Canvas
+            </button>
+          </div>
         </div>
-        <div className="flex items-center gap-1">
-          {automations.map(a => {
-            const sel2 = a.id === active?.id
-            const isDef = isDefault(a.id)
-            return (
-              <div key={a.id} role="tab" aria-selected={sel2}
-                className={`group flex items-center gap-1 rounded-md transition-all whitespace-nowrap ${sel2 ? 'bg-violet-600/20 border border-violet-500/30' : 'border border-transparent hover:bg-white/[0.05]'}`}>
-                <button
-                  aria-label={`Switch to ${a.name} — ${a.status ? 'running' : 'stopped'}`}
-                  onClick={() => { setActiveId(a.id); setSelId(a.steps[0]?.id || null) }}
-                  className={`flex items-center gap-1.5 pl-2.5 pr-1 py-1 text-xs font-medium ${sel2 ? 'text-violet-300' : 'text-white/50 hover:text-white/80'}`}>
-                  <span className={`h-1.5 w-1.5 rounded-full shrink-0 transition-colors ${a.status ? 'bg-emerald-400 dot-pulse' : 'bg-white/20'}`} aria-hidden="true" />
-                  {a.name}
-                </button>
-                {!isDef && (
-                  <button
-                    aria-label={`Delete ${a.name}`}
-                    onClick={e => { e.stopPropagation(); deleteFlow(a.id) }}
-                    className={`p-1 pr-2 rounded-r-md text-white/0 group-hover:text-white/30 hover:!text-rose-400 transition-all`}>
-                    <X className="h-3 w-3" />
-                  </button>
+
+        <div className="flex items-center gap-2">
+          {viewMode === 'editor' && active && (
+            <div className="flex items-center gap-2 mr-2 px-3 py-1.5 bg-white/5 rounded-xl border border-white/10 hidden lg:flex">
+               <div className={`h-2 w-2 rounded-full ${active?.status ? 'bg-emerald-500 dot-pulse' : 'bg-white/20'}`} />
+               <span className="text-xs font-bold truncate max-w-[150px]">{active?.name}</span>
+               <span className="text-[10px] text-white/30 uppercase tracking-widest">{active?.status ? 'Live' : 'Draft'}</span>
+            </div>
+          )}
+
+
+            <div className="w-px h-5 bg-white/10 mx-1" aria-hidden="true" />
+            
+            <Button
+              size="sm"
+              aria-label={saveState === 'error' ? 'Retry saving changes' : 'Autosave status'}
+              onClick={saveState === 'error' ? () => persist(automations, 'Draft saved') : undefined}
+              disabled={saveState !== 'error'}
+              className={`h-8 px-3 rounded-xl text-xs font-semibold border transition-all ${saveState === 'error'
+                ? 'bg-rose-500/12 hover:bg-rose-500/18 text-rose-200 border-rose-500/25'
+                : 'bg-white/5 text-white/60 border-white/8 cursor-default'}`}
+            >
+              {saveState === 'saving' && <span className="mr-2 h-2 w-2 rounded-full bg-indigo-400 animate-pulse" />}
+              {saveLabel}
+            </Button>
+
+            {viewMode === 'editor' && (
+              <>
+                <Button size="sm" aria-label="Run flow test" onClick={() => runFlowTest()} disabled={!activeTestNode || testing}
+                  className="h-8 px-4 rounded-xl bg-white/[0.06] hover:bg-white/10 text-white/80 text-xs font-semibold border border-white/8 disabled:opacity-40">
+                  <PlayCircle className="mr-2 h-3.5 w-3.5" />{testing ? 'Testing...' : 'Run Test'}
+                </Button>
+                <Button size="sm" aria-label={active?.status ? 'Stop automation' : 'Publish automation'} disabled={!active}
+                  onClick={handleTogglePublish}
+                  className={`h-8 px-4 rounded-xl text-xs font-bold transition-all shadow-lg ${active?.status ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-900/20' : 'bg-violet-600 hover:bg-violet-700 text-white shadow-violet-900/20'}`}>
+                  {active?.status ? <><Square className="mr-2 h-3.5 w-3.5" />Stop</> : <><Rocket className="mr-2 h-3.5 w-3.5" />Go Live</>}
+                </Button>
+
+                <div className="w-px h-5 bg-white/10 mx-1" aria-hidden="true" />
+
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setRightSidebarOpen(!rightSidebarOpen)}
+                  className={`h-9 w-9 rounded-xl transition-all ${rightSidebarOpen ? 'text-violet-400 bg-violet-500/10' : 'text-white/30 hover:bg-white/5'}`}
+                >
+                  {rightSidebarOpen ? <PanelRightClose className="w-5 h-5" /> : <PanelRightOpen className="w-5 h-5" />}
+                </Button>
+              </>
+            )}
+
+            {viewMode === 'gallery' && (
+              <Button 
+                onClick={() => setDlgOpen(true)}
+                className="h-8 px-4 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold shadow-lg shadow-violet-900/20"
+              >
+                <Plus className="mr-2 h-4 w-4" /> New Automation
+              </Button>
+            )}
+          </div>
+        </header>
+
+      {/* MAIN CONTENT AREA */}
+      <div className="flex flex-1 min-h-0 relative">
+
+        {/* GALLERY VIEW */}
+        {viewMode === 'gallery' && (
+          <div className="flex-1 bg-[#080a12] overflow-y-auto custom-scrollbar">
+            <div className="max-w-7xl mx-auto p-8 space-y-10">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h1 className="text-3xl font-black text-white tracking-tight">Automations</h1>
+                  <p className="text-white/40 mt-2 text-sm">Manage your customer journeys and automated workflows.</p>
+                </div>
+                <div className="flex gap-3">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-white/30" />
+                    <input 
+                      type="text"
+                      placeholder="Search your flows..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="bg-white/5 border border-white/10 rounded-xl py-2 pl-10 pr-4 text-sm text-white placeholder:text-white/20 focus:ring-1 focus:ring-violet-500/50 outline-none w-64 transition-all"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Templates Section */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                    <Sparkles className="w-5 h-5 text-violet-400" />
+                    Recommended Templates
+                  </h2>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {defaultAutomations.slice(0, 3).map(template => (
+                    <div 
+                      key={template.id}
+                      className="group p-6 rounded-3xl bg-gradient-to-br from-violet-600/10 to-transparent border border-violet-500/20 hover:border-violet-500/40 transition-all cursor-pointer relative overflow-hidden"
+                      onClick={() => {
+                        setCloneSourceId(template.id)
+                        setMode('template')
+                        setDraftName(`My ${template.name}`)
+                        setDlgOpen(true)
+                      }}
+                    >
+                      <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
+                        <Workflow className="w-24 h-24" />
+                      </div>
+                      <div className="relative z-10">
+                        <div className="h-10 w-10 rounded-xl bg-violet-600 flex items-center justify-center mb-4 shadow-lg shadow-violet-500/20">
+                          <Zap className="w-5 h-5 text-white" />
+                        </div>
+                        <h3 className="font-black text-white text-lg">{template.name}</h3>
+                        <p className="text-white/50 text-xs mt-2 leading-relaxed">{template.summary}</p>
+                        <div className="mt-6 flex items-center gap-2 text-violet-400 text-xs font-bold uppercase tracking-widest group-hover:gap-3 transition-all">
+                          Use Template <ArrowRight className="w-4 h-4" />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Your Flows Grid */}
+              <div className="space-y-6 pt-6">
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                  <Activity className="w-5 h-5 text-emerald-400" />
+                  Your Active Journeys
+                </h2>
+                {filteredAutomations.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-20 border-2 border-dashed border-white/5 rounded-3xl">
+                    <div className="h-16 w-16 rounded-2xl bg-white/5 flex items-center justify-center mb-4">
+                      <Search className="w-8 h-8 text-white/20" />
+                    </div>
+                    <p className="text-white/40 font-medium">No flows found matching your search.</p>
+                    <Button variant="ghost" onClick={() => setSearchQuery('')} className="mt-2 text-violet-400">Clear search</Button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {filteredAutomations.map(flow => (
+                      <div 
+                        key={flow.id}
+                        onClick={() => {
+                          setActiveId(flow.id)
+                          setSelId(flow.steps[0]?.id || null)
+                          setViewMode('editor')
+                        }}
+                        className="group p-5 rounded-3xl bg-white/[0.02] border border-white/[0.06] hover:bg-white/[0.04] hover:border-white/10 transition-all cursor-pointer"
+                      >
+                        <div className="flex items-start justify-between mb-4">
+                          <div className={`h-10 w-10 rounded-2xl flex items-center justify-center ${flow.status ? 'bg-emerald-500/10 text-emerald-400' : 'bg-white/5 text-white/30'}`}>
+                            {flow.source === 'Shopify' ? <PackageCheck className="w-5 h-5" /> : (flow.source === 'Zoho' ? <Workflow className="w-5 h-5" /> : <Zap className="w-5 h-5" />)}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className={`px-2 py-1 rounded-lg text-[10px] font-bold uppercase tracking-widest ${flow.status ? 'bg-emerald-500/10 text-emerald-400' : 'bg-white/5 text-white/30'}`}>
+                              {flow.status ? 'Live' : 'Draft'}
+                            </span>
+                          </div>
+                        </div>
+                        <h3 className="font-bold text-white group-hover:text-violet-300 transition-colors">{flow.name}</h3>
+                        <p className="text-white/40 text-[11px] mt-1.5 line-clamp-2 leading-relaxed">{flow.summary || 'Custom automated journey'}</p>
+                        
+                        <div className="mt-6 pt-5 border-t border-white/[0.04] flex items-center justify-between">
+                          <div className="flex gap-4">
+                             <div className="text-center">
+                               <div className="text-xs font-bold text-white/70">{flow.metrics?.sent || 0}</div>
+                               <div className="text-[9px] text-white/25 uppercase tracking-widest font-bold">Sent</div>
+                             </div>
+                             <div className="text-center">
+                               <div className="text-xs font-bold text-white/70">{flow.metrics?.openRate || 0}%</div>
+                               <div className="text-[9px] text-white/25 uppercase tracking-widest font-bold">Opens</div>
+                             </div>
+                          </div>
+                          <div className="h-8 w-8 rounded-full bg-white/5 flex items-center justify-center group-hover:bg-violet-600 transition-colors">
+                             <ChevronRight className="w-4 h-4 text-white/40 group-hover:text-white" />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
-            )
-          })}
-        </div>
-        <div className="ml-auto flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={exportFlow} disabled={!active} className="h-8 px-2.5 text-white/40 hover:text-white/80 hover:bg-white/5 gap-1.5 text-xs">
-            <Download className="h-3.5 w-3.5" /> Export
-          </Button>
-          <div className="relative">
-            <input type="file" accept=".json" onChange={handleImport} className="absolute inset-0 opacity-0 cursor-pointer" title="Import Flow" />
-            <Button variant="ghost" size="sm" className="h-8 px-2.5 text-white/40 hover:text-white/80 hover:bg-white/5 gap-1.5 text-xs">
-              <Upload className="h-3.5 w-3.5" /> Import
-            </Button>
+            </div>
           </div>
-          <button
-            aria-label="Create new automation flow"
-            onClick={() => setDlgOpen(true)}
-            className="shrink-0 h-8 px-3.5 rounded-lg bg-violet-500/18 hover:bg-violet-500/28 text-violet-100 border border-violet-400/35 shadow-[0_8px_24px_rgba(109,40,217,0.18)] text-xs font-semibold flex items-center gap-1.5 transition-all">
-          <Plus className="h-3.5 w-3.5" />New flow
-        </button>
-      </div>
-    </div>
+        )}
 
-      {/* 3-COL */}
-      <div className="flex flex-1 min-h-0">
+        {/* 3-COL (EDITOR VIEW) — Integrated into main flex context */}
+        {viewMode === 'editor' && (
+          <>
         {/* LEFT */}
         <aside aria-label="Node library" className="w-[264px] shrink-0 border-r border-white/[0.06] bg-[#0d0f17] flex flex-col">
           <div className="px-4 pt-4 pb-3 border-b border-white/[0.06]">
@@ -1201,8 +1408,8 @@ export function AutomationStudio() {
               ))}
             </div>
           </div>
-          <ScrollArea className="flex-1 px-4 pb-3">
-            <div className="space-y-1.5 pt-1" role="list" aria-label="Draggable node blocks">
+          <ScrollArea className="flex-1 px-4 pb-3 [&>div>div]:!block">
+            <div className="w-full min-w-full space-y-1.5 pt-1" role="list" aria-label="Draggable node blocks">
 	              {libBlocks.map(block => {
 	                const Icon = block.icon; const active2 = selectedLibraryBlockType === block.type
 	                return (
@@ -1235,9 +1442,98 @@ export function AutomationStudio() {
 	          </div>
 	        </aside>
 
+        {/* FLOW MANAGEMENT PANEL (Integrated after library) */}
+        <aside className={`transition-all duration-300 border-r border-white/[0.06] bg-[#0d0f17] flex flex-col z-40 ${sidebarOpen ? 'w-[264px]' : 'w-0 overflow-hidden border-none'}`}>
+          <div className="p-4 border-b border-white/[0.06] space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-white/40">Automations</h2>
+              <Button variant="ghost" size="icon" onClick={() => setDlgOpen(true)} className="h-6 w-6 rounded-lg text-white/30 hover:text-violet-400 hover:bg-violet-500/10"><Plus className="w-4 h-4" /></Button>
+            </div>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-white/30" />
+              <input 
+                type="text"
+                placeholder="Search flows..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-white/5 border border-white/10 rounded-xl py-2 pl-9 pr-4 text-xs text-white placeholder:text-white/20 focus:ring-1 focus:ring-violet-500/50 outline-none transition-all"
+              />
+            </div>
+          </div>
+
+          <ScrollArea className="flex-1 px-4 pb-3 [&>div>div]:!block">
+            <div className="w-full min-w-full space-y-1.5 pt-1">
+              {Object.entries(automationsBySource).map(([source, items]) => (
+                <div key={source} className="space-y-1.5 pt-4 first:pt-1">
+                  <h3 className="px-1 text-[10px] font-bold uppercase tracking-widest text-white/20 mb-2">{source}</h3>
+                  {items.map(a => {
+                    const isSelected = a.id === active?.id
+                    const isDef = isDefault(a.id)
+                    const Icon = a.source === 'Shopify' ? PackageCheck : (a.source === 'Zoho' ? Workflow : Zap)
+                    return (
+                      <div 
+                        key={a.id}
+                        className={`group relative rounded-xl border p-3 transition-all duration-150 cursor-pointer select-none ${isSelected ? 'border-violet-500/40 bg-violet-600/8' : 'border-white/[0.05] bg-white/[0.02] hover:bg-white/[0.05] hover:border-white/10'}`}
+                        onClick={() => { setActiveId(a.id); setSelId(a.steps[0]?.id || null); if(viewMode === 'gallery') setViewMode('editor') }}
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className={`relative shrink-0 rounded-lg p-2 transition-colors ${isSelected ? 'bg-violet-600/20 text-violet-300' : 'bg-white/[0.06] text-white/40 group-hover:text-white/70'}`}>
+                            <Icon className="h-3.5 w-3.5" />
+                            <div className={`absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full border-2 border-[#0d0f17] ${a.status ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-white/20'}`} />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-1">
+                              <div className={`text-xs font-semibold truncate ${isSelected ? 'text-white' : 'text-white/80'}`}>{a.name}</div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); handleToggleFlowStatus(a.id) }}
+                                  className={`p-1.5 rounded-lg transition-all ${a.status ? 'text-rose-400 bg-rose-500/5 hover:bg-rose-500/15' : 'text-emerald-400 bg-emerald-500/5 hover:bg-emerald-500/15'}`}
+                                  title={a.status ? 'Stop' : 'Start'}
+                                >
+                                  {a.status ? <Square className="h-3.5 w-3.5" /> : <PlayCircle className="h-3.5 w-3.5" />}
+                                </button>
+                                {!isDef && (
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); deleteFlow(a.id) }}
+                                    className="p-1.5 rounded-lg text-white/20 hover:text-rose-400 hover:bg-rose-500/10 transition-all opacity-0 group-hover:opacity-100"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                            <div className="text-[10px] text-white/30 truncate mt-0.5">{a.summary || 'No description'}</div>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              ))}
+            </div>
+          </ScrollArea>
+
+          <div className="p-4 border-t border-white/[0.06] bg-white/[0.01]">
+            <div className="flex items-center justify-between text-[10px] font-bold text-white/20 uppercase tracking-widest px-1 mb-3">
+              <span>Stats</span>
+              <span className="text-white/40">{automations.length} Flows</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="bg-white/5 rounded-xl p-2.5 border border-white/5">
+                <div className="text-white/40 text-[9px] uppercase tracking-wider mb-1">Active</div>
+                <div className="text-emerald-400 text-xs font-bold">{automations.filter(a => a.status).length}</div>
+              </div>
+              <div className="bg-white/5 rounded-xl p-2.5 border border-white/5">
+                <div className="text-white/40 text-[9px] uppercase tracking-wider mb-1">Drafts</div>
+                <div className="text-white/60 text-xs font-bold">{automations.filter(a => !a.status).length}</div>
+              </div>
+            </div>
+          </div>
+        </aside>
+
         {/* CANVAS */}
         <main ref={outerRef} aria-label="Automation canvas — scroll to zoom, drag to pan" role="region"
-          className={`relative flex-1 overflow-hidden ${panning ? 'cursor-grabbing' : conn ? 'cursor-crosshair' : drag ? 'cursor-grabbing' : 'cursor-grab'}`}
+          className={`relative flex-1 min-w-0 overflow-hidden ${panning ? 'cursor-grabbing' : conn ? 'cursor-crosshair' : drag ? 'cursor-grabbing' : 'cursor-grab'}`}
           style={
             {
               backgroundColor: '#080a12',
@@ -1519,7 +1815,7 @@ export function AutomationStudio() {
         </main>
 
         {/* RIGHT PANEL */}
-        <aside aria-label="Node properties" className="w-[296px] shrink-0 border-l border-white/[0.06] bg-[#0d0f17] flex flex-col">
+        <aside aria-label="Node properties" className={`transition-all duration-300 border-l border-white/[0.06] bg-[#0d0f17] flex flex-col ${rightSidebarOpen ? 'w-[296px]' : 'w-0 overflow-hidden border-none'}`}>
           <div className="px-4 pt-4 pb-3 border-b border-white/[0.06] flex items-center justify-between">
             <div><h2 className="text-sm font-bold text-white">Properties</h2><p className="text-[11px] text-white/30 mt-0.5">{sel ? `${sel.type} node` : 'Select a node'}</p></div>
             <span role="status" className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${active?.status ? 'bg-emerald-500/12 text-emerald-400' : 'bg-white/[0.05] text-white/30'}`}>
@@ -1584,6 +1880,7 @@ export function AutomationStudio() {
                             <SelectItem value="shopify" className="text-white/70 text-xs">🛍️ Shopify</SelectItem>
                             <SelectItem value="woocommerce" className="text-white/70 text-xs">🛒 WooCommerce</SelectItem>
                             <SelectItem value="whatsapp" className="text-white/70 text-xs">💬 WhatsApp</SelectItem>
+                            <SelectItem value="zoho" className="text-white/70 text-xs">✨ Zoho CRM</SelectItem>
                             <SelectItem value="custom" className="text-white/70 text-xs">🔗 Custom Webhook</SelectItem>
                           </SelectContent>
                         </Select>
@@ -1612,6 +1909,9 @@ export function AutomationStudio() {
                               {triggerCategory === 'whatsapp' && dynamicTriggers.filter(t => t.value.startsWith('whatsapp.')).map(o => (
                                 <SelectItem key={o.value} value={o.value} className="text-white/70 text-xs">{o.label}</SelectItem>
                               ))}
+                              {triggerCategory === 'zoho' && dynamicTriggers.filter(t => t.value.startsWith('zoho.')).map(o => (
+                                <SelectItem key={o.value} value={o.value} className="text-white/70 text-xs">{o.label}</SelectItem>
+                              ))}
                               {triggerCategory === 'custom' && dynamicTriggers.filter(t => t.value.startsWith('custom.')).map(o => (
                                 <SelectItem key={o.value} value={o.value} className="text-white/70 text-xs">{o.label}</SelectItem>
                               ))}
@@ -1619,6 +1919,45 @@ export function AutomationStudio() {
                           </Select>
                         </div>
                       )}
+
+                      {sel.event === 'whatsapp.message_received' && (
+                        <div className="space-y-1.5 mt-4">
+                          <Label htmlFor="trigger-keyword" className="text-[10px] font-bold uppercase tracking-widest text-emerald-400">Trigger Word (Keyword)</Label>
+                          <Input
+                            id="trigger-keyword"
+                            value={sel.keyword || ''}
+                            onChange={e => updStep({ keyword: e.target.value })}
+                            className={inputCls}
+                            placeholder="e.g. START, MENU, HELP"
+                          />
+                          <p className="text-[10px] text-white/35 italic">Leave blank to trigger on ANY incoming message.</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Latest Webhook Payload Inspector */}
+                  {sel.type === 'trigger' && latestMatchingWebhookLog && (
+                    <div className="mt-4 pt-4 border-t border-white/5">
+                      <details className="group">
+                        <summary className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-white/25 cursor-pointer hover:text-white/40 list-none">
+                          <History className="w-3 h-3" />
+                          <span>Latest {latestMatchingWebhookLog.type} Data</span>
+                          <span className="ml-auto text-[9px] font-normal lowercase bg-white/5 px-1.5 py-0.5 rounded">
+                            {new Date(latestMatchingWebhookLog.receivedAt).toLocaleTimeString()}
+                          </span>
+                        </summary>
+                        <div className="mt-2.5 space-y-2">
+                          <div className="rounded-xl border border-white/[0.05] bg-black/20 p-2.5">
+                            <pre className="text-[10px] text-white/50 overflow-x-auto whitespace-pre font-mono leading-relaxed max-h-[300px]">
+                              {JSON.stringify(latestMatchingWebhookLog.payload, null, 2)}
+                            </pre>
+                          </div>
+                          <p className="text-[10px] text-white/30 italic">
+                            This is the raw data received from {latestMatchingWebhookLog.type}. Use these keys (e.g. <code>{`{{${Object.keys(latestMatchingWebhookLog.payload || {})[0] || 'field_name'}}}`}</code>) in your automation.
+                          </p>
+                        </div>
+                      </details>
                     </div>
                   )}
 
@@ -1891,10 +2230,26 @@ export function AutomationStudio() {
                           <SelectTrigger id="test-source" className={inputCls}><SelectValue /></SelectTrigger>
                           <SelectContent className="z-[260] bg-[#13151f] border-white/10">
                             <SelectItem value="latest_order" className="text-white/70 text-xs focus:bg-white/8 focus:text-white">Latest order</SelectItem>
+                            <SelectItem value="history" className="text-white/70 text-xs focus:bg-white/8 focus:text-white">History Chat</SelectItem>
                             <SelectItem value="dummy" className="text-white/70 text-xs focus:bg-white/8 focus:text-white">Dummy data</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
+                      {sel.testSource === 'history' && (
+                        <div className="space-y-1.5">
+                          <Label className="text-[10px] font-bold uppercase tracking-widest text-white/25">Select History Chat</Label>
+                          <Select value={selectedChatPhone} onValueChange={setSelectedChatPhone}>
+                            <SelectTrigger className={inputCls}><SelectValue placeholder="Pick a chat..." /></SelectTrigger>
+                            <SelectContent className="z-[260] bg-[#13151f] border-white/10">
+                              {chats.map(chat => (
+                                <SelectItem key={chat.phone} value={chat.phone} className="text-white/70 text-xs">
+                                  {chat.customerName || chat.phone} ({chat.phone})
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
                       <div className="space-y-1.5">
                         <Label htmlFor="test-event" className="text-[10px] font-bold uppercase tracking-widest text-white/25">Simulated Event</Label>
                         <Select value={sel.event || 'shopify.order_created'} onValueChange={v => { const o = dynamicTriggers.find(t => t.value === v); updStep({ event: v, title: o?.label ? `Test ${o.label}` : sel.title, description: o?.description || sel.description }) }}>
@@ -1925,7 +2280,7 @@ export function AutomationStudio() {
                         <Label htmlFor="delay-unit" className="text-[10px] font-bold uppercase tracking-widest text-white/25">Unit</Label>
                         <Select value={sel.delayUnit || 'hours'} onValueChange={v => updStep({ delayUnit: v })} disabled={selLocked}>
                           <SelectTrigger id="delay-unit" className={inputCls}><SelectValue /></SelectTrigger>
-                          <SelectContent className="z-[260] bg-[#13151f] border-white/10">{['minutes', 'hours', 'days'].map(u => <SelectItem key={u} value={u} className="text-white/70 text-xs focus:bg-white/8 focus:text-white capitalize">{u[0].toUpperCase() + u.slice(1)}</SelectItem>)}</SelectContent>
+                          <SelectContent className="z-[260] bg-[#13151f] border-white/10">{['seconds', 'minutes', 'hours', 'days'].map(u => <SelectItem key={u} value={u} className="text-white/70 text-xs focus:bg-white/8 focus:text-white capitalize">{u[0].toUpperCase() + u.slice(1)}</SelectItem>)}</SelectContent>
                         </Select>
                       </div>
                     </div>
@@ -2095,7 +2450,21 @@ export function AutomationStudio() {
                   </div>
                   <div className="rounded-xl border border-white/[0.05] bg-white/[0.02] px-3 py-2.5 text-[11px] text-white/35">
                     {latestMatchingWebhookLog
-                      ? `Detected ${activeWebhookVariableOptions.length} webhook field${activeWebhookVariableOptions.length === 1 ? '' : 's'} from the latest matching ${latestMatchingWebhookLog.type} event${latestMatchingWebhookLog.topic ? ` (${latestMatchingWebhookLog.topic})` : ''}.`
+                      ? (
+                        <div className="space-y-2">
+                          <div>
+                            Detected {activeWebhookVariableOptions.length} webhook field{activeWebhookVariableOptions.length === 1 ? '' : 's'} from the latest matching {latestMatchingWebhookLog.type} event{latestMatchingWebhookLog.topic ? ` (${latestMatchingWebhookLog.topic})` : ''}.
+                          </div>
+                          <details className="group">
+                            <summary className="text-[10px] text-emerald-400/60 cursor-pointer hover:text-emerald-400 font-bold uppercase tracking-wider list-none flex items-center gap-1">
+                              <Search className="w-3 h-3" /> View Raw Payload
+                            </summary>
+                            <pre className="mt-2 p-2 bg-black/40 rounded border border-white/5 text-[9px] text-white/40 overflow-auto max-h-48 font-mono leading-tight">
+                              {JSON.stringify(latestMatchingWebhookLog.payload, null, 2)}
+                            </pre>
+                          </details>
+                        </div>
+                      )
                       : 'No matching webhook payload found yet. The dropdown is showing built-in variable options only.'}
                   </div>
                   <div className="flex items-center justify-between"><span className="text-[10px] font-bold uppercase tracking-widest text-white/25">Template Slots</span><span className="text-[10px] text-white/25">{activeTriggerEvent || 'No trigger selected'}</span></div>
@@ -2294,9 +2663,11 @@ export function AutomationStudio() {
 	              onClick={resetActiveFlowToDefault}
 	              className="w-full rounded-xl text-rose-400/60 hover:text-rose-400 hover:bg-rose-500/8 text-xs font-bold h-8 transition-all active:scale-95">Discard Draft</Button>
           </div>
-        </aside>
-      </div>
-      {/* NEW FLOW DIALOG — rendered at root so overflow can't clip it */}
+          </aside>
+        </>
+      )}
+    </div>
+    {/* NEW FLOW DIALOG — rendered at root so overflow can't clip it */}
       <Dialog open={dlgOpen} onOpenChange={v => { setDlgOpen(v); if (!v) { setDraftName(''); setMode('blank'); setCloneSourceId((cloneSourceOptions.some(flow => flow.id === active?.id) ? active?.id : cloneSourceOptions[0]?.id) || '') } }}>
         <DialogContent overlayClassName="z-[200]" className="bg-[#13151f] border border-white/10 text-white sm:max-w-[500px] z-[200]">
           <DialogHeader>

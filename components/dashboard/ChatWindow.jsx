@@ -2,12 +2,22 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { format } from 'date-fns'
-import { Send, MessageSquare } from 'lucide-react'
+import { Send, MessageSquare, Sparkles, CreditCard, X, Loader2, ShoppingBag } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import { toast } from 'sonner'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 
 export function ChatWindow({ chat, messages, onSendMessage }) {
   const [inputValue, setInputValue] = useState('')
+  const [suggestions, setSuggestions] = useState([])
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false)
+  const [showPaymentDialog, setShowPaymentDialog] = useState(false)
+  const [paymentAmount, setPaymentAmount] = useState('')
+  const [paymentDesc, setPaymentDesc] = useState('Order Payment')
+  const [isGeneratingLink, setIsGeneratingLink] = useState(false)
   const messagesEndRef = useRef(null)
   const messagesContainerRef = useRef(null)
   const prevMessageCountRef = useRef(messages.length)
@@ -124,7 +134,52 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
     
     // Update the previous message count
     prevMessageCountRef.current = currentMessageCount
+
+    // Fetch AI suggestions when a new customer message arrives or chat changes
+    const lastMessage = messages[messages.length - 1]
+    if (lastMessage?.isCustomer) {
+      fetchSuggestions()
+    }
   }, [messages])
+
+  const fetchSuggestions = async () => {
+    if (!chat?.phone) return
+    setLoadingSuggestions(true)
+    try {
+      const res = await fetch('/api/ai/suggestions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: chat.phone })
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setSuggestions(data.suggestions || [])
+      }
+    } catch (error) {
+      console.error('Failed to fetch suggestions:', error)
+    } finally {
+      setLoadingSuggestions(false)
+    }
+  }
+
+  const handleGeneratePaymentLink = async () => {
+    if (!paymentAmount) return toast.error('Please enter an amount')
+    setIsGeneratingLink(true)
+    try {
+      // Mocking Stripe link generation for now
+      // In a real app, this would call /api/stripe/create-link
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      const mockLink = `https://checkout.stripe.com/pay/cs_test_${Math.random().toString(36).substring(7)}`
+      setInputValue(prev => `${prev}\n\nYou can complete your payment of $${paymentAmount} here: ${mockLink}\n\nThank you!`.trim())
+      setShowPaymentDialog(false)
+      setPaymentAmount('')
+      toast.success('Payment link generated and added to chat')
+    } catch (error) {
+      toast.error('Failed to generate payment link')
+    } finally {
+      setIsGeneratingLink(false)
+    }
+  }
 
   // Handle scroll events
   const handleScroll = () => {
@@ -285,12 +340,86 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
       </div>
     </div>
 
+      {/* AI Suggestions Row */}
+      {suggestions.length > 0 && (
+        <div className="bg-white/80 dark:bg-[#0b0d14]/80 backdrop-blur-md px-4 md:px-6 py-2 border-t border-gray-100 dark:border-slate-800 animate-in slide-in-from-bottom-2 duration-300">
+          <div className="max-w-4xl mx-auto flex flex-wrap gap-2 items-center">
+            <div className="flex items-center gap-1.5 mr-2">
+              <Sparkles className="w-3.5 h-3.5 text-emerald-500" />
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">AI Suggestions</span>
+            </div>
+            {suggestions.map((suggestion, idx) => (
+              <button
+                key={idx}
+                onClick={() => setInputValue(suggestion)}
+                className="text-[12px] font-medium bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 px-3 py-1.5 rounded-full border border-emerald-100 dark:border-emerald-500/20 hover:bg-emerald-100 dark:hover:bg-emerald-500/20 transition-all whitespace-nowrap"
+              >
+                {suggestion}
+              </button>
+            ))}
+            <button 
+              onClick={() => setSuggestions([])}
+              className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-white"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Input Area */}
       <div className="bg-white dark:bg-[#0b0d14] px-4 md:px-6 py-4 md:py-6 border-t border-gray-100 dark:border-slate-800 shadow-[0_-4px_12px_rgba(0,0,0,0.05)] relative z-20">
         <div className="max-w-4xl mx-auto flex items-center gap-3">
-          <Button variant="ghost" size="icon" className="text-gray-400 hover:text-emerald-500 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 h-10 w-10 flex-shrink-0">
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="icon" className="text-gray-400 hover:text-emerald-500 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 h-10 w-10 flex-shrink-0">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+            </Button>
+
+            <Dialog open={showPaymentDialog} onOpenChange={setShowPaymentDialog}>
+              <DialogTrigger asChild>
+                <Button variant="ghost" size="icon" className="text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-500/10 h-10 w-10 flex-shrink-0">
+                  <CreditCard className="w-5 h-5" />
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-[400px] rounded-3xl dark:bg-[#11131d] border-none">
+                <DialogHeader>
+                  <DialogTitle className="text-xl font-bold flex items-center gap-2">
+                    <CreditCard className="w-5 h-5 text-blue-500" />
+                    Request Payment
+                  </DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <Label>Amount (USD)</Label>
+                    <Input 
+                      type="number" 
+                      placeholder="0.00" 
+                      value={paymentAmount}
+                      onChange={(e) => setPaymentAmount(e.target.value)}
+                      className="h-12 bg-slate-50 dark:bg-white/5 border-none rounded-xl"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Description</Label>
+                    <Input 
+                      placeholder="e.g. Order #1234 Payment" 
+                      value={paymentDesc}
+                      onChange={(e) => setPaymentDesc(e.target.value)}
+                      className="h-12 bg-slate-50 dark:bg-white/5 border-none rounded-xl"
+                    />
+                  </div>
+                  <Button 
+                    className="w-full bg-blue-600 hover:bg-blue-700 h-12 rounded-xl font-bold text-white shadow-lg shadow-blue-500/20"
+                    onClick={handleGeneratePaymentLink}
+                    disabled={isGeneratingLink}
+                  >
+                    {isGeneratingLink ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Send className="w-4 h-4 mr-2" />}
+                    {isGeneratingLink ? 'Generating...' : 'Add Link to Chat'}
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+          </div>
           
           <div className="flex-1 relative">
             <Textarea
