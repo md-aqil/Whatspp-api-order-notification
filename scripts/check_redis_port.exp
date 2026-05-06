@@ -1,0 +1,26 @@
+#!/usr/bin/expect -f
+
+set timeout 30
+set host "187.127.154.55"
+set user "aqil"
+set pass "aqil@noon"
+
+spawn ssh -o StrictHostKeyChecking=no $user@$host
+
+expect {
+    "password:" {
+        send "$pass\r"
+    }
+}
+
+expect -re ".*\[$#\] "
+send "sudo docker port postiz-redis\r"
+expect {
+    "Password:" {
+        send "$pass\r"
+        exp_continue
+    }
+}
+expect -re ".*\[$#\] "
+send "exit\r"
+expect eof

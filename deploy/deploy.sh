@@ -8,11 +8,8 @@ SERVICE_NAME="lcsw"
 
 echo "=== Deploying WhatsApp Commerce Hub at $APP_DIR ==="
 
-# Pull latest code
-echo "[1/6] Pulling latest code..."
-# Use reset hard to ensure clean state
-git fetch origin main
-git reset --hard origin/main
+# Code is already updated by the deploy script wrapper
+echo "[1/6] Code up to date."
 
 # Install dependencies (need devDeps for build)
 echo "[2/6] Installing dependencies..."

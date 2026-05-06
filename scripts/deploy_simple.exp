@@ -1,0 +1,42 @@
+#!/usr/bin/expect -f
+
+set timeout 300
+set host "187.127.154.55"
+set user "aqil"
+set pass "aqil@noon"
+
+log_user 1
+
+spawn ssh -o StrictHostKeyChecking=no $user@$host
+
+expect {
+    "password:" {
+        send "$pass\r"
+    }
+    "$ " {
+        # Already logged in
+    }
+}
+
+expect "$ "
+send "cd /var/www/lcsw\r"
+expect "$ "
+send "git fetch origin main && git reset --hard origin/main\r"
+expect "$ "
+send "chmod +x deploy/deploy.sh\r"
+expect "$ "
+send "./deploy/deploy.sh\r"
+
+expect {
+    "Password:" {
+        send "$pass\r"
+        exp_continue
+    }
+    "Deployment complete!" {
+        puts "Success!"
+    }
+}
+
+expect "$ "
+send "exit\r"
+expect eof

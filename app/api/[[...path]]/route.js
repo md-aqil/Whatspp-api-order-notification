@@ -16,12 +16,13 @@ import { getLocalIntegrationRecord, saveLocalIntegrationRecord } from '@/lib/loc
 import { requireRequestUserId, resolveRequestUserId } from '@/lib/request-user'
 import { ensureSettingsTables } from '@/lib/settings-db'
 import { generateAIResponse } from '@/lib/ai'
-import { getPool, query, queryOne, queryMany } from '@/lib/mysql'
+import { getPool, query, queryOne, queryMany, insertWebhookLog } from '@/lib/mysql'
 import { 
   getStoredIntegrations, 
   saveStoredIntegration, 
   getStoredWhatsAppAccounts, 
-  getWhatsAppAccountById 
+  getWhatsAppAccountById,
+  getUserIdByWhatsAppPhoneNumberId
 } from '@/lib/db/integration-repository'
 import { 
   getAutomationsForUser, 
@@ -35,7 +36,9 @@ import {
   getStoredMessagesByPhone, 
   getStoredChatByPhone,
   upsertStoredChat,
-  insertStoredMessage
+  insertStoredMessage,
+  saveIncomingMessage,
+  buildIncomingWhatsAppAutomationContext
 } from '@/lib/db/chat-repository'
 import { fetchMetaCatalogProducts, validateMetaCatalogAccess } from '@/lib/integrations/meta-catalog'
 import { 
@@ -49,6 +52,7 @@ import {
 } from '@/lib/db/order-repository'
 import { getStoredProducts, saveStoredProducts } from '@/lib/db/product-repository'
 import { enqueueAutomationEvent } from '@/lib/queue'
+import { triggerAutomationEvent } from '@/lib/automation-engine'
 
 
 // Automation State Helpers (To be moved to lib/automation-engine.js if needed)
@@ -962,6 +966,64 @@ async function handleRoute(request, { params }) {
         message: "WhatsApp webhook endpoint is configured. Provide hub.verify_token for verification.",
         status: "ready"
       }))
+    }
+
+    // WhatsApp webhook POST - incoming messages
+    if (route === '/webhook/whatsapp' && method === 'POST') {
+      try {
+        const body = await request.json()
+
+        // Log webhook for debugging
+        await insertWebhookLog('whatsapp', null, body)
+
+        console.log('WhatsApp webhook received:', JSON.stringify(body, null, 2));
+
+        // Process incoming WhatsApp messages
+        if (body.entry && Array.isArray(body.entry)) {
+          for (const entry of body.entry) {
+            if (entry.changes && Array.isArray(entry.changes)) {
+              for (const change of entry.changes) {
+                // Handle incoming messages
+                if (change.field === 'messages') {
+                  const incomingPhoneNumberId = change.value?.metadata?.phone_number_id || ''
+                  const incomingUserId = await getUserIdByWhatsAppPhoneNumberId(incomingPhoneNumberId)
+                  
+                  const contactsByWaId = new Map(
+                    (change.value?.contacts || [])
+                      .filter((contact) => contact?.wa_id)
+                      .map((contact) => [contact.wa_id, contact])
+                  )
+
+                  if (change.value?.messages && Array.isArray(change.value.messages)) {
+                    const integrations = await getStoredIntegrations(incomingUserId)
+                    
+                    for (const message of change.value.messages) {
+                      // Save incoming message to database
+                      const contact = contactsByWaId.get(message.from)
+                      const savedMessage = await saveIncomingMessage(message, incomingUserId)
+                      
+                      const context = buildIncomingWhatsAppAutomationContext(message, savedMessage, contact)
+                      
+                      // Trigger automation asynchronously via Queue
+                      await triggerAutomationEvent(
+                        'whatsapp.message_received',
+                        context,
+                        integrations,
+                        incomingUserId
+                      )
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        return handleCORS(NextResponse.json({ success: true }))
+      } catch (error) {
+        console.error('WhatsApp Webhook POST error:', error)
+        return handleCORS(NextResponse.json({ error: 'Webhook processing failed' }, { status: 500 }))
+      }
     }
 
     // Root endpoint
