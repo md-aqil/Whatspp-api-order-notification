@@ -27,7 +27,8 @@ import {
   getAutomationsForUser, 
   getAutomationById, 
   upsertAutomation, 
-  ensureAutomationsTable 
+  ensureAutomationsTable,
+  seedDefaultAutomationsForUser
 } from '@/lib/db/automation-repository'
 import { 
   getStoredChats,
@@ -46,71 +47,11 @@ import {
   getLatestStoredOrderByPhone,
   getStoredOrders
 } from '@/lib/db/order-repository'
+import { getStoredProducts, saveStoredProducts } from '@/lib/db/product-repository'
 import { enqueueAutomationEvent } from '@/lib/queue'
 
-const WHATSAPP_AUTOMATION_CONVERSATION_WINDOW_MS = 30 * 60 * 1000
-const WHATSAPP_AUTOMATION_REPLY_COOLDOWN_MS = 10 * 60 * 1000
-const WHATSAPP_SUPPORT_HANDOFF_MS = 2 * 60 * 60 * 1000
-const WHATSAPP_MENU_STEP_IDS = new Set(['step-message-4', 'step-message-6'])
-const WHATSAPP_SUPPORT_STEP_IDS = new Set(['step-message-11'])
 
 // Automation State Helpers (To be moved to lib/automation-engine.js if needed)
-async function ensureAutomationConversationStateTable() {
-  await query(`
-    CREATE TABLE IF NOT EXISTS automation_conversation_state (
-      id VARCHAR(255) PRIMARY KEY,
-      userId VARCHAR(255) NOT NULL DEFAULT 'default',
-      automationId VARCHAR(255) NOT NULL,
-      recipient VARCHAR(255) NOT NULL,
-      state TEXT,
-      lastInboundAt DATETIME,
-      lastMenuSentAt DATETIME,
-      lastReplyKey TEXT,
-      lastReplyAt DATETIME,
-      handoffUntil DATETIME,
-      awaitingInteractiveStepId VARCHAR(255) DEFAULT NULL,
-      payload JSON,
-      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      INDEX automation_conversation_state_lookup_idx (userId, automationId, recipient)
-    );
-  `)
-}
-
-async function getAutomationConversationState(automationId, recipient, userId) {
-  await ensureAutomationConversationStateTable()
-  const stateId = `${userId}:${automationId}:${recipient}`
-  return queryOne(
-    `SELECT * FROM automation_conversation_state WHERE id = ?`,
-    [stateId]
-  )
-}
-
-async function saveAutomationConversationState(automationId, recipient, currentState = null, patch = {}, userId = 'default') {
-  await ensureAutomationConversationStateTable()
-  const id = `${userId}:${automationId}:${recipient}`
-  
-  await query(
-    `INSERT INTO automation_conversation_state
-      (id, userId, automationId, recipient, state, lastInboundAt, lastMenuSentAt, lastReplyKey, lastReplyAt, handoffUntil, awaitingInteractiveStepId, payload, updatedAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-     ON DUPLICATE KEY UPDATE
-      state = VALUES(state), lastInboundAt = VALUES(lastInboundAt), lastMenuSentAt = VALUES(lastMenuSentAt),
-      lastReplyKey = VALUES(lastReplyKey), lastReplyAt = VALUES(lastReplyAt), handoffUntil = VALUES(handoffUntil),
-      awaitingInteractiveStepId = VALUES(awaitingInteractiveStepId), payload = VALUES(payload), updatedAt = NOW()`,
-    [
-      id, userId, automationId, recipient, 
-      patch.state ?? currentState?.state ?? null,
-      patch.lastInboundAt ?? currentState?.lastInboundAt ?? null,
-      patch.lastMenuSentAt ?? currentState?.lastMenuSentAt ?? null,
-      patch.lastReplyKey ?? currentState?.lastReplyKey ?? null,
-      patch.lastReplyAt ?? currentState?.lastReplyAt ?? null,
-      patch.handoffUntil ?? currentState?.handoffUntil ?? null,
-      patch.awaitingInteractiveStepId ?? currentState?.awaitingInteractiveStepId ?? null,
-      JSON.stringify(patch.payload ?? currentState?.payload ?? {})
-    ]
-  )
-}
 
 
 
@@ -234,7 +175,7 @@ function mergeShopifyProductsWithMetaCatalog(shopifyProducts = [], metaProducts 
 async function saveStoredWebhooks(webhooks) {
   await ensureSettingsTables()
 
-  const pool = getMysqlPool()
+  const pool = getPool()
   const existing = await queryOne(
     'SELECT id FROM webhooks WHERE userId = ? AND type = ? ORDER BY createdAt IS NULL, createdAt DESC, id DESC LIMIT 1',
     ['default', 'shopify']
@@ -257,27 +198,18 @@ async function saveStoredWebhooks(webhooks) {
 async function getStoredWebhooks(type = 'shopify') {
   await ensureSettingsTables()
 
-  const result = await getMysqlPool().execute(
+  const result = await getPool().execute(
     'SELECT id, type, webhooks, createdAt FROM webhooks WHERE userId = ? AND type = ? ORDER BY createdAt IS NULL, createdAt DESC, id DESC LIMIT 1',
     ['default', type]
   )
   return result[0][0] || null
 }
 
-async function insertWebhookLog(type, topic, payload) {
-  await ensureSettingsTables()
-
-  await getMysqlPool().query(
-    `INSERT INTO webhook_logs (id, type, topic, payload, receivedAt, createdAt)
-     VALUES (?, ?, ?, ?, NOW(), NOW())`,
-    [uuidv4(), type, topic || null, JSON.stringify(payload || {})]
-  )
-}
 
 async function getWebhookLogs(limit = 10) {
   await ensureSettingsTables()
 
-  const [rows] = await getMysqlPool().query(
+  const [rows] = await getPool().query(
     `SELECT id, type, topic, payload, receivedAt, createdAt
      FROM webhook_logs
      ORDER BY receivedAt DESC
@@ -287,36 +219,6 @@ async function getWebhookLogs(limit = 10) {
   return rows || []
 }
 
-async function getStoredShopifyCustomer(customerId) {
-  return queryOne(
-    `SELECT id, customerId, phone
-     FROM shopify_customers
-     WHERE customerId = ?
-     ORDER BY updatedAt IS NULL, updatedAt DESC, id DESC
-     LIMIT 1`,
-    [customerId]
-  )
-}
-
-async function upsertStoredShopifyCustomer(customerId, phone) {
-  const pool = getMysqlPool()
-  const existing = await getStoredShopifyCustomer(customerId)
-  if (existing) {
-    await pool.execute(
-      `UPDATE shopify_customers
-       SET phone = ?, updatedAt = NOW()
-       WHERE id = ?`,
-      [phone, existing.id]
-    )
-    return
-  }
-
-  await pool.execute(
-    `INSERT INTO shopify_customers (customerId, phone, createdAt, updatedAt)
-     VALUES (?, ?, NOW(), NOW())`,
-    [customerId, phone]
-  )
-}
 
 function interpolateMessage(template, context) {
   if (!template) return ''
@@ -1061,11 +963,6 @@ async function handleRoute(request, { params }) {
         status: "ready"
       }))
     }
-    // Run background jobs without blocking the main request
-    // This prevents 502/timeouts on slow DB operations
-    if (method === 'GET' || route.includes('webhook')) {
-      processDueAutomationJobs().catch(err => console.error('Background job error:', err))
-    }
 
     // Root endpoint
     if (route === '/' && method === 'GET') {
@@ -1214,7 +1111,7 @@ async function handleRoute(request, { params }) {
         console.error('Failed to save integration:', saveError)
         return handleCORS(NextResponse.json(
           { error: `Failed to save integration: ${saveError.message}` },
-          { status: 500 }
+          { status: error.status || 500 }
         ))
       }
 
@@ -1295,7 +1192,7 @@ async function handleRoute(request, { params }) {
       } catch (error) {
         return handleCORS(NextResponse.json(
           { error: `Failed to get webhook logs: ${error.message}` },
-          { status: 500 }
+          { status: error.status || 500 }
         ))
       }
     }
@@ -1372,7 +1269,7 @@ async function handleRoute(request, { params }) {
         console.error('Failed to fetch orders:', error)
         return handleCORS(NextResponse.json(
           { error: 'Failed to fetch orders' },
-          { status: 500 }
+          { status: error.status || 500 }
         ))
       }
     }
@@ -1432,7 +1329,7 @@ async function handleRoute(request, { params }) {
       } catch (error) {
         return handleCORS(NextResponse.json(
           { error: `Failed to capture cart recovery event: ${error.message}` },
-          { status: 500 }
+          { status: error.status || 500 }
         ))
       }
     }
@@ -1524,7 +1421,7 @@ async function handleRoute(request, { params }) {
       } catch (error) {
         return handleCORS(NextResponse.json(
           { error: `Failed to process cart recovery sessions: ${error.message}` },
-          { status: 500 }
+          { status: error.status || 500 }
         ))
       }
     }
@@ -1802,7 +1699,7 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
         console.error('Failed to send catalog:', error);
         return handleCORS(NextResponse.json(
           { error: 'Failed to send catalog' },
-          { status: 500 }
+          { status: error.status || 500 }
         ));
       }
     }
@@ -1827,7 +1724,7 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
         return handleCORS(NextResponse.json(states || []))
       } catch (error) {
         console.error('Failed to fetch automation logs:', error)
-        return handleCORS(NextResponse.json({ error: 'Failed to fetch automation logs' }, { status: 500 }))
+        return handleCORS(NextResponse.json({ error: 'Failed to fetch automation logs' }, { status: error.status || 500 }))
       }
     }
 
@@ -1897,7 +1794,7 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
         return handleCORS(NextResponse.json({ success: true }))
       } catch (error) {
         console.error('Error saving automations:', error)
-        return handleCORS(NextResponse.json({ error: 'Failed to save automations', details: error.message }, { status: 500 }))
+        return handleCORS(NextResponse.json({ error: 'Failed to save automations', details: error.message }, { status: error.status || 500 }))
       }
     }
 
@@ -1926,7 +1823,10 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
         return handleCORS(NextResponse.json(parsedRows || []))
       } catch (error) {
         console.error('Error fetching automations:', error)
-        return handleCORS(NextResponse.json({ error: 'Failed to fetch automations' }, { status: 500 }))
+        return handleCORS(NextResponse.json(
+          { error: error.status === 401 ? 'Not authenticated' : 'Failed to fetch automations' }, 
+          { status: error.status || 500 }
+        ))
       }
     }
 
@@ -2014,7 +1914,7 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
             guidance: "Please check your internet connection and WhatsApp integration settings.",
             technicalError: error.message
           },
-          { status: 500 }
+          { status: error.status || 500 }
         ));
       }
     }
@@ -2134,8 +2034,8 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
       } catch (error) {
         console.error('Failed to fetch chats:', error)
         return handleCORS(NextResponse.json(
-          { error: 'Failed to fetch chats' },
-          { status: 500 }
+          { error: error.status === 401 ? 'Not authenticated' : 'Failed to fetch chats' },
+          { status: error.status || 500 }
         ))
       }
     }
@@ -2190,7 +2090,7 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
         console.error('Failed to fetch messages:', error);
         return handleCORS(NextResponse.json(
           { error: 'Failed to fetch messages' },
-          { status: 500 }
+          { status: error.status || 500 }
         ));
       }
     }
@@ -2244,7 +2144,7 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
         console.error('Failed to create chat:', error);
         return handleCORS(NextResponse.json(
           { error: 'Failed to create chat' },
-          { status: 500 }
+          { status: error.status || 500 }
         ));
       }
     }
@@ -2258,9 +2158,11 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
 
   } catch (error) {
     console.error('API Error:', error)
+    const status = error.status || 500
+    const message = status === 500 ? "Internal server error" : error.message
     return handleCORS(NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
+      { error: message },
+      { status }
     ))
   }
 }

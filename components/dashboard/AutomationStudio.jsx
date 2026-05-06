@@ -596,6 +596,49 @@ export function AutomationStudio() {
   }, [hydrated, persist, saveState])
 
   const active = useMemo(() => automations.find(a => a.id === activeId) || automations[0], [activeId, automations])
+
+  const handleExport = useCallback(() => {
+    if (!active) return
+    const data = JSON.stringify(active, null, 2)
+    const blob = new Blob([data], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${active.name.toLowerCase().replace(/\s+/g, '-')}-export.json`
+    link.click()
+    URL.revokeObjectURL(url)
+    toast.success('Flow exported successfully')
+  }, [active])
+
+  const handleImport = useCallback((e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = (event) => {
+      try {
+        const imported = JSON.parse(event.target.result)
+        if (!imported.steps || !Array.isArray(imported.steps)) throw new Error('Invalid flow format')
+        
+        const newFlow = {
+          ...normalize(imported),
+          id: uid('automation'),
+          name: `${imported.name} (Imported)`,
+          status: false,
+          metrics: { sent: 0, openRate: 0, conversions: 0 }
+        }
+        
+        setAutomations(prev => sortAutomations([...prev, newFlow]))
+        setActiveId(newFlow.id)
+        setSelId(newFlow.steps[0]?.id || null)
+        setViewMode('editor')
+        toast.success('Flow imported successfully')
+      } catch (err) {
+        toast.error('Failed to import: ' + err.message)
+      }
+      e.target.value = '' 
+    }
+    reader.readAsText(file)
+  }, [normalize, sortAutomations])
   const activeDef = !!active && isDefault(active.id) && active.source !== 'Custom'
   const activeDefaultTargetId = getDefaultTargetIdForAutomation(active)
   const sel = active?.steps.find(s => s.id === selId) || active?.steps[0]
@@ -1014,41 +1057,6 @@ export function AutomationStudio() {
     if (activeId === id) { setActiveId(next[0].id); setSelId(next[0].steps[0]?.id || null) }
     persist(next, 'Flow deleted')
   }
-  function exportFlow() {
-    if (!active) return
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(active, null, 2));
-    const downloadAnchorNode = document.createElement('a');
-    downloadAnchorNode.setAttribute("href", dataStr);
-    downloadAnchorNode.setAttribute("download", `${active.name.replace(/\s+/g, '_')}_flow.json`);
-    document.body.appendChild(downloadAnchorNode);
-    downloadAnchorNode.click();
-    downloadAnchorNode.remove();
-    toast.success('Flow exported successfully');
-  }
-  function handleImport(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const imported = JSON.parse(event.target.result);
-        if (!imported.steps || !Array.isArray(imported.steps)) throw new Error('Invalid flow format');
-        const newFlow = {
-          ...imported,
-          id: `flow-${Date.now()}`,
-          status: false,
-          source: 'Custom'
-        };
-        setAutomations(cur => [...cur, normalize(newFlow)]);
-        setActiveId(newFlow.id);
-        toast.success('Flow imported successfully');
-      } catch (err) {
-        toast.error('Failed to import flow: ' + err.message);
-      }
-    };
-    reader.readAsText(file);
-    e.target.value = ''; // Reset input
-  }
   function startPan(e) {
     // Pan on left-click on canvas background, or middle mouse anywhere
     if (e.button === 1) { e.preventDefault(); setPanning(true); setPanOrg({ x: e.clientX - tr.x, y: e.clientY - tr.y }); return }
@@ -1184,6 +1192,35 @@ export function AutomationStudio() {
             </div>
           )}
 
+
+            <div className="hidden sm:flex items-center gap-1">
+              <input
+                type="file"
+                id="flow-import-input"
+                className="hidden"
+                accept=".json"
+                onChange={handleImport}
+              />
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                onClick={() => document.getElementById('flow-import-input').click()}
+                title="Import Flow"
+                className="h-8 w-8 text-white/30 hover:text-white hover:bg-white/8 rounded-xl"
+              >
+                <Upload className="h-4 w-4" />
+              </Button>
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                onClick={handleExport}
+                disabled={!active}
+                title="Export Current Flow"
+                className="h-8 w-8 text-white/30 hover:text-white hover:bg-white/8 rounded-xl disabled:opacity-20"
+              >
+                <Download className="h-4 w-4" />
+              </Button>
+            </div>
 
             <div className="w-px h-5 bg-white/10 mx-1" aria-hidden="true" />
             
