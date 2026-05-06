@@ -13,8 +13,8 @@ jobs:
         uses: appleboy/ssh-action@master
         with:
           host: 187.127.154.55
-          username: root
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          username: aqil
+          password: ${{ secrets.SSH_PASSWORD }}
           script: |
             cd /var/www/whatsapp-commerce-hub
-            ./deploy.sh
+            ./deploy/deploy.sh

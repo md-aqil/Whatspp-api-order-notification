@@ -1,4 +1,4 @@
-nimport { query } from '../lib/mysql.js';
+import { query } from '../lib/mysql.js';
 
 async function setupDatabase() {
     try {
