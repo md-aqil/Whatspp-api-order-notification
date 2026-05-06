@@ -200,7 +200,7 @@ Find the **Business Account ID** at the top of the page.
 ### Method 1: Through Dashboard UI (Recommended)
 
 1. Open your WhatsApp Commerce Hub
-2. Navigate to: `http://localhost:3000/dashboard/settings` (local) or `https://lcsw.dpdns.org/dashboard/settings` (production)
+2. Navigate to: `http://localhost:3000/dashboard/settings` (local) or `https://chatflow.vibeship.in/dashboard/settings` (production)
 3. Find the **Integrations** section
 4. Fill in the WhatsApp form:
 
@@ -328,7 +328,7 @@ Webhooks allow you to receive incoming messages and status updates.
 │  Webhook Configuration                  │
 │                                         │
 │  Callback URL:                          │
-│  [https://lcsw.dpdns.org/api/webhook/whatsapp]
+│  [https://chatflow.vibeship.in/api/webhook/whatsapp]
 │                                         │
 │  Verify Token:                          │
 │  [41ddad7ee4b44d0418876d444b36f4ac817c042c36265b5d]
@@ -352,7 +352,7 @@ After saving, subscribe to these fields:
 ### Step 3: Verify in Your App
 
 Your app's webhook is already configured at:
-- **URL**: `https://lcsw.dpdns.org/api/webhook/whatsapp`
+- **URL**: `https://chatflow.vibeship.in/api/webhook/whatsapp`
 - **Verify Token**: `41ddad7ee4b44d0418876d444b36f4ac817c042c36265b5d`
 
 ---
@@ -643,7 +643,7 @@ const response = await fetch(
 │  https://business.facebook.com/                        │
 │                                                         │
 │  📍 Your App Webhook URL                                │
-│  https://lcsw.dpdns.org/api/webhook/whatsapp            │
+│  https://chatflow.vibeship.in/api/webhook/whatsapp            │
 │                                                         │
 │  📍 Verify Token (fixed)                               │
 │  41ddad7ee4b44d0418876d444b36f4ac817c042c36265b5d       │

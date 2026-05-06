@@ -35,7 +35,7 @@ DB_NAME=whatsapp_api
 DB_USER=mdaqil
 DB_PASSWORD=
 DB_URL=postgresql://mdaqil@localhost:5432/whatsapp_api
-NEXT_PUBLIC_BASE_URL=https://lcsw.dpdns.org
+NEXT_PUBLIC_BASE_URL=https://chatflow.vibeship.in
 CORS_ORIGINS=*
 ```
 
@@ -66,8 +66,8 @@ start-tunnel.bat
 
 ## Webhook URLs
 
-- Shopify Webhook: `https://lcsw.dpdns.org/api/webhook/shopify`
-- WhatsApp Webhook: `https://lcsw.dpdns.org/api/webhook/whatsapp`
+- Shopify Webhook: `https://chatflow.vibeship.in/api/webhook/shopify`
+- WhatsApp Webhook: `https://chatflow.vibeship.in/api/webhook/whatsapp`
 
 ## Documentation
 
