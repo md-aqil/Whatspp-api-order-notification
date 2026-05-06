@@ -38,6 +38,7 @@ import {
   upsertStoredChat,
   insertStoredMessage,
   saveIncomingMessage,
+  saveOutgoingMessage,
   buildIncomingWhatsAppAutomationContext
 } from '@/lib/db/chat-repository'
 import { fetchMetaCatalogProducts, validateMetaCatalogAccess } from '@/lib/integrations/meta-catalog'
