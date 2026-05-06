@@ -1111,7 +1111,7 @@ async function handleRoute(request, { params }) {
         console.error('Failed to save integration:', saveError)
         return handleCORS(NextResponse.json(
           { error: `Failed to save integration: ${saveError.message}` },
-          { status: error.status || 500 }
+          { status: saveError.status || 500 }
         ))
       }
 
