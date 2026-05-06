@@ -1,55 +1,49 @@
 #!/bin/bash
 
-# WhatsApp Commerce Hub - Start Next.js and Cloudflare Tunnel
+# WhatsApp Commerce Hub - Start Dev Server and Cloudflare Tunnel
 # Usage: ./start-tunnel.sh
 
 echo "=========================================="
-echo "  WhatsApp Commerce Hub - Starting Everything"
+echo "  Starting Next.js Server & Tunnel"
 echo "=========================================="
 echo ""
+
+# Start Next.js in the background
+echo "Starting local Next.js server on port 3000..."
+npm run dev &
+NEXT_PID=$!
+
+# Start the Automation Queue Worker in the background
+echo "Starting background Automation Queue Worker..."
+npx tsx scripts/worker.js &
+WORKER_PID=$!
+
+# Give the server a few seconds to initialize
+sleep 4
 
 # Check if cloudflared is installed
 if ! command -v cloudflared &> /dev/null; then
     echo "ERROR: cloudflared is not installed"
     echo "Please install: brew install cloudflared"
+    kill $NEXT_PID
+    kill $WORKER_PID
     exit 1
 fi
 
-# Check if npm is installed
-if ! command -v npm &> /dev/null; then
-    echo "ERROR: npm is not installed"
-    echo "Please install Node.js from https://nodejs.org/"
-    exit 1
-fi
-
-echo "✅ npm and cloudflared are installed"
+echo "✅ cloudflared is installed"
+echo ""
+echo "Connecting Tunnel to http://localhost:3000..."
+echo "Press Ctrl+C to stop the server, worker, and tunnel"
 echo ""
 
-echo "=========================================="
-echo "Starting Next.js app and Cloudflare Tunnel"
-echo "=========================================="
+# Start permanent Cloudflare tunnel (mapped to lcsw.dpdns.org)
+cloudflared tunnel run --url http://localhost:3000 whatsapp-tunnel
+
+# When tunnel exits (or Ctrl+C is pressed), kill the background processes
+echo "Stopping background processes..."
+kill $NEXT_PID
+kill $WORKER_PID
 echo ""
-echo "Next.js will start on http://localhost:3000"
-echo "Tunnel: A temporary URL will be generated below..."
-echo ""
-echo "Press Ctrl+C to stop everything"
-echo ""
+echo "Server, Worker, and Tunnel have been successfully stopped."
 
-# Start Next.js in background
-echo "Starting Next.js..."
-NODE_OPTIONS="--max-old-space-size=1024" npx next dev --hostname 0.0.0.0 --port 3000 &
-NEXT_PID=$!
 
-# Wait for Next.js to start
-echo "Waiting for Next.js to start..."
-sleep 10
-
-# Start Cloudflare tunnel (Quick Tunnel for local dev)
-echo "Starting Temporary Cloudflare Tunnel..."
-cloudflared tunnel --url http://localhost:3000
-
-# If tunnel stops, kill Next.js
-kill $NEXT_PID 2>/dev/null
-
-echo ""
-echo "Both services have been stopped."

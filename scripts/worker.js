@@ -16,7 +16,13 @@ async function startWorker() {
   });
 
   // Import the engine (using dynamic import for ESM compatibility in Next.js projects)
-  const { processAutomationEvent } = await import('../lib/automation-engine.js');
+  const engineModule = await import('../lib/automation-engine.js');
+  const processAutomationEvent = engineModule.processAutomationEvent 
+    || engineModule.default?.processAutomationEvent;
+  
+  if (typeof processAutomationEvent !== 'function') {
+    throw new Error('Failed to load processAutomationEvent from automation-engine. Exports: ' + Object.keys(engineModule).join(', '));
+  }
 
   const worker = new Worker('automation-events', async job => {
     console.log(`[Worker] Processing job ${job.id} (${job.name})`);

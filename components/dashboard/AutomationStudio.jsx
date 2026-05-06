@@ -2029,7 +2029,7 @@ export function AutomationStudio() {
                       <div className="space-y-1">
                         <Label className="text-[10px] text-white/50">Webhook URL</Label>
                         <Input
-                          value="https://chatflow.vibeship.in/api/webhook/custom"
+                          value={`${process.env.NEXT_PUBLIC_BASE_URL || 'https://lcsw.dpdns.org'}/api/webhook/custom`}
                           readOnly
                           className={`${inputCls} bg-white/5 text-emerald-300 text-[10px]`}
                         />
@@ -2252,7 +2252,7 @@ export function AutomationStudio() {
                       <div className="space-y-1">
                         <Label className="text-[10px] text-white/50">Webhook URL</Label>
                         <Input
-                          value="https://chatflow.vibeship.in/api/webhook/custom"
+                          value={`${process.env.NEXT_PUBLIC_BASE_URL || 'https://lcsw.dpdns.org'}/api/webhook/custom`}
                           readOnly
                           className={`${inputCls} bg-white/5 text-emerald-300 text-[10px]`}
                         />
