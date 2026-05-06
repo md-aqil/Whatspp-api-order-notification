@@ -580,20 +580,6 @@ async function triggerAutomationEvent(event, context, integrations, userId = 'de
   await enqueueAutomationEvent(event, context, integrations, userId)
 }
 
-function buildIncomingWhatsAppAutomationContext(messageData, savedMessage, contact) {
-  const interactiveReply = messageData?.interactive?.button_reply || messageData?.interactive?.list_reply || null
-  const chosenButtonTitle = interactiveReply?.title || ''
-
-  return {
-    customer_name: contact?.profile?.name || contact?.wa_id || savedMessage?.recipient || 'Customer',
-    customer_phone: messageData?.from || savedMessage?.recipient || '',
-    customerPhone: messageData?.from || savedMessage?.recipient || '',
-    customer_message: messageData?.text?.body || chosenButtonTitle || savedMessage?.message || '',
-    _inboundWamid: messageData?.id || null,
-    _isInteractiveReply: messageData?.type === 'interactive',
-    _chosenOptionId: interactiveReply?.id || null
-  }
-}
 
 // Legacy executeAutomationsForEvent removed. Using triggerAutomationEvent queue instead.
 
@@ -649,99 +635,7 @@ async function sendWhatsAppMessage(phoneNumberId, accessToken, to, messageData) 
   return data
 }
 
-// Function to save incoming WhatsApp messages to database
-async function saveIncomingMessage(messageData, userId = 'default') {
-  console.log('saveIncomingMessage called with:', JSON.stringify(messageData, null, 2));
 
-  // Extract data based on message type
-  const { from, text, timestamp, type, image, document, audio, video, location, contacts } = messageData;
-
-  // Create message object
-  const message = {
-    id: uuidv4(),
-    userId,
-    recipient: from, // This is the customer's phone number
-    phone: from, // Also store phone number directly for easier querying
-    message: '', // Will be populated based on message type
-    isCustomer: true,
-    timestamp: new Date(timestamp ? timestamp * 1000 : Date.now()), // Convert WhatsApp timestamp to JS Date
-    whatsappMessageId: messageData.id,
-    status: 'received',
-    messageType: type || 'unknown'
-  };
-
-  // Handle different message types
-  if (type === 'text' && text?.body) {
-    message.message = text.body;
-  } else if (type === 'interactive') {
-    // Button reply or list reply from interactive menu
-    const btnReply = messageData?.interactive?.button_reply
-    const listReply = messageData?.interactive?.list_reply
-    const title = btnReply?.title || listReply?.title || ''
-    message.message = title ? `✅ ${title}` : '[Option selected]'
-  } else if (type === 'image') {
-    message.message = '[Image message received]';
-  } else if (type === 'document') {
-    message.message = '[Document message received]';
-  } else if (type === 'audio') {
-    message.message = '[Audio message received]';
-  } else if (type === 'video') {
-    message.message = '[Video message received]';
-  } else if (type === 'location' && location) {
-    message.message = `[Location: ${location.latitude}, ${location.longitude}]`;
-  } else if (type === 'contacts' && contacts) {
-    message.message = '[Contact information received]';
-  } else {
-    // Fallback for unknown message types
-    message.message = '[Message received]';
-    console.log('Unknown message type:', JSON.stringify(messageData, null, 2));
-  }
-
-  console.log('Saving message to database:', JSON.stringify(message, null, 2));
-
-  await insertStoredMessage(message);
-
-  // Update or create chat in the chats collection
-  const chat = await getStoredChatByPhone(from, userId);
-  await upsertStoredChat({
-    phone: from,
-    name: chat?.name || `Customer ${from}`,
-    lastMessage: message.message,
-    timestamp: message.timestamp,
-    unread: (chat?.unread || 0) + 1
-  }, userId);
-
-  return message;
-}
-
-// Function to save outgoing WhatsApp messages to database
-async function saveOutgoingMessage(to, messageText, whatsappResponse, userId = 'default') {
-  const message = {
-    id: uuidv4(),
-    userId,
-    recipient: to,
-    phone: to, // Also store phone number directly for easier querying
-    message: messageText,
-    isCustomer: false,
-    timestamp: new Date(),
-    whatsappMessageId: whatsappResponse.messages?.[0]?.id,
-    status: 'sent'
-  };
-
-  await insertStoredMessage(message);
-
-  // Update or create chat in the chats collection
-  const chat = await getStoredChatByPhone(to, userId);
-  await upsertStoredChat({
-    phone: to,
-    name: chat?.name || `Customer ${to}`,
-    lastMessage: messageText,
-    timestamp: new Date(),
-    unread: chat?.unread || 0
-  }, userId);
-
-  return message;
-}
 
 async function sendOrderStatusUpdate(phoneNumberId, accessToken, to, order, newStatus) {
   // Format the status message
