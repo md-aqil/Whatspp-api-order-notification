@@ -571,14 +571,6 @@ function buildCatalogTemplatePayload({ templateName, templateLanguage, templateC
   }
 }
 
-/**
- * Enterprise Asynchronous Automation Handler
- * Replaces the legacy 800-line synchronous executeAutomationsForEvent function.
- */
-async function triggerAutomationEvent(event, context, integrations, userId = 'default') {
-  console.log(`[Queue] Enqueuing automation event: ${event} for user ${userId}`)
-  await enqueueAutomationEvent(event, context, integrations, userId)
-}
 
 
 // Legacy executeAutomationsForEvent removed. Using triggerAutomationEvent queue instead.
