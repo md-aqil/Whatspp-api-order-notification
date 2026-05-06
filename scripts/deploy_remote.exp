@@ -1,0 +1,55 @@
+#!/usr/bin/expect -f
+
+set timeout 300
+set host "187.127.154.55"
+set user "aqil"
+set pass "aqil@noon"
+
+log_user 1
+
+spawn ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no $user@$host
+
+expect {
+    "password:" {
+        send "$pass\r"
+    }
+    timeout {
+        puts "Timeout waiting for password prompt"
+        exit 1
+    }
+}
+
+expect -re ".*\[$#\] "
+
+send "cd /var/www/whatsapp-commerce-hub\r"
+expect -re ".*\[$#\] "
+
+send "git fetch origin main\r"
+expect -re ".*\[$#\] "
+
+send "git reset --hard origin/main\r"
+expect -re ".*\[$#\] "
+
+send "chmod +x deploy/deploy.sh\r"
+expect -re ".*\[$#\] "
+
+send "./deploy/deploy.sh\r"
+
+# Increased timeout for build
+set timeout 600
+
+expect {
+    "password for" {
+        send "$pass\r"
+        exp_continue
+    }
+    "=== Deployment complete! ===" {
+        puts "Success!"
+    }
+    timeout {
+        puts "Build timed out"
+    }
+}
+
+send "exit\r"
+expect eof
