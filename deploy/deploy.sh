@@ -19,8 +19,12 @@ npm install
 echo "[3/6] Building..."
 npm run build
 
+# Run database migrations
+echo "[4/6] Migrating database..."
+node scripts/setup-mysql-tables.js
+
 # Copy standalone output (DO THIS BEFORE CLEANING)
-echo "[4/6] Preparing standalone output..."
+echo "[5/6] Preparing standalone output..."
 node scripts/prepare-standalone.js
 
 # Clean old static files from the ROOT (optional, but standalone now has its own copies)
