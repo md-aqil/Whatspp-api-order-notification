@@ -1,0 +1,21 @@
+#!/usr/bin/expect -f
+
+set timeout 300
+set host "187.127.154.55"
+set user "aqil"
+set pass "aqil@noon"
+set cmd [lindex $argv 0]
+
+spawn ssh -o StrictHostKeyChecking=no $user@$host "$cmd"
+
+expect {
+    "password:" {
+        send "$pass\r"
+        exp_continue
+    }
+    "Password:" {
+        send "$pass\r"
+        exp_continue
+    }
+    eof
+}
