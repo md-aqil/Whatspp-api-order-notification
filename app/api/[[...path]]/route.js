@@ -908,6 +908,11 @@ async function handleRoute(request, { params }) {
 
         return handleCORS(NextResponse.json({ success: true }))
       } catch (error) {
+        console.error('WhatsApp Webhook POST error:', error)
+        return handleCORS(NextResponse.json({ error: 'Webhook processing failed' }, { status: 500 }))
+      }
+    }
+
     // Zoho OAuth Initiation
     if (route === '/integrations/zoho/auth' && method === 'GET') {
       const clientId = process.env.ZOHO_CLIENT_ID
