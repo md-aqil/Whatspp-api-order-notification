@@ -40,6 +40,7 @@ const BLOCKS = [
   { type: 'condition', tab: 'Actions', label: 'Condition', icon: Workflow, color: 'amber', description: 'Branch logic on a rule', defaults: { title: 'Order > $100', rule: 'total_price > 100', description: 'Conditional branch' } },
   { type: 'interactive', tab: 'Actions', label: 'Interactive Menu', icon: HelpCircle, color: 'fuchsia', description: 'Send a menu with reply options', defaults: { title: 'Auto Reply Menu', message: 'Hello {{customer_name}}, welcome! 👋 We\'re here to provide you with a premium experience. How can we assist you today? Please select an option below:', options: [{ id: 'opt0', label: '📦 Order Status' }, { id: 'opt1', label: '💬 Talk to Specialist' }], description: 'Professional interactive menu' } },
   { type: 'ai_reply', tab: 'Actions', label: 'AI Assistant', icon: Sparkles, color: 'indigo', description: 'Natural AI response using knowledge base', defaults: { title: 'AI Assistant', description: 'AI-powered reply', recipientMode: 'customer' } },
+  { type: 'zoho_action', tab: 'Actions', label: 'Zoho CRM', icon: Database, color: 'orange', description: 'Update CRM records or log notes', defaults: { title: 'Update Zoho CRM', action: 'add_note', content: 'Customer interacted with WhatsApp', status: 'Contacted', description: 'Real-time CRM writeback' } },
   { type: 'http_request', tab: 'Actions', label: 'External API', icon: Workflow, color: 'sky', description: 'Connect to CRMs like Zoho, Salesforce, or custom APIs', defaults: { title: 'Zoho CRM Sync', method: 'POST', url: 'https://www.zohoapis.com/crm/v2/Leads', headers: '{\n  "Authorization": "Zoho-oauthtoken {{zoho_token}}",\n  "Content-Type": "application/json"\n}', body: '{\n  "data": [\n    {\n      "Last_Name": "{{customer_name}}",\n      "Phone": "{{customer_phone}}",\n      "Description": "Lead from WhatsApp Automation"\n    }\n  ]\n}', description: 'Send data to external CRM' } },
 ]
 const COLORS = {
@@ -50,6 +51,7 @@ const COLORS = {
   condition: { border: 'border-amber-500/40', bg: 'bg-[#1a1508]', hdr: 'bg-amber-600/15', icon: 'bg-amber-600/25 text-amber-300', lbl: 'text-amber-300', dot: 'bg-amber-500' },
   interactive: { border: 'border-fuchsia-500/40', bg: 'bg-[#1a0f18]', hdr: 'bg-fuchsia-600/15', icon: 'bg-fuchsia-600/25 text-fuchsia-300', lbl: 'text-fuchsia-300', dot: 'bg-fuchsia-500' },
   ai_reply: { border: 'border-indigo-500/40', bg: 'bg-[#0f1125]', hdr: 'bg-indigo-600/15', icon: 'bg-indigo-600/25 text-indigo-300', lbl: 'text-indigo-300', dot: 'bg-indigo-500' },
+  zoho_action: { border: 'border-orange-500/40', bg: 'bg-[#1d130f]', hdr: 'bg-orange-600/15', icon: 'bg-orange-600/25 text-orange-300', lbl: 'text-orange-300', dot: 'bg-orange-500' },
   http_request: { border: 'border-sky-500/40', bg: 'bg-[#0f1a25]', hdr: 'bg-sky-600/15', icon: 'bg-sky-600/25 text-sky-300', lbl: 'text-sky-300', dot: 'bg-sky-500' },
 }
 const uid = p => `${p}-${Math.random().toString(36).slice(2, 9)}`
@@ -232,6 +234,8 @@ function mapStep(step, i, arr) {
         return { main: validate(ex.main), fallback: validate(ex.fallback) };
       } else if (step.type === 'interactive') {
         return Object.fromEntries((step.options || []).map(o => [o.id, validate(ex[o.id])]));
+      } else if (step.type === 'zoho_action') {
+        return { main: validate(ex.main) };
       } else {
         return { main: validate(ex.main) };
       }
@@ -2408,6 +2412,51 @@ export function AutomationStudio() {
                         )}
                       </div>
                     </div>
+                  )}
+
+                  {sel.type === 'zoho_action' && (
+                    <>
+                      <div className="space-y-1.5">
+                        <Label className="text-[10px] font-bold uppercase tracking-widest text-white/25">Action</Label>
+                        <Select value={sel.action || 'add_note'} onValueChange={v => updStep({ action: v })}>
+                          <SelectTrigger className={inputCls}><SelectValue /></SelectTrigger>
+                          <SelectContent className="z-[260] bg-[#13151f] border-white/10">
+                            <SelectItem value="update_status" className="text-white/70 text-xs focus:bg-white/8 focus:text-white">Update Lead Status</SelectItem>
+                            <SelectItem value="add_note" className="text-white/70 text-xs focus:bg-white/8 focus:text-white">Add Note</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {sel.action === 'update_status' && (
+                        <div className="space-y-1.5">
+                          <Label className="text-[10px] font-bold uppercase tracking-widest text-white/25">Lead Status</Label>
+                          <Select value={sel.status || 'Contacted'} onValueChange={v => updStep({ status: v })}>
+                            <SelectTrigger className={inputCls}><SelectValue /></SelectTrigger>
+                            <SelectContent className="z-[260] bg-[#13151f] border-white/10">
+                              <SelectItem value="Contacted" className="text-white/70 text-xs focus:bg-white/8 focus:text-white">Contacted</SelectItem>
+                              <SelectItem value="Qualified" className="text-white/70 text-xs focus:bg-white/8 focus:text-white">Qualified</SelectItem>
+                              <SelectItem value="Lost Lead" className="text-white/70 text-xs focus:bg-white/8 focus:text-white">Lost Lead</SelectItem>
+                              <SelectItem value="Junk Lead" className="text-white/70 text-xs focus:bg-white/8 focus:text-white">Junk Lead</SelectItem>
+                              <SelectItem value="Pre-Qualified" className="text-white/70 text-xs focus:bg-white/8 focus:text-white">Pre-Qualified</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+
+                      {sel.action === 'add_note' && (
+                        <div className="space-y-1.5">
+                          <Label className="text-[10px] font-bold uppercase tracking-widest text-white/25">Note Content</Label>
+                          <Textarea 
+                            rows={4} 
+                            value={sel.content || ''} 
+                            onChange={e => updStep({ content: e.target.value })} 
+                            className={textCls} 
+                            placeholder="e.g. Customer clicked Interested on WhatsApp"
+                          />
+                          <p className="text-[9px] text-white/30">Use {"{{variable}}"} to include dynamic data.</p>
+                        </div>
+                      )}
+                    </>
                   )}
 
                   {sel.type === 'message' && (

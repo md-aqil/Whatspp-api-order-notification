@@ -32,7 +32,8 @@ import {
   ChevronDown,
   Plus,
   Trash2,
-  Workflow
+  Workflow,
+  Database
 } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { toast } from 'sonner'
@@ -369,12 +370,29 @@ export default function SettingsPage() {
   const [integrations, setIntegrations] = useState({
     whatsapp: { connected: false, data: {} },
     shopify: { connected: false, data: {} },
-    stripe: { connected: false, data: {} }
+    stripe: { connected: false, data: {} },
+    zoho: { connected: false, data: {} }
   })
 
   // Load integrations status on mount
   useEffect(() => {
     loadIntegrations()
+    
+    // Handle Zoho OAuth status from URL
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search)
+      if (urlParams.get('zoho') === 'connected') {
+        toast.success('Zoho CRM connected successfully!')
+        // Clean up URL
+        window.history.replaceState({}, document.title, window.location.pathname)
+        loadIntegrations()
+        checkWebhookStatus()
+      } else if (urlParams.get('error')) {
+        const error = urlParams.get('error')
+        toast.error(`Failed to connect Zoho: ${error}`)
+        window.history.replaceState({}, document.title, window.location.pathname)
+      }
+    }
   }, [])
 
   const loadIntegrations = async () => {
@@ -733,6 +751,36 @@ export default function SettingsPage() {
                   <IntegrationForm type="stripe" integration={integrations.stripe} onSave={saveIntegration} />
                 </DialogContent>
               </Dialog>
+
+              {/* Zoho CRM */}
+              <div 
+                className="flex flex-col gap-4 cursor-pointer"
+                onClick={() => {
+                  if (integrations.zoho.connected) {
+                    toast.info('Zoho CRM is already connected. To reconnect, please disconnect first.')
+                  } else {
+                    window.location.href = '/api/integrations/zoho/auth'
+                  }
+                }}
+              >
+                <div className={`p-5 rounded-xl transition-colors group ${integrations.zoho.connected ? 'border-2 border-dashed border-orange-500/20 bg-orange-50/10' : 'bg-[#f8f9ff] hover:bg-[#eff4ff]'}`}>
+                  <div className="flex justify-between items-start mb-4">
+                    <div className="w-10 h-10 rounded-lg bg-orange-50 flex items-center justify-center">
+                      <Database className="text-orange-600 w-5 h-5" />
+                    </div>
+                    {integrations.zoho.connected ? (
+                      <span className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 text-[10px] font-black uppercase">Connected</span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[10px] font-black uppercase">Inactive</span>
+                    )}
+                  </div>
+                  <h4 className="font-bold mb-1">Zoho CRM</h4>
+                  <p className="text-[11px] text-[#3d618c] mb-4">Two-Way CRM Sync</p>
+                  <div className={`w-full py-2 rounded-lg ${integrations.zoho.connected ? 'bg-orange-100 text-orange-700' : 'bg-[#e5eeff] text-[#005cc0]'} font-bold text-xs hover:bg-orange-600 hover:text-white transition-all text-center`}>
+                    {integrations.zoho.connected ? 'Connected' : 'Connect Zoho'}
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </TabsContent>

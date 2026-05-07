@@ -908,8 +908,73 @@ async function handleRoute(request, { params }) {
 
         return handleCORS(NextResponse.json({ success: true }))
       } catch (error) {
-        console.error('WhatsApp Webhook POST error:', error)
-        return handleCORS(NextResponse.json({ error: 'Webhook processing failed' }, { status: 500 }))
+    // Zoho OAuth Initiation
+    if (route === '/integrations/zoho/auth' && method === 'GET') {
+      const clientId = process.env.ZOHO_CLIENT_ID
+      const redirectUri = process.env.ZOHO_REDIRECT_URI
+      const dc = process.env.ZOHO_DC || 'zoho.com'
+      const scope = 'ZohoCRM.modules.ALL,ZohoCRM.settings.ALL,ZohoCRM.users.READ'
+      
+      const authUrl = `https://accounts.${dc}/oauth/v2/auth?scope=${scope}&client_id=${clientId}&response_type=code&access_type=offline&redirect_uri=${redirectUri}&prompt=consent`
+      
+      return NextResponse.redirect(authUrl)
+    }
+
+    // Zoho OAuth Callback
+    if (route === '/integrations/zoho/callback' && method === 'GET') {
+      const code = request.nextUrl.searchParams.get('code')
+      const error = request.nextUrl.searchParams.get('error')
+      const dc = process.env.ZOHO_DC || 'zoho.com'
+      
+      if (error) {
+        return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/dashboard/settings?error=${error}`)
+      }
+      
+      if (!code) {
+        return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/dashboard/settings?error=no_code`)
+      }
+      
+      try {
+        const clientId = process.env.ZOHO_CLIENT_ID
+        const clientSecret = process.env.ZOHO_CLIENT_SECRET
+        const redirectUri = process.env.ZOHO_REDIRECT_URI
+        
+        const tokenUrl = `https://accounts.${dc}/oauth/v2/token`
+        const params = new URLSearchParams()
+        params.append('code', code)
+        params.append('client_id', clientId)
+        params.append('client_secret', clientSecret)
+        params.append('redirect_uri', redirectUri)
+        params.append('grant_type', 'authorization_code')
+        
+        const response = await fetch(tokenUrl, {
+          method: 'POST',
+          body: params
+        })
+        
+        const tokens = await response.json()
+        
+        if (tokens.error) {
+          throw new Error(tokens.error)
+        }
+        
+        // Save tokens to database
+        const integrations = await getStoredIntegrations(currentUserId)
+        await saveStoredIntegration(currentUserId, 'zoho', {
+          ...(integrations.zoho || {}),
+          accessToken: tokens.access_token,
+          refreshToken: tokens.refresh_token,
+          apiDomain: tokens.api_domain,
+          dc: dc,
+          clientId: clientId,
+          clientSecret: clientSecret,
+          expiryTime: Date.now() + (tokens.expires_in * 1000)
+        })
+        
+        return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/dashboard/settings?zoho=connected`)
+      } catch (err) {
+        console.error('Zoho OAuth Callback Error:', err)
+        return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/dashboard/settings?error=zoho_auth_failed`)
       }
     }
 
@@ -939,7 +1004,8 @@ async function handleRoute(request, { params }) {
           }
         },
         shopify: { connected: false, data: {} },
-        stripe: { connected: false, data: {} }
+        stripe: { connected: false, data: {} },
+        zoho: { connected: false, data: {} }
       }
 
       if (integrations) {
@@ -954,6 +1020,7 @@ async function handleRoute(request, { params }) {
           integrations.shopify?.clientSecret
         )
         defaultIntegrations.stripe.connected = !!(integrations.stripe?.secretKey)
+        defaultIntegrations.zoho.connected = !!(integrations.zoho?.refreshToken)
 
         // Return data without sensitive fields
         const normalizedWhatsApp = normalizeWhatsAppIntegrationData(integrations.whatsapp || {})
@@ -969,6 +1036,10 @@ async function handleRoute(request, { params }) {
         }
         defaultIntegrations.stripe.data = {
           publishableKey: integrations.stripe?.publishableKey || ''
+        }
+        defaultIntegrations.zoho.data = {
+          clientId: integrations.zoho?.clientId || '',
+          dc: integrations.zoho?.dc || 'zoho.in'
         }
       }
 
