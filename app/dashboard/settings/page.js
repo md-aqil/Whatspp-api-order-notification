@@ -55,6 +55,7 @@ export default function SettingsPage() {
    const [whatsappDialogOpen, setWhatsappDialogOpen] = useState(false)
    const [shopifyDialogOpen, setShopifyDialogOpen] = useState(false)
    const [stripeDialogOpen, setStripeDialogOpen] = useState(false)
+   const [user, setUser] = useState(null)
 
   const toggleWebhook = (type) => {
     setExpandedWebhook(expandedWebhook === type ? null : type)
@@ -87,13 +88,21 @@ export default function SettingsPage() {
     site_id: '',
   })
 
-  useEffect(() => {
-    setMounted(true)
+    useEffect(() => {
+      setMounted(true)
+  
+      if (typeof window !== 'undefined' && !process.env.NEXT_PUBLIC_BASE_URL) {
+        setBaseUrl(window.location.origin)
+      }
 
-    if (typeof window !== 'undefined' && !process.env.NEXT_PUBLIC_BASE_URL) {
-      setBaseUrl(window.location.origin)
-    }
-  }, [])
+      // Fetch user info
+      fetch('/api/auth/me')
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (data?.user) setUser(data.user)
+        })
+        .catch(err => console.error('Failed to fetch user:', err))
+    }, [])
 
   // Registered webhooks state (user-added)
   const [registeredWebhooks, setRegisteredWebhooks] = useState([])
@@ -576,7 +585,11 @@ export default function SettingsPage() {
 
   const buildWebhookUrl = (path) => {
     if (!baseUrl) return path
-    return `${baseUrl}${path}`
+    const url = `${baseUrl}${path}`
+    if (user?.id) {
+      return `${url}${url.includes('?') ? '&' : '?'}userId=${user.id}`
+    }
+    return url
   }
 
   const toggleDarkMode = () => {
