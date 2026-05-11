@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { buildMetaAuthHeaders, mapMetaAccessTokenError } from '@/lib/meta-auth'
 import { query, queryMany, queryOne } from '@/lib/postgres'
 import { requireRequestUserId } from '@/lib/request-user'
+import { decrypt } from '@/lib/encryption'
 
 async function ensureCampaignSchema() {
   try {
@@ -35,7 +36,7 @@ async function sendWhatsAppMessage(phoneNumberId, accessToken, to, messageData) 
 }
 
 async function getApprovedTemplateDefinition(businessAccountId, accessToken, templateName) {
-  const response = await fetch(`https://graph.facebook.com/v22.0/${businessAccountId}/message_templates`, {
+  const response = await fetch(`https://graph.facebook.com/v22.0/${businessAccountId}/message_templates?limit=1000`, {
     headers: {
       ...buildMetaAuthHeaders(accessToken),
       'Content-Type': 'application/json'
@@ -49,7 +50,7 @@ async function getApprovedTemplateDefinition(businessAccountId, accessToken, tem
   }
 
   const templates = Array.isArray(data.data) ? data.data : []
-  const selectedTemplate = templates.find((template) => template.name === templateName && template.status === 'APPROVED')
+  const selectedTemplate = templates.find((template) => template.name === templateName && String(template.status || '').toUpperCase() === 'APPROVED')
 
   if (!selectedTemplate) {
     throw new Error(`Approved template "${templateName}" was not found in Meta`)
@@ -447,9 +448,14 @@ export async function POST(request, { params }) {
     )
 
     const rawIntegrations = integrationsRows[0]
+    const decryptField = (val) => {
+      if (typeof val !== 'string') return val
+      const decrypted = val.includes(':') ? decrypt(val) : val
+      try { return JSON.parse(decrypted) } catch { return null }
+    }
     const integrations = {
-      whatsapp: typeof rawIntegrations?.whatsapp === 'string' ? JSON.parse(rawIntegrations.whatsapp) : rawIntegrations?.whatsapp,
-      shopify: typeof rawIntegrations?.shopify === 'string' ? JSON.parse(rawIntegrations.shopify) : rawIntegrations?.shopify
+      whatsapp: decryptField(rawIntegrations?.whatsapp),
+      shopify: decryptField(rawIntegrations?.shopify)
     }
 
     if (!integrations?.whatsapp?.phoneNumberId || !integrations?.whatsapp?.accessToken) {

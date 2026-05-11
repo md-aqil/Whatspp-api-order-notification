@@ -4,6 +4,7 @@ import { query } from '@/lib/postgres'
 import mysql from 'mysql2/promise'
 import { ensureSettingsTables } from '@/lib/settings-db'
 import { persistCartRecoveryEvent } from '@/lib/cart-recovery'
+import { decrypt } from '@/lib/encryption'
 
 // WordPress database pool (configured via environment variables)
 let wpPool
@@ -331,8 +332,11 @@ export async function POST(request) {
             ['default']
         )
 
-        const whatsappConfig = intRows[0]?.whatsapp 
-          ? (typeof intRows[0].whatsapp === 'string' ? JSON.parse(intRows[0].whatsapp) : intRows[0].whatsapp)
+        const rawWa = intRows[0]?.whatsapp
+        let waStr = rawWa
+        if (typeof waStr === 'string' && waStr.includes(':')) waStr = decrypt(waStr)
+        const whatsappConfig = waStr
+          ? (typeof waStr === 'string' ? JSON.parse(waStr) : waStr)
           : null
 
         if (!whatsappConfig) {

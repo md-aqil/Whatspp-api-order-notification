@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { query } from '@/lib/postgres'
 import { ensureSettingsTables } from '@/lib/settings-db'
 import { requireRequestUserId } from '@/lib/request-user'
+import { decrypt } from '@/lib/encryption'
 
 const SHOPIFY_WEBHOOK_TOPICS = [
   { value: 'shopify.order_created', label: 'Order Created', topic: 'orders/create', description: 'When a new order is created' },
@@ -90,9 +91,9 @@ async function getShopifyConfig(userId) {
     )
 
     if (shopifyRows[0]?.shopify) {
-      const shopify = typeof shopifyRows[0].shopify === 'string' 
-        ? JSON.parse(shopifyRows[0].shopify) 
-        : shopifyRows[0].shopify
+      let shopifyStr = shopifyRows[0].shopify
+      if (typeof shopifyStr === 'string' && shopifyStr.includes(':')) shopifyStr = decrypt(shopifyStr)
+      const shopify = typeof shopifyStr === 'string' ? JSON.parse(shopifyStr) : shopifyStr
       const isConnected = !!(shopify.shopDomain && shopify.clientId && shopify.clientSecret)
       shopifyConfig = {
         enabled: true,
@@ -118,9 +119,9 @@ async function getWhatsAppConfig(userId) {
     )
 
     if (waRows[0]?.whatsapp) {
-      const wa = typeof waRows[0].whatsapp === 'string' 
-        ? JSON.parse(waRows[0].whatsapp) 
-        : waRows[0].whatsapp
+      let waStr = waRows[0].whatsapp
+      if (typeof waStr === 'string' && waStr.includes(':')) waStr = decrypt(waStr)
+      const wa = typeof waStr === 'string' ? JSON.parse(waStr) : waStr
       waConfig = {
         enabled: true,
         connected: !!(wa.phoneNumberId && wa.accessToken),

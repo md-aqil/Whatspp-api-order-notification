@@ -3,6 +3,8 @@ import { buildMetaAuthHeaders, mapMetaAccessTokenError } from '@/lib/meta-auth'
 import { query } from '@/lib/postgres'
 import { requireRequestUserId } from '@/lib/request-user'
 
+import { decrypt } from '@/lib/encryption'
+
 async function getStoredIntegrations(userId) {
   const [rows] = await query(
     `SELECT whatsapp
@@ -14,9 +16,14 @@ async function getStoredIntegrations(userId) {
   )
   const row = rows[0]
   if (!row) return null
-  // Parse JSON string from MySQL
+  
+  let whatsappStr = row.whatsapp
+  if (typeof whatsappStr === 'string' && whatsappStr.includes(':')) {
+    whatsappStr = decrypt(whatsappStr)
+  }
+  
   return {
-    whatsapp: typeof row.whatsapp === 'string' ? JSON.parse(row.whatsapp) : row.whatsapp
+    whatsapp: typeof whatsappStr === 'string' ? JSON.parse(whatsappStr) : whatsappStr
   }
 }
 
@@ -37,7 +44,7 @@ export async function GET(request) {
     }
 
     const response = await fetch(
-      `https://graph.facebook.com/v22.0/${whatsapp.businessAccountId}/message_templates`,
+      `https://graph.facebook.com/v22.0/${whatsapp.businessAccountId}/message_templates?limit=1000`,
       {
         headers: {
           ...buildMetaAuthHeaders(whatsapp.accessToken),
@@ -74,7 +81,7 @@ export async function GET(request) {
     }
 
     const templates = Array.isArray(data.data) ? data.data : []
-    const approvedTemplates = templates.filter((template) => template.status === 'APPROVED')
+    const approvedTemplates = templates.filter((template) => String(template.status || '').toUpperCase() === 'APPROVED')
 
     return NextResponse.json(approvedTemplates)
   } catch (error) {
