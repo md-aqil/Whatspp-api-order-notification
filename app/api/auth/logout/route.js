@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server'
 import { deleteSessionByToken } from '@/lib/auth'
 
+export const dynamic = 'force-dynamic'
+
 export async function POST(request) {
   try {
     const refreshToken = request.cookies.get('refresh_token')?.value

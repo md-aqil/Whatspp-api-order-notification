@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import { query } from '@/lib/postgres'
 import { verifyToken } from '@/lib/auth'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET(request) {
   try {
     const accessToken = request.cookies.get('access_token')?.value

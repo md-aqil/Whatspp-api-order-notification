@@ -4,6 +4,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { verifyToken } from '@/lib/auth';
 import { cookies } from 'next/headers';
 
+export const dynamic = 'force-dynamic';
+
 async function getUserIdFromRequest() {
   const cookieStore = cookies();
   const token = cookieStore.get('access_token')?.value;
