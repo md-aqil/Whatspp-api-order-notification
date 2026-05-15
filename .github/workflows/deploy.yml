@@ -16,7 +16,7 @@ jobs:
           username: aqil
           password: ${{ secrets.SSH_PASSWORD }}
           script: |
-            cd /var/www/whatsapp-commerce-hub
+            cd /var/www/lcsw
             git fetch origin main
             git reset --hard origin/main
             chmod +x deploy/deploy.sh
