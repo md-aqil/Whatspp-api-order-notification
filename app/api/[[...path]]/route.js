@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid'
 import { NextResponse } from 'next/server'
+import crypto from 'crypto'
 import { buildMetaAuthHeaders, mapMetaAccessTokenError, sanitizeMetaAccessToken } from '@/lib/meta-auth'
 import { buildAutomationTemplateComponents as buildAutomationTemplateComponentsShared } from '@/lib/automation-template'
 import { validateWhatsAppPhoneNumberAccess } from '@/lib/whatsapp-meta'
@@ -69,6 +70,49 @@ function normalizeWhatsAppIntegrationData(data = {}) {
     catalogId: String(data.catalogId || '').trim(),
     webhookVerifyToken: String(data.webhookVerifyToken || '').trim()
   }
+}
+
+function getZohoOAuthStateSecret() {
+  return process.env.ZOHO_OAUTH_STATE_SECRET || process.env.JWT_SECRET || process.env.NEXTAUTH_SECRET || 'fallback-secret-for-dev-only'
+}
+
+function createZohoOAuthState(userId) {
+  const payload = Buffer.from(JSON.stringify({
+    userId: String(userId),
+    nonce: uuidv4(),
+    exp: Date.now() + (10 * 60 * 1000)
+  })).toString('base64url')
+  const signature = crypto
+    .createHmac('sha256', getZohoOAuthStateSecret())
+    .update(payload)
+    .digest('base64url')
+
+  return `${payload}.${signature}`
+}
+
+function verifyZohoOAuthState(state) {
+  const [payload, signature] = String(state || '').split('.')
+  if (!payload || !signature) {
+    throw new Error('Invalid Zoho OAuth state')
+  }
+
+  const expectedSignature = crypto
+    .createHmac('sha256', getZohoOAuthStateSecret())
+    .update(payload)
+    .digest('base64url')
+
+  const actualBuffer = Buffer.from(signature)
+  const expectedBuffer = Buffer.from(expectedSignature)
+  if (actualBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(actualBuffer, expectedBuffer)) {
+    throw new Error('Invalid Zoho OAuth state')
+  }
+
+  const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'))
+  if (!parsed.userId || !parsed.exp || Date.now() > parsed.exp) {
+    throw new Error('Expired Zoho OAuth state')
+  }
+
+  return String(parsed.userId)
 }
 
 function mapMetaCatalogProductsToAppProducts(metaProducts = []) {
@@ -915,12 +959,22 @@ async function handleRoute(request, { params }) {
 
     // Zoho OAuth Initiation
     if (route === '/integrations/zoho/auth' && method === 'GET') {
+      const authenticatedUserId = requireRequestUserId(request)
       const clientId = process.env.ZOHO_CLIENT_ID
       const redirectUri = process.env.ZOHO_REDIRECT_URI
       const dc = process.env.ZOHO_DC || 'zoho.com'
       const scope = 'ZohoCRM.modules.ALL,ZohoCRM.users.READ'
+      const authParams = new URLSearchParams()
+
+      authParams.set('scope', scope)
+      authParams.set('client_id', clientId)
+      authParams.set('response_type', 'code')
+      authParams.set('access_type', 'offline')
+      authParams.set('redirect_uri', redirectUri)
+      authParams.set('prompt', 'consent')
+      authParams.set('state', createZohoOAuthState(authenticatedUserId))
       
-      const authUrl = `https://accounts.${dc}/oauth/v2/auth?scope=${scope}&client_id=${clientId}&response_type=code&access_type=offline&redirect_uri=${redirectUri}&prompt=consent`
+      const authUrl = `https://accounts.${dc}/oauth/v2/auth?${authParams.toString()}`
       
       return NextResponse.redirect(authUrl)
     }
@@ -929,6 +983,7 @@ async function handleRoute(request, { params }) {
     if (route === '/integrations/zoho/callback' && method === 'GET') {
       const code = request.nextUrl.searchParams.get('code')
       const error = request.nextUrl.searchParams.get('error')
+      const state = request.nextUrl.searchParams.get('state')
       const dc = process.env.ZOHO_DC || 'zoho.com'
       
       if (error) {
@@ -937,6 +992,14 @@ async function handleRoute(request, { params }) {
       
       if (!code) {
         return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/dashboard/settings?error=no_code`)
+      }
+
+      let zohoUserId
+      try {
+        zohoUserId = verifyZohoOAuthState(state)
+      } catch (stateError) {
+        console.error('Zoho OAuth State Error:', stateError.message)
+        return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/dashboard/settings?error=zoho_invalid_state`)
       }
       
       try {
@@ -964,7 +1027,7 @@ async function handleRoute(request, { params }) {
         }
         
         // Save tokens to database
-        const integrations = await getStoredIntegrations(currentUserId)
+        const integrations = await getStoredIntegrations(zohoUserId)
         await saveStoredIntegration('zoho', {
           ...(integrations.zoho || {}),
           accessToken: tokens.access_token,
@@ -974,7 +1037,7 @@ async function handleRoute(request, { params }) {
           clientId: clientId,
           clientSecret: clientSecret,
           expiryTime: Date.now() + (tokens.expires_in * 1000)
-        }, currentUserId)
+        }, zohoUserId)
         
         return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/dashboard/settings?zoho=connected`)
       } catch (err) {
