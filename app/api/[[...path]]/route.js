@@ -1057,7 +1057,7 @@ async function handleRoute(request, { params }) {
         }
         
         // Save tokens to database
-        const integrations = await getStoredIntegrations(zohoUserId)
+        const integrations = (await getStoredIntegrations(zohoUserId)) || {}
         await saveStoredIntegration('zoho', {
           ...(integrations.zoho || {}),
           accessToken: tokens.access_token,

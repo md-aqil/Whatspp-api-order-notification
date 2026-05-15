@@ -13,6 +13,7 @@ test('Zoho OAuth callback persists tokens under the zoho integration for the aut
   const source = read('app/api/[[...path]]/route.js')
 
   assert.match(source, /await saveStoredIntegration\(\s*'zoho',\s*\{/)
+  assert.match(source, /const integrations = \(await getStoredIntegrations\(zohoUserId\)\) \|\| \{\}/)
   assert.match(source, /expiresAt: Date\.now\(\) \+ \(tokens\.expires_in \* 1000\)[\s\S]*\},\s*zohoUserId\s*\)/)
   assert.doesNotMatch(source, /saveStoredIntegration\(currentUserId,\s*'zoho'/)
 })
