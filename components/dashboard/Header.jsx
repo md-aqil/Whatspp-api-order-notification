@@ -2,7 +2,6 @@
 
 import { useState } from 'react'
 import { 
-  Bell, 
   Menu, 
   Search,
   User,
@@ -54,10 +53,6 @@ export function Header({ setSidebarOpen, user }) {
           </div>
           
           <ThemeToggle />
-          
-          <button className="rounded-full border border-slate-200/70 bg-white/80 p-2 text-slate-500 shadow-[0_12px_30px_-24px_rgba(5,52,92,0.4)] transition hover:text-slate-900 focus:outline-none dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-white/45 dark:hover:bg-white/[0.08] dark:hover:text-white">
-            <Bell className="h-6 w-6" />
-          </button>
           
           <div className="relative">
             <button 
