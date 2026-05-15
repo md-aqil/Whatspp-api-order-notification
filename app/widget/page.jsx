@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { Suspense, useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Send, MessageSquare, Sparkles, X, Bot, Image, Loader2 } from 'lucide-react'
 
@@ -8,7 +8,7 @@ import { Send, MessageSquare, Sparkles, X, Bot, Image, Loader2 } from 'lucide-re
  * ChatflowWidgetIframe - The iframe content rendered by the widget embed script.
  * This is a standalone page that lives inside an iframe for isolation.
  */
-export default function ChatflowWidgetIframe() {
+function ChatflowWidgetIframeContent() {
   const searchParams = useSearchParams()
   const userId = searchParams.get('userId') || 'default'
   const bgColor = searchParams.get('bgColor') || '#005cc0'
@@ -279,5 +279,13 @@ export default function ChatflowWidgetIframe() {
         </div>
       </div>
     </div>
+  )
+}
+
+export default function ChatflowWidgetIframe() {
+  return (
+    <Suspense fallback={<div className="h-screen w-screen bg-gray-50" />}>
+      <ChatflowWidgetIframeContent />
+    </Suspense>
   )
 }

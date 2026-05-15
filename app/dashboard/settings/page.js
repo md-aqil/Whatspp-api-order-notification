@@ -37,6 +37,7 @@ import {
   Image as ImageIcon,
   Palette,
   Bot as BotIcon,
+  Loader2,
   Save
 } from 'lucide-react'
 import { useTheme } from 'next-themes'
