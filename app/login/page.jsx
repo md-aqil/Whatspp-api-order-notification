@@ -45,6 +45,15 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-[var(--surface)]">
       <div className="w-full max-w-md p-8 bg-[var(--card)] rounded-lg border shadow-lg">
+        <div className="flex justify-center mb-6">
+          <div className="w-16 h-16 rounded-xl overflow-hidden shadow-sm">
+            <img
+              src="/chatflow-logo.png"
+              alt="Chatflow"
+              className="w-full h-full object-contain"
+            />
+          </div>
+        </div>
         <h1 className="text-2xl font-bold text-center mb-6">
           {isLogin ? 'Welcome Back' : 'Create Account'}
         </h1>

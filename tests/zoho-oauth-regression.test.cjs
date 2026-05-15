@@ -13,8 +13,23 @@ test('Zoho OAuth callback persists tokens under the zoho integration for the aut
   const source = read('app/api/[[...path]]/route.js')
 
   assert.match(source, /await saveStoredIntegration\(\s*'zoho',\s*\{/)
-  assert.match(source, /expiryTime: Date\.now\(\) \+ \(tokens\.expires_in \* 1000\)[\s\S]*\},\s*zohoUserId\s*\)/)
+  assert.match(source, /expiresAt: Date\.now\(\) \+ \(tokens\.expires_in \* 1000\)[\s\S]*\},\s*zohoUserId\s*\)/)
   assert.doesNotMatch(source, /saveStoredIntegration\(currentUserId,\s*'zoho'/)
+})
+
+test('Zoho OAuth callback returns sanitized token exchange details', () => {
+  const source = read('app/api/[[...path]]/route.js')
+  const zohoApi = read('lib/zoho-api.js')
+
+  assert.match(source, /const zohoAuthError = encodeURIComponent/)
+  assert.match(source, /Zoho OAuth token exchange failed/)
+  assert.match(source, /insertWebhookLog\('zoho', 'oauth_failed'/)
+  assert.match(source, /insertWebhookLog\('zoho', 'oauth_connected'/)
+  assert.match(source, /error=zoho_auth_failed&detail=\$\{zohoAuthError\}/)
+  assert.doesNotMatch(source, /client_secret.*console\.error/)
+
+  assert.match(zohoApi, /https:\/\/accounts\.\$\{this\.dc\}\/oauth\/v2\/token/)
+  assert.doesNotMatch(zohoApi, /accounts\.zoho\.\$\{this\.dc\}/)
 })
 
 test('Zoho OAuth uses signed state to bind callbacks to the initiating ChatFlow user', () => {

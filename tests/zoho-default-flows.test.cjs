@@ -19,7 +19,14 @@ test('Zoho lead sync flow maps WhatsApp leads into CRM fields', () => {
 
   assert.match(defaults, /id: 'default-send-whatsapp-lead-to-zoho'/)
   assert.match(defaults, /event: 'whatsapp.message_received'/)
+  assert.match(defaults, /title: 'Has WhatsApp number'/)
+  assert.match(defaults, /rule: 'customer_phone != empty'/)
+  assert.match(defaults, /title: 'Has message content'/)
+  assert.match(defaults, /rule: 'customer_message != empty'/)
   assert.match(defaults, /action: 'upsert_lead'/)
+  assert.match(defaults, /zohoFieldSummary/)
+  assert.match(defaults, /Create: Last Name, Company, WhatsApp Number/)
+  assert.match(defaults, /Update: Last Inbound Message At, Human Handover Required/)
   assert.match(defaults, /Last_Name/)
   assert.match(defaults, /Company/)
   assert.match(defaults, /WhatsApp_Number/)
@@ -70,6 +77,9 @@ test('Zoho lead status flow remains available', () => {
 
   assert.match(studio, /value: 'zoho.lead_updated'/)
   assert.match(studio, /'zoho.lead_updated': 'default-zoho-lead-status-notification'/)
+  assert.match(studio, /defaultAutomations\.find\(item => item\.id === a\?\.id\)/)
+  assert.match(studio, /flow\.zohoFieldSummary/)
+  assert.match(studio, /Fields sent to Zoho/)
   assert.doesNotMatch(studio, /Lead Captured \(WhatsApp\)/)
 
   assert.match(customWebhookRoute, /eventType\.startsWith\('whatsapp\.'\)/)

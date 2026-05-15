@@ -987,10 +987,20 @@ async function handleRoute(request, { params }) {
       const dc = process.env.ZOHO_DC || 'zoho.com'
       
       if (error) {
+        await insertWebhookLog('zoho', 'oauth_failed', {
+          stage: 'authorization',
+          error,
+          dc
+        })
         return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/dashboard/settings?error=${error}`)
       }
       
       if (!code) {
+        await insertWebhookLog('zoho', 'oauth_failed', {
+          stage: 'callback',
+          error: 'no_code',
+          dc
+        })
         return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/dashboard/settings?error=no_code`)
       }
 
@@ -999,6 +1009,11 @@ async function handleRoute(request, { params }) {
         zohoUserId = verifyZohoOAuthState(state)
       } catch (stateError) {
         console.error('Zoho OAuth State Error:', stateError.message)
+        await insertWebhookLog('zoho', 'oauth_failed', {
+          stage: 'state',
+          error: stateError.message,
+          dc
+        })
         return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/dashboard/settings?error=zoho_invalid_state`)
       }
       
@@ -1022,8 +1037,23 @@ async function handleRoute(request, { params }) {
         
         const tokens = await response.json()
         
-        if (tokens.error) {
-          throw new Error(tokens.error)
+        if (!response.ok || tokens.error) {
+          const zohoTokenError = tokens.error_description || tokens.error || `HTTP ${response.status}`
+          console.error('Zoho OAuth token exchange failed:', {
+            status: response.status,
+            error: tokens.error || null,
+            error_description: tokens.error_description || null
+          })
+          await insertWebhookLog('zoho', 'oauth_failed', {
+            stage: 'token_exchange',
+            status: response.status,
+            error: tokens.error || null,
+            error_description: tokens.error_description || null,
+            dc,
+            redirectUri
+          })
+          const zohoAuthError = encodeURIComponent(zohoTokenError)
+          return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/dashboard/settings?error=zoho_auth_failed&detail=${zohoAuthError}`)
         }
         
         // Save tokens to database
@@ -1036,12 +1066,24 @@ async function handleRoute(request, { params }) {
           dc: dc,
           clientId: clientId,
           clientSecret: clientSecret,
-          expiryTime: Date.now() + (tokens.expires_in * 1000)
+          expiresAt: Date.now() + (tokens.expires_in * 1000)
         }, zohoUserId)
+
+        await insertWebhookLog('zoho', 'oauth_connected', {
+          stage: 'connected',
+          userId: zohoUserId,
+          dc,
+          apiDomain: tokens.api_domain || null
+        })
         
         return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/dashboard/settings?zoho=connected`)
       } catch (err) {
         console.error('Zoho OAuth Callback Error:', err)
+        await insertWebhookLog('zoho', 'oauth_failed', {
+          stage: 'callback_exception',
+          error: err.message,
+          dc
+        })
         return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/dashboard/settings?error=zoho_auth_failed`)
       }
     }

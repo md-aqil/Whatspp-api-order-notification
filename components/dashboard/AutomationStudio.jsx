@@ -242,7 +242,15 @@ function mapStep(step, i, arr) {
     })()
   }
 }
-const normalize = a => ({ ...a, metrics: a?.metrics || { sent: 0, openRate: 0, conversions: 0 }, steps: (Array.isArray(a?.steps) ? a.steps : []).map((s, i, arr) => mapStep(s, i, arr)) })
+const normalize = a => {
+  const defaultSeed = defaultAutomations.find(item => item.id === a?.id)
+  return {
+    ...a,
+    zohoFieldSummary: a?.zohoFieldSummary || defaultSeed?.zohoFieldSummary,
+    metrics: a?.metrics || { sent: 0, openRate: 0, conversions: 0 },
+    steps: (Array.isArray(a?.steps) ? a.steps : []).map((s, i, arr) => mapStep(s, i, arr))
+  }
+}
 
 function cloneFlow(a, name) {
   const n = normalize(a); const m = new Map(n.steps.map(s => [s.id, uid('step')]))
@@ -1379,6 +1387,12 @@ export function AutomationStudio() {
                         </div>
                         <h3 className="font-bold text-white group-hover:text-violet-300 transition-colors">{flow.name}</h3>
                         <p className="text-white/40 text-[11px] mt-1.5 line-clamp-2 leading-relaxed">{flow.summary || 'Custom automated journey'}</p>
+                        {flow.zohoFieldSummary && (
+                          <div className="mt-3 rounded-2xl border border-orange-400/10 bg-orange-500/[0.04] p-3">
+                            <div className="text-[9px] font-bold uppercase tracking-widest text-orange-300/70">Fields sent to Zoho</div>
+                            <p className="mt-1 text-[10px] leading-relaxed text-white/35 line-clamp-4">{flow.zohoFieldSummary}</p>
+                          </div>
+                        )}
                         
                         <div className="mt-6 pt-5 border-t border-white/[0.04] flex items-center justify-between">
                           <div className="flex gap-4">

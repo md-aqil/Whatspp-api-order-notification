@@ -3,8 +3,11 @@ import { ThemeProvider } from '@/components/theme-provider'
 import { Toaster } from 'sonner'
 
 export const metadata = {
-  title: 'WhatsApp Commerce Hub',
+  title: 'Chatflow',
   description: 'Connect Shopify to WhatsApp Business for seamless product catalogs and payments',
+  icons: {
+    icon: '/favicon.png',
+  },
 }
 
 export default function RootLayout({ children }) {

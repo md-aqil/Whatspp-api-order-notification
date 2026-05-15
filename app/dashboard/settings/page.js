@@ -33,7 +33,11 @@ import {
   Plus,
   Trash2,
   Workflow,
-  Database
+  Database,
+  Image as ImageIcon,
+  Palette,
+  Bot as BotIcon,
+  Save
 } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { toast } from 'sonner'
@@ -54,12 +58,27 @@ export default function SettingsPage() {
   const [notificationsEnabled, setNotificationsEnabled] = useState(true)
    const [baseUrl, setBaseUrl] = useState(process.env.NEXT_PUBLIC_BASE_URL || '')
  
-   const [whatsappDialogOpen, setWhatsappDialogOpen] = useState(false)
-   const [shopifyDialogOpen, setShopifyDialogOpen] = useState(false)
-   const [stripeDialogOpen, setStripeDialogOpen] = useState(false)
-   const [user, setUser] = useState(null)
+const [whatsappDialogOpen, setWhatsappDialogOpen] = useState(false)
+    const [shopifyDialogOpen, setShopifyDialogOpen] = useState(false)
+    const [stripeDialogOpen, setStripeDialogOpen] = useState(false)
+    const [user, setUser] = useState(null)
 
-  const toggleWebhook = (type) => {
+    // Branding state
+    const [branding, setBranding] = useState({
+      businessName: 'Our Business',
+      logoUrl: '',
+      welcomeMessage: 'Hello! How can I help you today?',
+      primaryColor: '#005cc0',
+      fontFamily: 'Inter',
+      position: 'bottom-right',
+      botName: 'Support Bot',
+      enabled: true
+    })
+    const [brandingLoading, setBrandingLoading] = useState(false)
+    const [logoPreview, setLogoPreview] = useState(null)
+    const [logoFile, setLogoFile] = useState(null)
+
+    const toggleWebhook = (type) => {
     setExpandedWebhook(expandedWebhook === type ? null : type)
   }
 
@@ -126,6 +145,94 @@ export default function SettingsPage() {
       }
     } catch (error) {
       console.error('Failed to load registered webhooks:', error)
+    }
+  }
+
+  // Load branding configuration
+  const loadBranding = async () => {
+    try {
+      const response = await fetch('/api/branding')
+      if (response.ok) {
+        const data = await response.json()
+        if (data.success && data.branding) {
+          setBranding({
+            businessName: data.branding.businessName || '',
+            logoUrl: data.branding.logoUrl || '',
+            welcomeMessage: data.branding.welcomeMessage || '',
+            primaryColor: data.branding.primaryColor || '#005cc0',
+            fontFamily: data.branding.fontFamily || 'Inter',
+            position: data.branding.position || 'bottom-right',
+            botName: data.branding.botName || '',
+            enabled: data.branding.enabled ?? true
+          })
+          if (data.branding.logoUrl) {
+            setLogoPreview(data.branding.logoUrl)
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load branding:', error)
+    }
+  }
+
+  // Save branding configuration
+  const handleSaveBranding = async () => {
+    setBrandingLoading(true)
+    try {
+      const response = await fetch('/api/branding', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(branding)
+      })
+      const data = await response.json()
+      if (response.ok) {
+        toast.success('Branding saved successfully!')
+      } else {
+        toast.error(data.error || 'Failed to save branding')
+      }
+    } catch (error) {
+      console.error('Failed to save branding:', error)
+      toast.error('Failed to save branding')
+    } finally {
+      setBrandingLoading(false)
+    }
+  }
+
+  // Handle logo upload
+  const handleLogoUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    if (!['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'].includes(file.type)) {
+      toast.error('Only JPG, PNG, WebP, and SVG images are supported')
+      return
+    }
+
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error('Image must be 2MB or smaller')
+      return
+    }
+
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+
+      const response = await fetch('/api/branding/logo', {
+        method: 'POST',
+        body: formData
+      })
+
+      const data = await response.json()
+      if (response.ok) {
+        setBranding(prev => ({ ...prev, logoUrl: data.url }))
+        setLogoPreview(data.url)
+        toast.success('Logo uploaded successfully!')
+      } else {
+        toast.error(data.error || 'Failed to upload logo')
+      }
+    } catch (error) {
+      console.error('Logo upload error:', error)
+      toast.error('Failed to upload logo')
     }
   }
 
@@ -362,10 +469,11 @@ export default function SettingsPage() {
   }
 
   // Load registered webhooks on mount
-  useEffect(() => {
-    loadRegisteredWebhooks()
-    loadWordPressConnections()
-  }, [])
+useEffect(() => {
+     loadBranding()
+     loadRegisteredWebhooks()
+     loadWordPressConnections()
+   }, [])
 
   // Integration state
   const [integrations, setIntegrations] = useState({
@@ -390,7 +498,8 @@ export default function SettingsPage() {
         checkWebhookStatus()
       } else if (urlParams.get('error')) {
         const error = urlParams.get('error')
-        toast.error(`Failed to connect Zoho: ${error}`)
+        const detail = urlParams.get('detail')
+        toast.error(`Failed to connect Zoho: ${detail ? `${error} - ${detail}` : error}`)
         window.history.replaceState({}, document.title, window.location.pathname)
       }
     }
@@ -655,9 +764,12 @@ export default function SettingsPage() {
           <TabsTrigger value="webhooks" className="rounded-lg px-6 py-2.5 font-bold data-[state=active]:bg-white data-[state=active]:text-[#005cc0]">
             Webhooks & API
           </TabsTrigger>
-          <TabsTrigger value="preferences" className="rounded-lg px-6 py-2.5 font-bold data-[state=active]:bg-white data-[state=active]:text-[#005cc0]">
-            Preferences
-          </TabsTrigger>
+<TabsTrigger value="preferences" className="rounded-lg px-6 py-2.5 font-bold data-[state=active]:bg-white data-[state=active]:text-[#005cc0]">
+             Preferences
+           </TabsTrigger>
+           <TabsTrigger value="branding" className="rounded-lg px-6 py-2.5 font-bold data-[state=active]:bg-white data-[state=active]:text-[#005cc0]">
+             Branding
+           </TabsTrigger>
         </TabsList>
 
         {/* Integrations Tab */}
@@ -1205,8 +1317,148 @@ export default function SettingsPage() {
           </div>
         </TabsContent>
 
-        {/* Preferences Tab */}
-        <TabsContent value="preferences" className="space-y-8 mt-0 focus-visible:outline-none">
+{/* Branding Tab */}
+         <TabsContent value="branding" className="space-y-8 mt-0 focus-visible:outline-none">
+           <div className="bg-white p-8 rounded-2xl shadow-sm border-none ring-1 ring-black/[0.03] max-w-2xl">
+             <h3 className="text-xl font-bold font-headline mb-2 flex items-center gap-3">
+               <Palette className="w-6 h-6 text-[#005cc0]" />
+               Chatbot Branding
+             </h3>
+             <p className="text-sm text-[#3d618c] mb-8">Customize your chatbot's appearance, logo, and messaging to match your brand identity.</p>
+
+             <div className="space-y-8">
+               {/* Logo Upload */}
+               <div className="space-y-3">
+                 <Label className="font-bold text-sm">Bot Logo</Label>
+                 <div className="flex items-center gap-6">
+                   <div className="relative w-20 h-20 rounded-2xl overflow-hidden bg-[#f8f9ff] border border-[#e5eeff] flex items-center justify-center flex-shrink-0 group">
+                     {logoPreview || branding.logoUrl ? (
+                       <img
+                         src={logoPreview || branding.logoUrl}
+                         alt="Brand logo"
+                         className="w-full h-full object-contain"
+                       />
+                     ) : (
+                       <ImageIcon className="w-8 h-8 text-[#3d618c]" />
+                     )}
+                     <label className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer flex items-center justify-center rounded-2xl">
+                       <span className="text-white text-xs font-bold">Change</span>
+                       <input
+                         type="file"
+                         accept="image/jpeg,image/png,image/webp,image/svg+xml"
+                         className="hidden"
+                         onChange={handleLogoUpload}
+                       />
+                     </label>
+                   </div>
+                   <div className="text-[11px] text-[#3d618c] space-y-1">
+                     <p>Upload your company logo or</p>
+                     <p className="font-medium">brand icon (JPG, PNG, WebP, SVG)</p>
+                     <p className="text-[10px]">Max 2MB</p>
+                   </div>
+                 </div>
+               </div>
+
+               {/* Business Name */}
+               <div className="grid grid-cols-2 gap-6">
+                 <div className="space-y-2">
+                   <Label htmlFor="branding-businessName" className="font-bold text-sm">Business Name</Label>
+                   <Input
+                     id="branding-businessName"
+                     placeholder="Your business name"
+                     value={branding.businessName}
+                     onChange={(e) => setBranding(prev => ({ ...prev, businessName: e.target.value }))}
+                   />
+                 </div>
+                 <div className="space-y-2">
+                   <Label htmlFor="branding-botName" className="font-bold text-sm">Bot Name</Label>
+                   <Input
+                     id="branding-botName"
+                     placeholder="e.g. Support Assistant"
+                     value={branding.botName}
+                     onChange={(e) => setBranding(prev => ({ ...prev, botName: e.target.value }))}
+                   />
+                 </div>
+               </div>
+
+               {/* Welcome Message */}
+               <div className="space-y-2">
+                 <Label htmlFor="branding-welcomeMessage" className="font-bold text-sm">Welcome Message</Label>
+                 <textarea
+                   id="branding-welcomeMessage"
+                   rows={3}
+                   placeholder="Hello! How can I help you today?"
+                   value={branding.welcomeMessage}
+                   onChange={(e) => setBranding(prev => ({ ...prev, welcomeMessage: e.target.value }))}
+                   className="w-full resize-none border border-gray-200 bg-white rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-offset-0 focus:ring-[#005cc0]/30 text-sm"
+                 />
+               </div>
+
+               {/* Primary Color & Position */}
+               <div className="grid grid-cols-2 gap-6">
+                 <div className="space-y-2">
+                   <Label className="font-bold text-sm">Primary Color</Label>
+                   <div className="flex items-center gap-3">
+                     <input
+                       type="color"
+                       value={branding.primaryColor}
+                       onChange={(e) => setBranding(prev => ({ ...prev, primaryColor: e.target.value }))}
+                       className="w-12 h-10 rounded-lg cursor-pointer border border-gray-200 p-0.5"
+                     />
+                     <code className="text-sm font-mono text-gray-600">{branding.primaryColor}</code>
+                   </div>
+                 </div>
+                 <div className="space-y-2">
+                   <Label htmlFor="branding-position" className="font-bold text-sm">Widget Position</Label>
+                   <select
+                     id="branding-position"
+                     value={branding.position}
+                     onChange={(e) => setBranding(prev => ({ ...prev, position: e.target.value }))}
+                     className="w-full border border-gray-200 bg-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-offset-0 focus:ring-[#005cc0]/30"
+                   >
+                     <option value="bottom-right">Bottom Right</option>
+                     <option value="bottom-left">Bottom Left</option>
+                   </select>
+                 </div>
+               </div>
+
+               {/* Enable/Disable */}
+               <div className="flex items-center justify-between p-4 bg-[#f8f9ff] rounded-xl">
+                 <div>
+                   <p className="font-bold">Enable Chatbot Widget</p>
+                   <p className="text-xs text-[#3d618c] mt-0.5">Toggle the live chat widget on your website</p>
+                 </div>
+                 <button
+                   type="button"
+                   onClick={() => setBranding(prev => ({ ...prev, enabled: !prev.enabled }))}
+                   className={`w-12 h-7 rounded-full relative p-1 transition-colors ${branding.enabled ? 'bg-[#005cc0]' : 'bg-[#d2e4ff]'}`}
+                 >
+                   <div className={`w-5 h-5 bg-white rounded-full shadow-sm transition-transform ${branding.enabled ? 'translate-x-5' : 'translate-x-0'}`} />
+                 </button>
+               </div>
+
+               {/* Save Button */}
+               <div className="pt-4 border-t border-gray-100">
+                 <Button onClick={handleSaveBranding} disabled={brandingLoading} className="w-full">
+                   {brandingLoading ? (
+                     <>
+                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                       Saving...
+                     </>
+                   ) : (
+                     <>
+                       <Save className="w-4 h-4 mr-2" />
+                       Save Branding
+                     </>
+                   )}
+                 </Button>
+               </div>
+             </div>
+           </div>
+         </TabsContent>
+
+         {/* Preferences Tab */}
+         <TabsContent value="preferences" className="space-y-8 mt-0 focus-visible:outline-none">
           <div className="bg-white p-8 rounded-2xl shadow-sm border-none ring-1 ring-black/[0.03] max-w-2xl">
             <h3 className="text-xl font-bold font-headline mb-8">App Preferences</h3>
             <div className="space-y-6">
