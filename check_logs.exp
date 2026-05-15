@@ -1,0 +1,28 @@
+#!/usr/bin/expect -f
+
+set timeout 30
+set host "187.127.154.55"
+set user "aqil"
+set pass "aqil@noon"
+
+spawn ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no $user@$host
+
+expect {
+    "password:" {
+        send "$pass\r"
+    }
+    -re ".*\[$#\] " {
+        # Already logged in
+    }
+}
+
+expect -re ".*\[$#\] "
+send "sudo pm2 logs lcsw --lines 50 --nostream\r"
+expect {
+    "Password:" {
+        send "$pass\r"
+    }
+}
+expect -re ".*\[$#\] "
+send "exit\r"
+expect eof
