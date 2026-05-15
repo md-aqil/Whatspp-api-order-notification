@@ -20,4 +20,4 @@ jobs:
             git fetch origin main
             git reset --hard origin/main
             chmod +x deploy/deploy.sh
-            ./deploy/deploy.sh
+            sudo ./deploy/deploy.sh

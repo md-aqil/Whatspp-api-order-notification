@@ -37,8 +37,8 @@ node scripts/prepare-standalone.js
 
 # Restart app and worker with systemd
 echo "[6/6] Restarting app and worker..."
-sudo systemctl restart "$SERVICE_NAME"
-sudo systemctl restart "$SERVICE_NAME-worker" || sudo pm2 restart "$SERVICE_NAME-worker" || true
+systemctl restart "$SERVICE_NAME"
+systemctl restart "$SERVICE_NAME-worker" || pm2 restart "$SERVICE_NAME-worker" || true
 
 echo "=== Deployment complete! ==="
 systemctl status "$SERVICE_NAME" --no-pager
