@@ -24,7 +24,7 @@ echo "[4/6] Migrating database..."
 if [ -f "/etc/lcsw/.env" ]; then
   # Use sudo to read it if needed, but aqil might not have perms to export directly
   # Better to load it into the node process
-  export $(grep -v '^#' /etc/lcsw/.env | xargs)
+  export $(grep -v 	'^#' /etc/lcsw/.env | xargs)
   node scripts/setup-mysql-tables.js
 else
   echo "Warning: /etc/lcsw/.env not found, using existing environment for migration"
@@ -37,10 +37,9 @@ node scripts/prepare-standalone.js
 
 # Restart app and worker with systemd
 echo "[6/6] Restarting app and worker..."
-systemctl restart "$SERVICE_NAME"
-systemctl restart "$SERVICE_NAME-worker" || pm2 restart "$SERVICE_NAME-worker" || true
+sudo systemctl restart "$SERVICE_NAME"
+sudo systemctl restart "$SERVICE_NAME-worker" || sudo pm2 restart "$SERVICE_NAME-worker" || true
 
 echo "=== Deployment complete! ==="
-systemctl status "$SERVICE_NAME" --no-pager
-systemctl status "$SERVICE_NAME-worker" --no-pager || true
-
+sudo systemctl status "$SERVICE_NAME" --no-pager
+sudo systemctl status "$SERVICE_NAME-worker" --no-pager || true
