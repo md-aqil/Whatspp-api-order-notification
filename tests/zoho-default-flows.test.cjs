@@ -59,6 +59,7 @@ test('Zoho lead status flow remains available', () => {
   const defaults = read('lib/automation-defaults.js')
   const studio = read('components/dashboard/AutomationStudio.jsx')
   const customWebhookRoute = read('app/api/webhook/custom/route.js')
+  const engine = read('lib/automation-engine.js')
 
   assert.match(defaults, /id: 'default-zoho-lead-status-notification'/)
   assert.match(defaults, /name: 'Zoho Lead Status Notification'/)
@@ -74,4 +75,21 @@ test('Zoho lead status flow remains available', () => {
   assert.match(customWebhookRoute, /eventType\.startsWith\('whatsapp\.'\)/)
   assert.match(customWebhookRoute, /step\.type === 'http_request'/)
   assert.match(customWebhookRoute, /executeAutomationHttpRequest/)
+
+  assert.match(engine, /hasRecentInboundWhatsAppMessage/)
+  assert.match(engine, /outside the 24-hour WhatsApp customer service window/)
+  assert.match(engine, /break/)
+})
+
+test('Zoho live feed distinguishes GET verification from POST updates', () => {
+  const zohoWebhook = read('lib/webhooks/zoho.js')
+  const settings = read('app/dashboard/settings/page.js')
+
+  assert.match(zohoWebhook, /const webhookTopic = request\.method === 'GET' \? 'crm_get' : 'crm_post'/)
+  assert.match(zohoWebhook, /insertWebhookLog\('zoho', webhookTopic, body\)/)
+
+  assert.match(settings, /setZohoWebhooks\(zohoLogs\.slice\(0, 2\)\)/)
+  assert.match(settings, /formatZohoWebhookTopic/)
+  assert.match(settings, /CRM GET/)
+  assert.match(settings, /CRM POST/)
 })

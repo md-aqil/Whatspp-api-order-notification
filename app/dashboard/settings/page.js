@@ -46,6 +46,7 @@ export default function SettingsPage() {
   const [lastWebhook, setLastWebhook] = useState(null)
   const [lastCustomWebhook, setLastCustomWebhook] = useState(null)
   const [lastZohoWebhook, setLastZohoWebhook] = useState(null)
+  const [zohoWebhooks, setZohoWebhooks] = useState([])
   const [checking, setChecking] = useState(false)
   const [shopifyWebhooks, setShopifyWebhooks] = useState([])
   const [expandedWebhook, setExpandedWebhook] = useState(null)
@@ -537,12 +538,16 @@ export default function SettingsPage() {
             const shopifyLog = data.logs.find(l => l.type === 'shopify')
             const whatsappLog = data.logs.find(l => l.type === 'whatsapp')
             const customLog = data.logs.find(l => l.type === 'custom')
-            const zohoLog = data.logs.find(l => l.type === 'zoho')
+            const zohoLogs = data.logs.filter(l => l.type === 'zoho')
+            const zohoLog = zohoLogs[0]
 
             if (shopifyLog) setShopifyStatus('connected')
             if (whatsappLog) setWhatsappStatus('connected')
             if (customLog) setLastCustomWebhook(customLog)
-            if (zohoLog) setLastZohoWebhook(zohoLog)
+            if (zohoLog) {
+              setLastZohoWebhook(zohoLog)
+              setZohoWebhooks(zohoLogs.slice(0, 2))
+            }
           }
         }
       } catch (e) {
@@ -596,10 +601,11 @@ export default function SettingsPage() {
     return JSON.stringify(lastCustomWebhook.payload, null, 2)
   }, [lastCustomWebhook])
 
-  const latestZohoRawPayload = useMemo(() => {
-    if (!lastZohoWebhook?.payload) return ''
-    return JSON.stringify(lastZohoWebhook.payload, null, 2)
-  }, [lastZohoWebhook])
+  const formatZohoWebhookTopic = (topic) => {
+    if (topic === 'crm_get') return 'CRM GET'
+    if (topic === 'crm_post') return 'CRM POST'
+    return topic || 'CRM Update'
+  }
 
   const buildWebhookUrl = (path) => {
     if (!baseUrl) return path
@@ -1175,15 +1181,19 @@ export default function SettingsPage() {
                     <p className="text-[10px] font-bold uppercase tracking-widest text-[#3d618c] mb-3 flex items-center gap-2">
                       <Workflow className="w-3 h-3" /> Latest Zoho CRM
                     </p>
-                    {lastZohoWebhook ? (
-                      <div className="bg-[#f8f9ff] p-3 rounded-xl border border-[#e5eeff] space-y-3">
-                        <div className="flex items-center justify-between text-[10px]">
-                          <span className="text-gray-500">CRM Update</span>
-                          <span className="font-mono text-white bg-[#05345c] px-1.5 py-0.5 rounded">{new Date(lastZohoWebhook.receivedAt).toLocaleTimeString()}</span>
-                        </div>
-                        <pre className="max-h-32 overflow-auto p-2 text-[9px] bg-[#05345c] text-[#dff3ff] rounded-lg whitespace-pre-wrap break-words">
-                          {latestZohoRawPayload}
-                        </pre>
+                    {zohoWebhooks.length > 0 ? (
+                      <div className="space-y-3">
+                        {zohoWebhooks.map((webhook) => (
+                          <div key={webhook.id} className="bg-[#f8f9ff] p-3 rounded-xl border border-[#e5eeff] space-y-3">
+                            <div className="flex items-center justify-between text-[10px]">
+                              <span className="text-gray-500">{formatZohoWebhookTopic(webhook.topic)}</span>
+                              <span className="font-mono text-white bg-[#05345c] px-1.5 py-0.5 rounded">{new Date(webhook.receivedAt).toLocaleTimeString()}</span>
+                            </div>
+                            <pre className="max-h-32 overflow-auto p-2 text-[9px] bg-[#05345c] text-[#dff3ff] rounded-lg whitespace-pre-wrap break-words">
+                              {JSON.stringify(webhook.payload || {}, null, 2)}
+                            </pre>
+                          </div>
+                        ))}
                       </div>
                     ) : (
                       <div className="p-3 border border-dashed border-[#e5eeff] rounded-xl text-center text-[10px] text-gray-400">Waiting for Zoho activity...</div>
