@@ -15,11 +15,11 @@ expect {
 }
 
 expect -re ".*\[$#\] "
-send "sudo bash -c 'cat >> /etc/lcsw/.env <<EOF
+send "sudo bash -c 'sed -i \"/^ZOHO_CLIENT_ID=/d;/^ZOHO_CLIENT_SECRET=/d;/^ZOHO_REDIRECT_URI=/d;/^ZOHO_DC=/d;/^# Zoho CRM Configuration/d\" /etc/lcsw/.env && cat >> /etc/lcsw/.env <<EOF
 
 # Zoho CRM Configuration
 ZOHO_CLIENT_ID=1000.T69G0EJG4NCK0EXA2DOPYWIMNJ6Y9V
-ZOHO_CLIENT_SECRET=f5d0a31398565455a251b0c607f4a8eb8ad41d6360
+ZOHO_CLIENT_SECRET=f5d0a31398565455a251b0c607f4a8eb8ad412e808
 ZOHO_REDIRECT_URI=https://chatflow.vibeship.in/api/integrations/zoho/callback
 ZOHO_DC=zoho.in
 EOF'\r"
