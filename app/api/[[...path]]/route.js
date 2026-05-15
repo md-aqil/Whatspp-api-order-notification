@@ -918,7 +918,7 @@ async function handleRoute(request, { params }) {
       const clientId = process.env.ZOHO_CLIENT_ID
       const redirectUri = process.env.ZOHO_REDIRECT_URI
       const dc = process.env.ZOHO_DC || 'zoho.com'
-      const scope = 'ZohoCRM.modules.ALL,ZohoCRM.settings.ALL,ZohoCRM.users.READ'
+      const scope = 'ZohoCRM.modules.ALL,ZohoCRM.users.READ'
       
       const authUrl = `https://accounts.${dc}/oauth/v2/auth?scope=${scope}&client_id=${clientId}&response_type=code&access_type=offline&redirect_uri=${redirectUri}&prompt=consent`
       
