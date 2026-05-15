@@ -965,7 +965,7 @@ async function handleRoute(request, { params }) {
         
         // Save tokens to database
         const integrations = await getStoredIntegrations(currentUserId)
-        await saveStoredIntegration(currentUserId, 'zoho', {
+        await saveStoredIntegration('zoho', {
           ...(integrations.zoho || {}),
           accessToken: tokens.access_token,
           refreshToken: tokens.refresh_token,
@@ -974,7 +974,7 @@ async function handleRoute(request, { params }) {
           clientId: clientId,
           clientSecret: clientSecret,
           expiryTime: Date.now() + (tokens.expires_in * 1000)
-        })
+        }, currentUserId)
         
         return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/dashboard/settings?zoho=connected`)
       } catch (err) {

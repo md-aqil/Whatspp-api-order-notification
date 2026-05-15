@@ -1,0 +1,23 @@
+#!/usr/bin/expect -f
+
+set timeout 30
+set host "187.127.154.55"
+set user "aqil"
+
+log_user 1
+
+spawn ssh -o StrictHostKeyChecking=no $user@$host
+
+expect -re {[$#] }
+
+# Check Zoho data in integrations table
+send "mysql -u \$(grep DB_USER /etc/lcsw/.env | cut -d= -f2) -p\$(grep DB_PASSWORD /etc/lcsw/.env | cut -d= -f2) \$(grep DB_NAME /etc/lcsw/.env | cut -d= -f2) -e \"SELECT userId, JSON_KEYS(zoho) as zoho_keys, LEFT(zoho,100) as zoho_preview FROM integrations WHERE zoho IS NOT NULL LIMIT 5;\" 2>/dev/null\r"
+
+expect -re {[$#] }
+
+# Check if Zoho org exists by calling the users API
+send "source /etc/lcsw/.env && curl -s 'https://accounts.zoho.in/oauth/v2/token?refresh_token=' 2>/dev/null | head -c 200\r"
+
+expect -re {[$#] }
+send "exit\r"
+expect eof

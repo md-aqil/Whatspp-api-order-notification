@@ -776,6 +776,12 @@ export default function SettingsPage() {
                   </div>
                   <h4 className="font-bold mb-1">Zoho CRM</h4>
                   <p className="text-[11px] text-[#3d618c] mb-4">Two-Way CRM Sync</p>
+                  {!integrations.zoho.connected && (
+                    <div className="mb-4 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-[10px] leading-4 text-orange-900">
+                      <p className="font-bold">Before connecting, make sure this Zoho login has a Zoho CRM organization at crm.zoho.in.</p>
+                      <p className="mt-1">If Zoho shows a broken app logo, fix or remove the app logo in api-console.zoho.in.</p>
+                    </div>
+                  )}
                   <div className={`w-full py-2 rounded-lg ${integrations.zoho.connected ? 'bg-orange-100 text-orange-700' : 'bg-[#e5eeff] text-[#005cc0]'} font-bold text-xs hover:bg-orange-600 hover:text-white transition-all text-center`}>
                     {integrations.zoho.connected ? 'Connected' : 'Connect Zoho'}
                   </div>
