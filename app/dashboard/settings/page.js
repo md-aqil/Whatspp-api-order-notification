@@ -811,7 +811,7 @@ useEffect(() => {
                     <DialogTitle>WhatsApp Configuration</DialogTitle>
                     <DialogDescription>Configure your WhatsApp Business API integration</DialogDescription>
                   </DialogHeader>
-                  <IntegrationForm type="whatsapp" integration={integrations.whatsapp} onSave={saveIntegration} />
+                  <IntegrationForm type="whatsapp" integration={integrations.whatsapp} user={user} onSave={saveIntegration} />
                 </DialogContent>
               </Dialog>
 
@@ -841,7 +841,7 @@ useEffect(() => {
                     <DialogTitle>Shopify Configuration</DialogTitle>
                     <DialogDescription>Manage your Shopify eCommerce integration</DialogDescription>
                   </DialogHeader>
-                  <IntegrationForm type="shopify" integration={integrations.shopify} onSave={saveIntegration} />
+                  <IntegrationForm type="shopify" integration={integrations.shopify} user={user} onSave={saveIntegration} />
                 </DialogContent>
               </Dialog>
 
@@ -871,7 +871,7 @@ useEffect(() => {
                     <DialogTitle>Stripe Configuration</DialogTitle>
                     <DialogDescription>Connect your Stripe payment processing account</DialogDescription>
                   </DialogHeader>
-                  <IntegrationForm type="stripe" integration={integrations.stripe} onSave={saveIntegration} />
+                  <IntegrationForm type="stripe" integration={integrations.stripe} user={user} onSave={saveIntegration} />
                 </DialogContent>
               </Dialog>
 
@@ -1514,7 +1514,7 @@ useEffect(() => {
 }
 
 // Integration Form Component
-function IntegrationForm({ type, integration, loading, onSave }) {
+function IntegrationForm({ type, integration, loading, user, onSave }) {
   const [formData, setFormData] = useState(integration.data || {})
   const [copiedField, setCopiedField] = useState('')
   const [saving, setSaving] = useState(false)
