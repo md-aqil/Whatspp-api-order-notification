@@ -13,7 +13,6 @@ import {
   markCartSessionsRecovered,
   persistCartRecoveryEvent
 } from '@/lib/cart-recovery'
-import { getLocalIntegrationRecord, saveLocalIntegrationRecord } from '@/lib/local-settings-store'
 import { requireRequestUserId, resolveRequestUserId } from '@/lib/request-user'
 import { ensureSettingsTables } from '@/lib/settings-db'
 import { generateAIResponse } from '@/lib/ai'
