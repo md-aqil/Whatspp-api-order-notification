@@ -49,6 +49,7 @@ export default function SettingsPage() {
   const [whatsappStatus, setWhatsappStatus] = useState('unknown')
   const [shopifyStatus, setShopifyStatus] = useState('unknown')
   const [lastWebhook, setLastWebhook] = useState(null)
+  const [lastWhatsappWebhook, setLastWhatsappWebhook] = useState(null)
   const [lastCustomWebhook, setLastCustomWebhook] = useState(null)
   const [lastZohoWebhook, setLastZohoWebhook] = useState(null)
   const [zohoWebhooks, setZohoWebhooks] = useState([])
@@ -652,7 +653,10 @@ useEffect(() => {
             const zohoLog = zohoLogs[0]
 
             if (shopifyLog) setShopifyStatus('connected')
-            if (whatsappLog) setWhatsappStatus('connected')
+            if (whatsappLog) {
+              setWhatsappStatus('connected')
+              setLastWhatsappWebhook(whatsappLog)
+            }
             if (customLog) setLastCustomWebhook(customLog)
             if (zohoLog) {
               setLastZohoWebhook(zohoLog)
@@ -1269,6 +1273,26 @@ useEffect(() => {
                 </h3>
                 
                 <div className="space-y-8">
+                  {/* WhatsApp Activity */}
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-[#3d618c] mb-3 flex items-center gap-2">
+                      <MessageCircle className="w-3 h-3" /> Latest WhatsApp
+                    </p>
+                    {lastWhatsappWebhook ? (
+                      <div className="bg-[#f8f9ff] p-3 rounded-xl border border-[#e5eeff] space-y-3">
+                        <div className="flex items-center justify-between text-[10px]">
+                          <span className="text-gray-500">{lastWhatsappWebhook.topic || 'Message'}</span>
+                          <span className="font-mono text-white bg-[#05345c] px-1.5 py-0.5 rounded">{new Date(lastWhatsappWebhook.receivedAt).toLocaleTimeString()}</span>
+                        </div>
+                        <pre className="max-h-32 overflow-auto p-2 text-[9px] bg-[#05345c] text-[#dff3ff] rounded-lg whitespace-pre-wrap break-words">
+                          {JSON.stringify(lastWhatsappWebhook.payload || {}, null, 2)}
+                        </pre>
+                      </div>
+                    ) : (
+                      <div className="p-3 border border-dashed border-[#e5eeff] rounded-xl text-center text-[10px] text-gray-400">Waiting for WhatsApp activity...</div>
+                    )}
+                  </div>
+
                   {/* WordPress Activity */}
                   <div>
                     <p className="text-[10px] font-bold uppercase tracking-widest text-[#3d618c] mb-3 flex items-center gap-2">
