@@ -2435,6 +2435,7 @@ export function AutomationStudio() {
                         <Select value={sel.action || 'add_note'} onValueChange={v => updStep({ action: v })}>
                           <SelectTrigger className={inputCls}><SelectValue /></SelectTrigger>
                           <SelectContent className="z-[260] bg-[#13151f] border-white/10">
+                            <SelectItem value="upsert_lead" className="text-white/70 text-xs focus:bg-white/8 focus:text-white">Create or Update Lead</SelectItem>
                             <SelectItem value="update_status" className="text-white/70 text-xs focus:bg-white/8 focus:text-white">Update Lead Status</SelectItem>
                             <SelectItem value="add_note" className="text-white/70 text-xs focus:bg-white/8 focus:text-white">Add Note</SelectItem>
                           </SelectContent>
