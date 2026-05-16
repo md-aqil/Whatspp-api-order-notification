@@ -21,6 +21,7 @@ node_modules/
 
 # Testing
 /coverage
+tests/
 
 # Next.js
 /.next/
@@ -44,6 +45,14 @@ scratch/
 scripts/deleted_code.txt
 *.bak
 *.tmp
+
+# One-off migration / debug scripts (not part of build)
+scripts/cleanup-duplicates.js
+scripts/fix-encryption.mjs
+scripts/init-db.js
+scripts/sync_integrations.js
+scripts/test-*.js
+scripts/test-*.mjs
 
 # Logs and debug files
 npm-debug.log*
