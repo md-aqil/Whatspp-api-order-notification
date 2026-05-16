@@ -870,13 +870,15 @@ async function handleRoute(request, { params }) {
         
         if (!isVerified) {
           try {
-            const defaultIntegrations = await getStoredIntegrations()
-            const storedToken = defaultIntegrations?.whatsapp?.webhookVerifyToken
+            // Try to resolve the specific user's integrations if userId is in query
+            const queryUserId = request.nextUrl.searchParams.get('userId') || 'default'
+            const userIntegrations = await getStoredIntegrations(queryUserId)
+            const storedToken = userIntegrations?.whatsapp?.webhookVerifyToken
             if (storedToken && verifyToken === storedToken) {
               isVerified = true
             }
           } catch (e) {
-            // Ignore DB errors for speed, if tokens match fallback it's fine
+            // Ignore DB errors for speed
           }
         }
 

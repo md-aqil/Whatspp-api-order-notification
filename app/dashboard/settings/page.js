@@ -1535,9 +1535,9 @@ function IntegrationForm({ type, integration, loading, onSave }) {
 
   const webhookUrl = useMemo(() => {
     if (typeof window === 'undefined') return ''
-    // Prioritize actual browser origin for the webhook display
-    return `${window.location.origin}/api/webhook/whatsapp`
-  }, [])
+    const url = `${window.location.origin}/api/webhook/whatsapp`
+    return user?.id ? `${url}?userId=${user.id}` : url
+  }, [user?.id])
 
   const generateVerifyToken = () => {
     const token = `wa_verify_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`
