@@ -1,7 +1,22 @@
 const { Worker } = require('bullmq');
 const IORedis = require('ioredis');
 const path = require('path');
-require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
+const fs = require('fs');
+const dotenv = require('dotenv');
+
+const envPaths = [
+  path.resolve(__dirname, '../.env'),
+  '/etc/lcsw/.env'
+];
+
+for (const envPath of envPaths) {
+  if (fs.existsSync(envPath)) {
+    console.log(`[Worker] Loading environment from ${envPath}`);
+    dotenv.config({ path: envPath });
+    break;
+  }
+}
+
 
 // Since we are running in a separate process, we might need to handle imports carefully if using ES modules
 // For now, I'll assume we can use dynamic import or just standard require if the files are compatible.
