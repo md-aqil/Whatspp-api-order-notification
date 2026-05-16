@@ -75,9 +75,10 @@ function getZohoOAuthStateSecret() {
   return process.env.ZOHO_OAUTH_STATE_SECRET || process.env.JWT_SECRET || process.env.NEXTAUTH_SECRET || 'fallback-secret-for-dev-only'
 }
 
-function createZohoOAuthState(userId) {
+function createZohoOAuthState(userId, dc = 'zoho.com') {
   const payload = Buffer.from(JSON.stringify({
     userId: String(userId),
+    dc: String(dc),
     nonce: uuidv4(),
     exp: Date.now() + (10 * 60 * 1000)
   })).toString('base64url')
@@ -111,7 +112,7 @@ function verifyZohoOAuthState(state) {
     throw new Error('Expired Zoho OAuth state')
   }
 
-  return String(parsed.userId)
+  return { userId: parsed.userId, dc: parsed.dc || 'zoho.com' }
 }
 
 function mapMetaCatalogProductsToAppProducts(metaProducts = []) {
@@ -963,7 +964,8 @@ async function handleRoute(request, { params }) {
       const authenticatedUserId = requireRequestUserId(request)
       const clientId = process.env.ZOHO_CLIENT_ID
       const redirectUri = process.env.ZOHO_REDIRECT_URI
-      const dc = process.env.ZOHO_DC || 'zoho.com'
+      const requestedDc = request.nextUrl.searchParams.get('dc')
+      const dc = requestedDc || process.env.ZOHO_DC || 'zoho.com'
       const scope = 'ZohoCRM.modules.ALL,ZohoCRM.users.READ'
       const authParams = new URLSearchParams()
 
@@ -973,7 +975,7 @@ async function handleRoute(request, { params }) {
       authParams.set('access_type', 'offline')
       authParams.set('redirect_uri', redirectUri)
       authParams.set('prompt', 'consent')
-      authParams.set('state', createZohoOAuthState(authenticatedUserId))
+      authParams.set('state', createZohoOAuthState(authenticatedUserId, dc))
       
       const authUrl = `https://accounts.${dc}/oauth/v2/auth?${authParams.toString()}`
       
@@ -985,13 +987,11 @@ async function handleRoute(request, { params }) {
       const code = request.nextUrl.searchParams.get('code')
       const error = request.nextUrl.searchParams.get('error')
       const state = request.nextUrl.searchParams.get('state')
-      const dc = process.env.ZOHO_DC || 'zoho.com'
       
       if (error) {
         await insertWebhookLog('zoho', 'oauth_failed', {
           stage: 'authorization',
-          error,
-          dc
+          error
         })
         return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/dashboard/settings?error=${error}`)
       }
@@ -999,21 +999,22 @@ async function handleRoute(request, { params }) {
       if (!code) {
         await insertWebhookLog('zoho', 'oauth_failed', {
           stage: 'callback',
-          error: 'no_code',
-          dc
+          error: 'no_code'
         })
         return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/dashboard/settings?error=no_code`)
       }
 
       let zohoUserId
+      let dc
       try {
-        zohoUserId = verifyZohoOAuthState(state)
+        const stateData = verifyZohoOAuthState(state)
+        zohoUserId = stateData.userId
+        dc = stateData.dc
       } catch (stateError) {
         console.error('Zoho OAuth State Error:', stateError.message)
         await insertWebhookLog('zoho', 'oauth_failed', {
           stage: 'state',
-          error: stateError.message,
-          dc
+          error: stateError.message
         })
         return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/dashboard/settings?error=zoho_invalid_state`)
       }

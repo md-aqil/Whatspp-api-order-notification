@@ -58,12 +58,13 @@ export default function SettingsPage() {
   const [expandedWebhook, setExpandedWebhook] = useState(null)
   const [mounted, setMounted] = useState(false)
   const [notificationsEnabled, setNotificationsEnabled] = useState(true)
-   const [baseUrl, setBaseUrl] = useState(process.env.NEXT_PUBLIC_BASE_URL || '')
- 
-const [whatsappDialogOpen, setWhatsappDialogOpen] = useState(false)
-    const [shopifyDialogOpen, setShopifyDialogOpen] = useState(false)
-    const [stripeDialogOpen, setStripeDialogOpen] = useState(false)
-    const [user, setUser] = useState(null)
+  const [baseUrl, setBaseUrl] = useState(process.env.NEXT_PUBLIC_BASE_URL || '')
+  const [whatsappDialogOpen, setWhatsappDialogOpen] = useState(false)
+  const [shopifyDialogOpen, setShopifyDialogOpen] = useState(false)
+  const [stripeDialogOpen, setStripeDialogOpen] = useState(false)
+  const [zohoDialogOpen, setZohoDialogOpen] = useState(false)
+  const [zohoDc, setZohoDc] = useState('zoho.com')
+  const [user, setUser] = useState(null)
 
     // Branding state
     const [branding, setBranding] = useState({
@@ -876,40 +877,80 @@ useEffect(() => {
               </Dialog>
 
               {/* Zoho CRM */}
-              <div 
-                className="flex flex-col gap-4 cursor-pointer"
-                onClick={() => {
-                  if (integrations.zoho.connected) {
-                    toast.info('Zoho CRM is already connected. To reconnect, please disconnect first.')
-                  } else {
-                    window.location.href = '/api/integrations/zoho/auth'
-                  }
-                }}
-              >
-                <div className={`p-5 rounded-xl transition-colors group ${integrations.zoho.connected ? 'border-2 border-dashed border-orange-500/20 bg-orange-50/10' : 'bg-[#f8f9ff] hover:bg-[#eff4ff]'}`}>
-                  <div className="flex justify-between items-start mb-4">
-                    <div className="w-10 h-10 rounded-lg bg-orange-50 flex items-center justify-center">
-                      <Database className="text-orange-600 w-5 h-5" />
+              <Dialog open={zohoDialogOpen} onOpenChange={setZohoDialogOpen}>
+                <DialogTrigger asChild>
+                  <div 
+                    className="flex flex-col gap-4 cursor-pointer"
+                    onClick={(e) => {
+                      if (integrations.zoho.connected) {
+                        e.preventDefault()
+                        toast.info('Zoho CRM is already connected. To reconnect, please disconnect first.')
+                      }
+                    }}
+                  >
+                    <div className={`p-5 rounded-xl transition-colors group ${integrations.zoho.connected ? 'border-2 border-dashed border-orange-500/20 bg-orange-50/10' : 'bg-[#f8f9ff] hover:bg-[#eff4ff]'}`}>
+                      <div className="flex justify-between items-start mb-4">
+                        <div className="w-10 h-10 rounded-lg bg-orange-50 flex items-center justify-center">
+                          <Database className="text-orange-600 w-5 h-5" />
+                        </div>
+                        {integrations.zoho.connected ? (
+                          <span className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 text-[10px] font-black uppercase">Connected</span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[10px] font-black uppercase">Inactive</span>
+                        )}
+                      </div>
+                      <h4 className="font-bold mb-1">Zoho CRM</h4>
+                      <p className="text-[11px] text-[#3d618c] mb-4">Two-Way CRM Sync</p>
+                      {!integrations.zoho.connected && (
+                        <div className="mb-4 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-[10px] leading-4 text-orange-900">
+                          <p className="font-bold">Supports all Zoho Regions.</p>
+                          <p className="mt-1">Make sure you have created an app in Zoho API Console for your specific region.</p>
+                        </div>
+                      )}
+                      <div className={`w-full py-2 rounded-lg ${integrations.zoho.connected ? 'bg-orange-100 text-orange-700' : 'bg-[#e5eeff] text-[#005cc0]'} font-bold text-xs hover:bg-orange-600 hover:text-white transition-all text-center`}>
+                        {integrations.zoho.connected ? 'Connected' : 'Connect Zoho'}
+                      </div>
                     </div>
-                    {integrations.zoho.connected ? (
-                      <span className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 text-[10px] font-black uppercase">Connected</span>
-                    ) : (
-                      <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[10px] font-black uppercase">Inactive</span>
-                    )}
                   </div>
-                  <h4 className="font-bold mb-1">Zoho CRM</h4>
-                  <p className="text-[11px] text-[#3d618c] mb-4">Two-Way CRM Sync</p>
-                  {!integrations.zoho.connected && (
-                    <div className="mb-4 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-[10px] leading-4 text-orange-900">
-                      <p className="font-bold">Before connecting, make sure this Zoho login has a Zoho CRM organization at crm.zoho.in.</p>
-                      <p className="mt-1">If Zoho shows a broken app logo, fix or remove the app logo in api-console.zoho.in.</p>
+                </DialogTrigger>
+                {!integrations.zoho.connected && (
+                  <DialogContent className="sm:max-w-[425px]">
+                    <DialogHeader>
+                      <DialogTitle>Connect Zoho CRM</DialogTitle>
+                      <DialogDescription>
+                        Select your Zoho Data Center region to continue.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="grid gap-4 py-4">
+                      <div className="grid gap-2">
+                        <Label htmlFor="zoho-dc">Data Center</Label>
+                        <select 
+                          id="zoho-dc" 
+                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                          value={zohoDc}
+                          onChange={(e) => setZohoDc(e.target.value)}
+                        >
+                          <option value="zoho.com">United States (.com)</option>
+                          <option value="zoho.eu">Europe (.eu)</option>
+                          <option value="zoho.in">India (.in)</option>
+                          <option value="zoho.com.au">Australia (.com.au)</option>
+                          <option value="zohocloud.ca">Canada (zohocloud.ca)</option>
+                          <option value="zoho.jp">Japan (.jp)</option>
+                          <option value="zoho.sa">Saudi Arabia (.sa)</option>
+                        </select>
+                      </div>
                     </div>
-                  )}
-                  <div className={`w-full py-2 rounded-lg ${integrations.zoho.connected ? 'bg-orange-100 text-orange-700' : 'bg-[#e5eeff] text-[#005cc0]'} font-bold text-xs hover:bg-orange-600 hover:text-white transition-all text-center`}>
-                    {integrations.zoho.connected ? 'Connected' : 'Connect Zoho'}
-                  </div>
-                </div>
-              </div>
+                    <div className="flex justify-end gap-3 mt-4">
+                      <Button variant="outline" onClick={() => setZohoDialogOpen(false)}>
+                        Cancel
+                      </Button>
+                      <Button onClick={() => window.location.href = `/api/integrations/zoho/auth?dc=${zohoDc}`}>
+                        Continue to Zoho
+                      </Button>
+                    </div>
+                  </DialogContent>
+                )}
+              </Dialog>
             </div>
           </div>
         </TabsContent>
