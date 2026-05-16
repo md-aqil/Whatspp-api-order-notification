@@ -7,6 +7,10 @@
 .emergent/
 .qoder/
 .stitch/
+.agent/
+.kilo/
+.playwright-mcp/
+.data/
 
 # Dependencies
 node_modules/
@@ -35,8 +39,11 @@ dist/
 *token.json*
 *credentials.json*
 
-# Temporary scripts
+# Temporary and backup files
 scratch/
+scripts/deleted_code.txt
+*.bak
+*.tmp
 
 # Logs and debug files
 npm-debug.log*
@@ -44,13 +51,16 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 dump.rdb
+*.log
+scripts/*.log
+scripts/worker_output.log
 
 # System files
 .DS_Store
 *.pem
 
-# Data and databases
-.data/
+# Generated outputs
+graphify-out/
 
 # Tunnel configs
 tunnel-config/
@@ -70,5 +80,6 @@ public/campaign-uploads/
 # Package manager
 yarn.lock
 
-# Deployment (server-specific configs)
+# Deployment and automation scripts (often contain secrets)
+scripts/*.exp
 deploy/nginx.conf
