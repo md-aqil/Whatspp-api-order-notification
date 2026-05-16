@@ -1,6 +1,6 @@
 #!/usr/bin/expect -f
 
-set timeout 60
+set timeout 30
 set host "187.127.154.55"
 set user "aqil"
 set pass "aqil@noon"
@@ -13,24 +13,15 @@ expect {
     }
 }
 
-expect -re "aqil@"
-sleep 2
-send "sudo journalctl -u lcsw-worker -n 100 --no-pager\r"
+expect "aqil@"
+sleep 1
+send "mysql -u noon -p'Noon@2024' chatflow -e 'SELECT * FROM messages ORDER BY timestamp DESC LIMIT 5'\r"
 expect {
     "password" {
         send "$pass\r"
         exp_continue
     }
-    -re "aqil@"
-}
-
-send "sudo journalctl -u lcsw -n 100 --no-pager\r"
-expect {
-    "password" {
-        send "$pass\r"
-        exp_continue
-    }
-    -re "aqil@"
+    "aqil@"
 }
 
 send "exit\r"

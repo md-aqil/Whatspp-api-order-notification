@@ -1,0 +1,20 @@
+#!/usr/bin/expect -f
+
+set timeout 30
+set host "187.127.154.55"
+set user "aqil"
+set pass "aqil@noon"
+
+spawn ssh -o StrictHostKeyChecking=no $user@$host
+
+expect {
+    "password:" {
+        send "$pass\r"
+    }
+}
+
+expect ":~$ "
+send "ps aux | grep node\r"
+expect ":~$ "
+send "exit\r"
+expect eof
