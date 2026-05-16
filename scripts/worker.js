@@ -11,8 +11,21 @@ async function startWorker() {
   console.log('--- Automation Worker Starting ---');
   
   const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+  console.log(`[Worker] Connecting to Redis at ${redisUrl}...`);
+  
   const connection = new IORedis(redisUrl, {
     maxRetriesPerRequest: null,
+    retryStrategy(times) {
+      return Math.min(times * 100, 3000);
+    }
+  });
+
+  connection.on('error', (err) => {
+    console.error(`[Worker] Redis Connection Error (${redisUrl}):`, err.message);
+  });
+
+  connection.on('connect', () => {
+    console.log(`[Worker] Successfully connected to Redis at ${redisUrl}`);
   });
 
   // Import the engine (using dynamic import for ESM compatibility in Next.js projects)

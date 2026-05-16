@@ -34,6 +34,8 @@ aqil ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart lcsw-worker
 aqil ALL=(ALL) NOPASSWD: /usr/bin/systemctl status lcsw
 aqil ALL=(ALL) NOPASSWD: /usr/bin/systemctl status lcsw-worker
 aqil ALL=(ALL) NOPASSWD: /usr/local/bin/pm2 restart lcsw-worker
+aqil ALL=(ALL) NOPASSWD: /usr/local/bin/pm2 status lcsw-worker
+aqil ALL=(ALL) NOPASSWD: /usr/bin/bash /var/www/lcsw/deploy/deploy.sh
 SUDOEOF
 chmod 440 /etc/sudoers.d/aqil-deploy && echo SUDOERS_DONE\"\r"
 
