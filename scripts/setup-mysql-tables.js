@@ -74,6 +74,7 @@ async function setupDatabase() {
         whatsapp JSON,
         shopify JSON,
         stripe JSON,
+        zoho JSON,
         createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         UNIQUE (userId)
