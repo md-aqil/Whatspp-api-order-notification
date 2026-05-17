@@ -39,7 +39,8 @@ import {
   Bot as BotIcon,
   Loader2,
   Save,
-  Instagram
+  Instagram,
+  Zap
 } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { toast } from 'sonner'
@@ -74,6 +75,7 @@ export default function SettingsPage() {
   const [igAccountId, setIgAccountId] = useState('')
   const [igAccessToken, setIgAccessToken] = useState('')
   const [savingInstagram, setSavingInstagram] = useState(false)
+  const [showManualConfig, setShowManualConfig] = useState(false)
 
     // Branding state
     const [branding, setBranding] = useState({
@@ -1141,75 +1143,108 @@ useEffect(() => {
                     </div>
                   ) : (
                     <div className="space-y-4 pt-2">
-                      <div className="rounded-xl border border-blue-100 bg-[#f8f9ff] p-4 text-xs text-blue-800 space-y-2">
-                        <div className="font-bold flex items-center gap-1.5">
-                          <AlertCircle className="w-3.5 h-3.5 text-blue-600" />
-                          <span>Facebook Login & Graph API Prerequisites</span>
+                      <div className="p-4 bg-gradient-to-br from-blue-50 to-indigo-50/50 border border-blue-100 rounded-xl space-y-3">
+                        <div className="flex items-center gap-2 text-blue-800 text-xs font-bold uppercase tracking-wider">
+                          <Zap className="w-4 h-4 text-blue-600 animate-pulse" />
+                          <span>One-Click Integration</span>
                         </div>
-                        <p className="leading-relaxed">
-                          Connect using your Meta Developer App configuration or Facebook Page Access Token to securely subscribe to Direct Messages and Comment-to-DM triggers.
+                        <p className="text-xs text-blue-700 leading-relaxed">
+                          Securely link your Instagram Professional Account and Facebook Page in just a single click. No developer setups required.
                         </p>
-                      </div>
-
-                      <div className="space-y-3">
-                        <div>
-                          <Label className="text-xs font-bold mb-1 block">Account Display Name</Label>
-                          <Input
-                            placeholder="e.g. NoonVilla Store"
-                            value={igAccountName}
-                            onChange={(e) => setIgAccountName(e.target.value)}
-                            className="text-xs"
-                          />
-                        </div>
-                        <div>
-                          <Label className="text-xs font-bold mb-1 block">Connected Facebook Page ID</Label>
-                          <Input
-                            placeholder="e.g. 1093827461937"
-                            value={igPageId}
-                            onChange={(e) => setIgPageId(e.target.value)}
-                            className="text-xs font-mono"
-                          />
-                        </div>
-                        <div>
-                          <Label className="text-xs font-bold mb-1 block">Instagram Professional/Business Account ID</Label>
-                          <Input
-                            placeholder="e.g. 178414002345678"
-                            value={igAccountId}
-                            onChange={(e) => setIgAccountId(e.target.value)}
-                            className="text-xs font-mono"
-                          />
-                        </div>
-                        <div>
-                          <Label className="text-xs font-bold mb-1 block">Facebook Page Access Token</Label>
-                          <Input
-                            type="password"
-                            placeholder="EAAGz..."
-                            value={igAccessToken}
-                            onChange={(e) => setIgAccessToken(e.target.value)}
-                            className="text-xs font-mono"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="pt-4 flex justify-end gap-3 border-t border-gray-100 mt-4">
-                        <Button variant="outline" onClick={() => setInstagramDialogOpen(false)} disabled={savingInstagram}>
-                          Cancel
-                        </Button>
                         <Button 
-                          onClick={handleSaveInstagram}
-                          disabled={savingInstagram}
-                          className="bg-pink-600 hover:bg-pink-700 text-white font-bold"
+                          className="w-full bg-[#1877F2] hover:bg-[#166FE5] text-white font-bold flex items-center justify-center gap-2.5 py-6 shadow-sm rounded-xl transition-all"
+                          onClick={() => window.location.href = '/api/integrations/instagram/auth'}
                         >
-                          {savingInstagram ? (
-                            <>
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                              Connecting...
-                            </>
-                          ) : (
-                            'Connect Instagram'
-                          )}
+                          <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24" style={{ width: '16px', height: '16px' }}>
+                            <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
+                          </svg>
+                          Connect with Facebook
                         </Button>
                       </div>
+
+                      <div className="pt-2 text-center">
+                        <button 
+                          type="button"
+                          onClick={() => setShowManualConfig(!showManualConfig)}
+                          className="text-xs text-gray-500 hover:text-gray-800 transition-colors font-medium underline underline-offset-4"
+                        >
+                          {showManualConfig ? 'Hide manual setup' : 'Or connect manually with developer keys'}
+                        </button>
+                      </div>
+
+                      {showManualConfig && (
+                        <div className="space-y-4 pt-2 border-t border-gray-100 animate-in fade-in slide-in-from-top-1 duration-200">
+                          <div className="rounded-xl border border-pink-100 bg-pink-50/30 p-4 text-xs text-pink-800 space-y-2">
+                            <div className="font-bold flex items-center gap-1.5">
+                              <AlertCircle className="w-3.5 h-3.5 text-pink-600" />
+                              <span>Developer Access Credentials</span>
+                            </div>
+                            <p className="leading-relaxed">
+                              Manually input your generated Facebook Page Access Tokens and Account IDs to connect.
+                            </p>
+                          </div>
+
+                          <div className="space-y-3">
+                            <div>
+                              <Label className="text-xs font-bold mb-1 block">Account Display Name</Label>
+                              <Input
+                                placeholder="e.g. NoonVilla Store"
+                                value={igAccountName}
+                                onChange={(e) => setIgAccountName(e.target.value)}
+                                className="text-xs"
+                              />
+                            </div>
+                            <div>
+                              <Label className="text-xs font-bold mb-1 block">Connected Facebook Page ID</Label>
+                              <Input
+                                placeholder="e.g. 1093827461937"
+                                value={igPageId}
+                                onChange={(e) => setIgPageId(e.target.value)}
+                                className="text-xs font-mono"
+                              />
+                            </div>
+                            <div>
+                              <Label className="text-xs font-bold mb-1 block">Instagram Account ID</Label>
+                              <Input
+                                placeholder="e.g. 178414002345678"
+                                value={igAccountId}
+                                onChange={(e) => setIgAccountId(e.target.value)}
+                                className="text-xs font-mono"
+                              />
+                            </div>
+                            <div>
+                              <Label className="text-xs font-bold mb-1 block">Facebook Page Access Token</Label>
+                              <Input
+                                type="password"
+                                placeholder="EAAGz..."
+                                value={igAccessToken}
+                                onChange={(e) => setIgAccessToken(e.target.value)}
+                                className="text-xs font-mono"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="pt-4 flex justify-end gap-3 border-t border-gray-100 mt-4">
+                            <Button variant="outline" onClick={() => setInstagramDialogOpen(false)} disabled={savingInstagram}>
+                              Cancel
+                            </Button>
+                            <Button 
+                              onClick={handleSaveInstagram}
+                              disabled={savingInstagram}
+                              className="bg-pink-600 hover:bg-pink-700 text-white font-bold"
+                            >
+                              {savingInstagram ? (
+                                <>
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                  Connecting...
+                                </>
+                              ) : (
+                                'Connect Manually'
+                              )}
+                            </Button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </DialogContent>

@@ -1121,6 +1121,124 @@ async function handleRoute(request, { params }) {
       return handleCORS(NextResponse.json({ success: true }))
     }
 
+    // Instagram OAuth Initiation
+    if (route === '/integrations/instagram/auth' && method === 'GET') {
+      const authenticatedUserId = requireRequestUserId(request)
+      const clientId = process.env.INSTAGRAM_APP_ID || '821548740438122'
+      const redirectUri = process.env.INSTAGRAM_REDIRECT_URI || 'https://chatflow.vibeship.in/api/integrations/instagram/callback'
+      
+      const authParams = new URLSearchParams()
+      authParams.set('client_id', clientId)
+      authParams.set('redirect_uri', redirectUri)
+      authParams.set('response_type', 'code')
+      authParams.set('state', authenticatedUserId)
+      authParams.set('scope', 'pages_show_list,pages_messaging,instagram_basic,instagram_manage_comments,instagram_manage_messages,pages_read_engagement')
+      
+      const authUrl = `https://www.facebook.com/v19.0/dialog/oauth?${authParams.toString()}`
+      return NextResponse.redirect(authUrl)
+    }
+
+    // Instagram OAuth Callback
+    if (route === '/integrations/instagram/callback' && method === 'GET') {
+      const code = request.nextUrl.searchParams.get('code')
+      const error = request.nextUrl.searchParams.get('error')
+      const state = request.nextUrl.searchParams.get('state') // userId
+      
+      const redirectBase = process.env.NEXT_PUBLIC_BASE_URL || 'https://chatflow.vibeship.in'
+      
+      if (error) {
+        console.error('Instagram OAuth Failed:', error)
+        return NextResponse.redirect(`${redirectBase}/dashboard/settings?error=instagram_oauth_failed&detail=${encodeURIComponent(error)}`)
+      }
+      
+      if (!code) {
+        return NextResponse.redirect(`${redirectBase}/dashboard/settings?error=instagram_no_code`)
+      }
+      
+      const userId = state || 'default'
+      
+      try {
+        const clientId = process.env.INSTAGRAM_APP_ID || '821548740438122'
+        const clientSecret = process.env.INSTAGRAM_APP_SECRET || '4452e8bfd6873c729063dc49ee1e58cc'
+        const redirectUri = process.env.INSTAGRAM_REDIRECT_URI || 'https://chatflow.vibeship.in/api/integrations/instagram/callback'
+        
+        // 1. Exchange authorization code for short-lived access token
+        const tokenUrl = `https://graph.facebook.com/v19.0/oauth/access_token?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&client_secret=${clientSecret}&code=${code}`
+        
+        const tokenResponse = await fetch(tokenUrl)
+        const tokenData = await tokenResponse.json()
+        
+        if (!tokenResponse.ok || tokenData.error) {
+          const errMsg = tokenData.error?.message || 'Token exchange failed'
+          console.error('Instagram OAuth token exchange failed:', tokenData.error)
+          return NextResponse.redirect(`${redirectBase}/dashboard/settings?error=instagram_token_failed&detail=${encodeURIComponent(errMsg)}`)
+        }
+        
+        const shortLivedToken = tokenData.access_token
+        
+        // 2. Exchange short-lived token for long-lived User Access Token
+        const longLivedUrl = `https://graph.facebook.com/v19.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${clientId}&client_secret=${clientSecret}&fb_exchange_token=${shortLivedToken}`
+        
+        const longLivedResponse = await fetch(longLivedUrl)
+        const longLivedData = await longLivedResponse.json()
+        
+        if (!longLivedResponse.ok || longLivedData.error) {
+          const errMsg = longLivedData.error?.message || 'Long-lived token exchange failed'
+          console.error('Instagram long-lived exchange failed:', longLivedData.error)
+          return NextResponse.redirect(`${redirectBase}/dashboard/settings?error=instagram_long_token_failed&detail=${encodeURIComponent(errMsg)}`)
+        }
+        
+        const longLivedToken = longLivedData.access_token
+        
+        // 3. Fetch connected pages and linked Instagram accounts
+        const pagesUrl = `https://graph.facebook.com/v19.0/me/accounts?fields=name,access_token,instagram_business_account{id,username,name}&access_token=${longLivedToken}`
+        const pagesResponse = await fetch(pagesUrl)
+        const pagesData = await pagesResponse.json()
+        
+        if (!pagesResponse.ok || pagesData.error) {
+          const errMsg = pagesData.error?.message || 'Failed to fetch connected Facebook pages'
+          console.error('Instagram fetch pages failed:', pagesData.error)
+          return NextResponse.redirect(`${redirectBase}/dashboard/settings?error=instagram_fetch_pages_failed&detail=${encodeURIComponent(errMsg)}`)
+        }
+        
+        const pages = pagesData.data || []
+        const connectedAccount = pages.find(p => p.instagram_business_account && p.instagram_business_account.id)
+        
+        if (!connectedAccount) {
+          console.error('No connected Instagram Business Account found for the authorized pages.')
+          return NextResponse.redirect(`${redirectBase}/dashboard/settings?error=instagram_no_business_account`)
+        }
+        
+        const instagramAccount = connectedAccount.instagram_business_account
+        const pageId = connectedAccount.id
+        const igAccountId = instagramAccount.id
+        const pageAccessToken = connectedAccount.access_token
+        const igAccountName = instagramAccount.username || instagramAccount.name || connectedAccount.name || 'Primary Account'
+        
+        // 4. Save account configuration
+        await saveInstagramAccount({
+          accountName: igAccountName,
+          pageId,
+          instagramAccountId: igAccountId,
+          accessToken: pageAccessToken
+        }, userId)
+        
+        // 5. Insert webhook log
+        await insertWebhookLog('instagram', 'oauth_connected', {
+          stage: 'connected',
+          userId,
+          pageId,
+          instagramAccountId: igAccountId,
+          accountName: igAccountName
+        }, userId)
+        
+        return NextResponse.redirect(`${redirectBase}/dashboard/settings?instagram=connected`)
+      } catch (err) {
+        console.error('Instagram Callback Exception:', err)
+        return NextResponse.redirect(`${redirectBase}/dashboard/settings?error=instagram_exception&detail=${encodeURIComponent(err.message)}`)
+      }
+    }
+
     // Zoho OAuth Initiation
     if (route === '/integrations/zoho/auth' && method === 'GET') {
       const authenticatedUserId = requireRequestUserId(request)
