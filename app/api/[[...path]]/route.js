@@ -22,7 +22,11 @@ import {
   saveStoredIntegration, 
   getStoredWhatsAppAccounts, 
   getWhatsAppAccountById,
-  getUserIdByWhatsAppPhoneNumberId
+  getUserIdByWhatsAppPhoneNumberId,
+  getUserIdByInstagramAccountId,
+  getStoredInstagramAccounts,
+  getInstagramAccountByAccountId,
+  saveInstagramAccount
 } from '@/lib/db/integration-repository'
 import { 
   getAutomationsForUser, 
@@ -967,6 +971,156 @@ async function handleRoute(request, { params }) {
       }
     }
 
+    // Instagram Webhook GET - Verification
+    if (route === '/webhook/instagram' && method === 'GET') {
+      const verifyToken = request.nextUrl.searchParams.get('hub.verify_token')
+      const challenge = request.nextUrl.searchParams.get('hub.challenge')
+      const expectedToken = process.env.INSTAGRAM_VERIFY_TOKEN || 'instagram_verify_token_default'
+      
+      if (verifyToken === expectedToken) {
+        console.log('Instagram webhook verification successful')
+        return new NextResponse(challenge, {
+          headers: { 'Content-Type': 'text/plain' }
+        })
+      }
+      
+      try {
+        const queryUserId = request.nextUrl.searchParams.get('userId') || 'default'
+        const userIntegrations = await getStoredIntegrations(queryUserId)
+        const storedToken = userIntegrations?.instagram?.webhookVerifyToken
+        if (storedToken && verifyToken === storedToken) {
+          console.log('Instagram webhook verification successful via integrated user verify token')
+          return new NextResponse(challenge, {
+            headers: { 'Content-Type': 'text/plain' }
+          })
+        }
+      } catch (e) {
+        // ignore db error
+      }
+      
+      console.warn('Instagram webhook verification failed')
+      return new NextResponse('Forbidden', { status: 403 })
+    }
+
+    // Instagram Webhook POST - incoming messages/comments
+    if (route === '/webhook/instagram' && method === 'POST') {
+      try {
+        const body = await request.json()
+        
+        let resolvedUserId = 'default'
+        const igAccountId = body.entry?.[0]?.id
+        if (igAccountId) {
+          resolvedUserId = await getUserIdByInstagramAccountId(igAccountId)
+        }
+        
+        await insertWebhookLog('instagram', null, body, resolvedUserId)
+        console.log('Instagram webhook received:', JSON.stringify(body, null, 2))
+        
+        if (body.entry && Array.isArray(body.entry)) {
+          const integrations = await getStoredIntegrations(resolvedUserId)
+          for (const entry of body.entry) {
+            // A. Handle Comments (Comment Growth Hack)
+            if (entry.changes && Array.isArray(entry.changes)) {
+              for (const change of entry.changes) {
+                if (change.field === 'comments') {
+                  const commentVal = change.value
+                  if (commentVal && commentVal.id) {
+                    const context = {
+                      commentId: commentVal.id,
+                      commentText: commentVal.text || '',
+                      senderId: commentVal.from?.id,
+                      username: commentVal.from?.username || 'customer',
+                      mediaId: commentVal.media?.id,
+                      instagramAccountId: entry.id,
+                      messageText: commentVal.text || '', // mapped for simple keyword matching in flows
+                      platform: 'instagram'
+                    }
+                    
+                    await triggerAutomationEvent(
+                      'instagram.comment_created',
+                      context,
+                      integrations,
+                      resolvedUserId
+                    )
+                  }
+                }
+              }
+            }
+            
+            // B. Handle DMs
+            if (entry.messaging && Array.isArray(entry.messaging)) {
+              for (const messagingEvent of entry.messaging) {
+                if (messagingEvent.message) {
+                  const senderId = messagingEvent.sender?.id
+                  const recipientId = messagingEvent.recipient?.id
+                  const messageText = messagingEvent.message?.text || ''
+                  
+                  const context = {
+                    senderId,
+                    recipientId,
+                    instagramAccountId: recipientId,
+                    messageText,
+                    username: messagingEvent.sender?.username || 'customer',
+                    timestamp: messagingEvent.timestamp || Date.now(),
+                    platform: 'instagram'
+                  }
+                  
+                  await triggerAutomationEvent(
+                    'instagram.message_received',
+                    context,
+                    integrations,
+                    resolvedUserId
+                  )
+                }
+              }
+            }
+          }
+        }
+        
+        return handleCORS(NextResponse.json({ success: true }))
+      } catch (error) {
+        console.error('Instagram Webhook POST error:', error)
+        return handleCORS(NextResponse.json({ error: 'Webhook processing failed' }, { status: 500 }))
+      }
+    }
+
+    // Instagram Accounts connected list
+    if (route === '/integrations/instagram/accounts' && method === 'GET') {
+      const authenticatedUserId = requireRequestUserId(request)
+      const accounts = await getStoredInstagramAccounts(authenticatedUserId)
+      return handleCORS(NextResponse.json({ accounts }))
+    }
+
+    // Save Instagram connection
+    if (route === '/integrations/instagram/accounts' && method === 'POST') {
+      const authenticatedUserId = requireRequestUserId(request)
+      const data = await request.json()
+      
+      if (!data.pageId || !data.instagramAccountId || !data.accessToken) {
+        return handleCORS(NextResponse.json({ error: 'Missing required parameters' }, { status: 400 }))
+      }
+      
+      const accountId = await saveInstagramAccount(data, authenticatedUserId)
+      return handleCORS(NextResponse.json({ success: true, accountId }))
+    }
+
+    // Delete Instagram connection
+    if (route === '/integrations/instagram/accounts' && method === 'DELETE') {
+      const authenticatedUserId = requireRequestUserId(request)
+      const accountId = request.nextUrl.searchParams.get('id')
+      
+      if (!accountId) {
+        return handleCORS(NextResponse.json({ error: 'Missing account ID' }, { status: 400 }))
+      }
+      
+      const pool = getPool()
+      await pool.execute(
+        'DELETE FROM instagram_accounts WHERE id = ? AND userId = ?',
+        [accountId, authenticatedUserId]
+      )
+      return handleCORS(NextResponse.json({ success: true }))
+    }
+
     // Zoho OAuth Initiation
     if (route === '/integrations/zoho/auth' && method === 'GET') {
       const authenticatedUserId = requireRequestUserId(request)
@@ -1125,7 +1279,28 @@ async function handleRoute(request, { params }) {
         },
         shopify: { connected: false, data: {} },
         stripe: { connected: false, data: {} },
-        zoho: { connected: false, data: {} }
+        zoho: { connected: false, data: {} },
+        instagram: { connected: false, data: {} }
+      }
+
+      try {
+        const pool = getPool()
+        const [igRows] = await pool.execute(
+          'SELECT pageId, instagramAccountId, accountName FROM instagram_accounts WHERE userId = ? LIMIT 1',
+          [currentUserId]
+        )
+        if (igRows && igRows.length > 0) {
+          defaultIntegrations.instagram = {
+            connected: true,
+            data: {
+              accountName: igRows[0].accountName,
+              pageId: igRows[0].pageId,
+              instagramAccountId: igRows[0].instagramAccountId
+            }
+          }
+        }
+      } catch (igErr) {
+        console.error('Failed to load instagram connection status:', igErr.message)
       }
 
       if (integrations) {

@@ -38,7 +38,8 @@ import {
   Palette,
   Bot as BotIcon,
   Loader2,
-  Save
+  Save,
+  Instagram
 } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { toast } from 'sonner'
@@ -63,8 +64,16 @@ export default function SettingsPage() {
   const [shopifyDialogOpen, setShopifyDialogOpen] = useState(false)
   const [stripeDialogOpen, setStripeDialogOpen] = useState(false)
   const [zohoDialogOpen, setZohoDialogOpen] = useState(false)
+  const [instagramDialogOpen, setInstagramDialogOpen] = useState(false)
   const [zohoDc, setZohoDc] = useState('zoho.com')
   const [user, setUser] = useState(null)
+  
+  // Instagram connection states
+  const [igAccountName, setIgAccountName] = useState('')
+  const [igPageId, setIgPageId] = useState('')
+  const [igAccountId, setIgAccountId] = useState('')
+  const [igAccessToken, setIgAccessToken] = useState('')
+  const [savingInstagram, setSavingInstagram] = useState(false)
 
     // Branding state
     const [branding, setBranding] = useState({
@@ -553,6 +562,68 @@ useEffect(() => {
     }
   }
 
+  const handleSaveInstagram = async () => {
+    if (!igAccountName || !igPageId || !igAccountId || !igAccessToken) {
+      toast.error('All fields are required to connect your Instagram Account.')
+      return
+    }
+    
+    try {
+      setSavingInstagram(true)
+      const res = await fetch('/api/integrations/instagram/accounts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accountName: igAccountName,
+          pageId: igPageId,
+          instagramAccountId: igAccountId,
+          accessToken: igAccessToken
+        })
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        toast.success('Instagram Business connected successfully! Webhooks active.')
+        setInstagramDialogOpen(false)
+        await loadIntegrations()
+        setIgAccountName('')
+        setIgPageId('')
+        setIgAccountId('')
+        setIgAccessToken('')
+      } else {
+        toast.error(data.error || 'Failed to connect Instagram account.')
+      }
+    } catch (err) {
+      console.error('Instagram sync failure:', err.message)
+      toast.error('Failed to save Instagram connection.')
+    } finally {
+      setSavingInstagram(false)
+    }
+  }
+
+  const handleDisconnectInstagram = async (id) => {
+    if (!confirm('Are you sure you want to disconnect your Instagram Account? This will pause all active Instagram automations.')) {
+      return
+    }
+    try {
+      setLoading(true)
+      const res = await fetch(`/api/integrations/instagram/accounts?id=${encodeURIComponent(id)}`, {
+        method: 'DELETE'
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        toast.success('Instagram Account disconnected successfully.')
+        await loadIntegrations()
+      } else {
+        toast.error(data.error || 'Failed to disconnect Instagram account.')
+      }
+    } catch (err) {
+      console.error('Failed to disconnect Instagram:', err.message)
+      toast.error('Failed to disconnect Instagram connection.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   // WordPress/WooCommerce config state
   const [woocommerceTriggers, setWoocommerceTriggers] = useState([])
   const [customTables, setCustomTables] = useState([])
@@ -990,6 +1061,158 @@ useEffect(() => {
                     </div>
                   </DialogContent>
                 )}
+              </Dialog>
+
+              {/* Instagram */}
+              <Dialog open={instagramDialogOpen} onOpenChange={setInstagramDialogOpen}>
+                <DialogTrigger asChild>
+                  <div className="flex flex-col gap-4 cursor-pointer">
+                    <div className={`p-5 rounded-xl transition-colors group bg-[#f8f9ff] hover:bg-[#eff4ff]`}>
+                      <div className="flex justify-between items-start mb-4">
+                        <div className="w-10 h-10 rounded-lg bg-pink-50 flex items-center justify-center">
+                          <Instagram className="text-pink-600 w-5 h-5" />
+                        </div>
+                        {integrations.instagram?.connected ? (
+                          <span className="px-2 py-0.5 rounded-full bg-pink-100 text-pink-700 text-[10px] font-black uppercase flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-pink-500 animate-pulse"></span>
+                            Active
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[10px] font-black uppercase">Inactive</span>
+                        )}
+                      </div>
+                      <h4 className="font-bold mb-1">Instagram</h4>
+                      <p className="text-[11px] text-[#3d618c] mb-4">Comment & DM Automation</p>
+                      <div className="w-full py-2 rounded-lg bg-[#e5eeff] text-[#005cc0] font-bold text-xs hover:bg-[#005cc0] hover:text-white transition-all text-center">
+                        {integrations.instagram?.connected ? 'Manage' : 'Connect'}
+                      </div>
+                    </div>
+                  </div>
+                </DialogTrigger>
+                <DialogContent className="sm:max-w-[500px]">
+                  <DialogHeader>
+                    <DialogTitle>Instagram Business Configuration</DialogTitle>
+                    <DialogDescription>
+                      Automate Instagram Direct Messages, private PDF delivery, and public comment auto-replies.
+                    </DialogDescription>
+                  </DialogHeader>
+                  
+                  {integrations.instagram?.connected ? (
+                    <div className="space-y-4">
+                      <div className="p-4 bg-green-50/50 border border-green-100 rounded-xl space-y-2">
+                        <div className="flex items-center gap-2 text-green-800 text-xs font-bold uppercase tracking-wider">
+                          <CheckCircle className="w-4 h-4 text-green-600" />
+                          <span>Instagram Account Connected</span>
+                        </div>
+                        <p className="text-xs text-green-700 leading-relaxed">
+                          Your Instagram account <strong>@{integrations.instagram.data.accountName || 'Business Account'}</strong> is connected successfully! Flow automation triggers (keyword mentions, comment growth hacks) are active.
+                        </p>
+                      </div>
+
+                      <div className="space-y-3">
+                        <div className="flex justify-between items-center text-xs py-2 border-b border-gray-100">
+                          <span className="text-gray-500">Account Name</span>
+                          <span className="font-bold text-gray-800">@{integrations.instagram.data.accountName || 'N/A'}</span>
+                        </div>
+                        <div className="flex justify-between items-center text-xs py-2 border-b border-gray-100">
+                          <span className="text-gray-500">Meta Page ID</span>
+                          <span className="font-mono bg-gray-50 px-2 py-0.5 rounded text-gray-700">{integrations.instagram.data.pageId || 'N/A'}</span>
+                        </div>
+                        <div className="flex justify-between items-center text-xs py-2 border-b border-gray-100">
+                          <span className="text-gray-500">Instagram Account ID</span>
+                          <span className="font-mono bg-gray-50 px-2 py-0.5 rounded text-gray-700">{integrations.instagram.data.instagramAccountId || 'N/A'}</span>
+                        </div>
+                      </div>
+
+                      <div className="pt-4 flex justify-between gap-3">
+                        <Button variant="outline" onClick={() => setInstagramDialogOpen(false)}>
+                          Close
+                        </Button>
+                        <Button 
+                          variant="destructive"
+                          onClick={() => {
+                            setInstagramDialogOpen(false)
+                            handleDisconnectInstagram(integrations.instagram.data.instagramAccountId)
+                          }}
+                        >
+                          Disconnect Account
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-4 pt-2">
+                      <div className="rounded-xl border border-blue-100 bg-[#f8f9ff] p-4 text-xs text-blue-800 space-y-2">
+                        <div className="font-bold flex items-center gap-1.5">
+                          <AlertCircle className="w-3.5 h-3.5 text-blue-600" />
+                          <span>Facebook Login & Graph API Prerequisites</span>
+                        </div>
+                        <p className="leading-relaxed">
+                          Connect using your Meta Developer App configuration or Facebook Page Access Token to securely subscribe to Direct Messages and Comment-to-DM triggers.
+                        </p>
+                      </div>
+
+                      <div className="space-y-3">
+                        <div>
+                          <Label className="text-xs font-bold mb-1 block">Account Display Name</Label>
+                          <Input
+                            placeholder="e.g. NoonVilla Store"
+                            value={igAccountName}
+                            onChange={(e) => setIgAccountName(e.target.value)}
+                            className="text-xs"
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-xs font-bold mb-1 block">Connected Facebook Page ID</Label>
+                          <Input
+                            placeholder="e.g. 1093827461937"
+                            value={igPageId}
+                            onChange={(e) => setIgPageId(e.target.value)}
+                            className="text-xs font-mono"
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-xs font-bold mb-1 block">Instagram Professional/Business Account ID</Label>
+                          <Input
+                            placeholder="e.g. 178414002345678"
+                            value={igAccountId}
+                            onChange={(e) => setIgAccountId(e.target.value)}
+                            className="text-xs font-mono"
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-xs font-bold mb-1 block">Facebook Page Access Token</Label>
+                          <Input
+                            type="password"
+                            placeholder="EAAGz..."
+                            value={igAccessToken}
+                            onChange={(e) => setIgAccessToken(e.target.value)}
+                            className="text-xs font-mono"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="pt-4 flex justify-end gap-3 border-t border-gray-100 mt-4">
+                        <Button variant="outline" onClick={() => setInstagramDialogOpen(false)} disabled={savingInstagram}>
+                          Cancel
+                        </Button>
+                        <Button 
+                          onClick={handleSaveInstagram}
+                          disabled={savingInstagram}
+                          className="bg-pink-600 hover:bg-pink-700 text-white font-bold"
+                        >
+                          {savingInstagram ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              Connecting...
+                            </>
+                          ) : (
+                            'Connect Instagram'
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </DialogContent>
               </Dialog>
             </div>
           </div>
