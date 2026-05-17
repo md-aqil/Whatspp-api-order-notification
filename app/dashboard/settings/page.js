@@ -130,6 +130,13 @@ export default function SettingsPage() {
         setBaseUrl(window.location.origin)
       }
 
+      if (typeof window !== 'undefined') {
+        const params = new URLSearchParams(window.location.search)
+        if (params.get('connect') === 'instagram') {
+          setInstagramDialogOpen(true)
+        }
+      }
+
       // Fetch user info
       fetch('/api/auth/me')
         .then(res => res.ok ? res.json() : null)
@@ -1098,6 +1105,21 @@ useEffect(() => {
                       Automate Instagram Direct Messages, private PDF delivery, and public comment auto-replies.
                     </DialogDescription>
                   </DialogHeader>
+
+                  <div className="bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800/80 rounded-xl p-3 mb-2 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-pink-100 dark:bg-pink-500/10 text-pink-600 dark:text-pink-400">
+                        <Zap className="w-3.5 h-3.5 animate-pulse" />
+                      </span>
+                      <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">Need help setting up?</span>
+                    </div>
+                    <a 
+                      href="/dashboard/docs/instagram"
+                      className="text-xs font-black text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 transition-colors flex items-center gap-1"
+                    >
+                      Step-by-Step Guide ➔
+                    </a>
+                  </div>
                   
                   {integrations.instagram?.connected ? (
                     <div className="space-y-4">
