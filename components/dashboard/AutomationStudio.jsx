@@ -751,6 +751,7 @@ export function AutomationStudio() {
       if (sel.event.startsWith('shopify.')) setTriggerCategory('shopify')
       else if (sel.event.startsWith('woocommerce.')) setTriggerCategory('woocommerce')
       else if (sel.event.startsWith('whatsapp.')) setTriggerCategory('whatsapp')
+      else if (sel.event.startsWith('instagram.')) setTriggerCategory('instagram')
       else if (sel.event.startsWith('zoho.')) setTriggerCategory('zoho')
       else if (sel.event.startsWith('custom.')) setTriggerCategory('custom')
     }
@@ -1925,6 +1926,8 @@ export function AutomationStudio() {
                             defaultEvent = 'shopify.order_created'
                           } else if (v === 'whatsapp') {
                             defaultEvent = 'whatsapp.message_received'
+                          } else if (v === 'instagram') {
+                            defaultEvent = 'instagram.comment_created'
                           } else if (v === 'custom') {
                             defaultEvent = 'custom.webhook'
                           }
@@ -1939,6 +1942,7 @@ export function AutomationStudio() {
                             <SelectItem value="shopify" className="text-white/70 text-xs">🛍️ Shopify</SelectItem>
                             <SelectItem value="woocommerce" className="text-white/70 text-xs">🛒 WooCommerce</SelectItem>
                             <SelectItem value="whatsapp" className="text-white/70 text-xs">💬 WhatsApp</SelectItem>
+                            <SelectItem value="instagram" className="text-white/70 text-xs">📸 Instagram</SelectItem>
                             <SelectItem value="zoho" className="text-white/70 text-xs">✨ Zoho CRM</SelectItem>
                             <SelectItem value="custom" className="text-white/70 text-xs">🔗 Custom Webhook</SelectItem>
                           </SelectContent>
@@ -1966,6 +1970,9 @@ export function AutomationStudio() {
                                 <SelectItem key={o.value} value={o.value} className="text-white/70 text-xs">{o.label}</SelectItem>
                               ))}
                               {triggerCategory === 'whatsapp' && dynamicTriggers.filter(t => t.value.startsWith('whatsapp.')).map(o => (
+                                <SelectItem key={o.value} value={o.value} className="text-white/70 text-xs">{o.label}</SelectItem>
+                              ))}
+                              {triggerCategory === 'instagram' && dynamicTriggers.filter(t => t.value.startsWith('instagram.')).map(o => (
                                 <SelectItem key={o.value} value={o.value} className="text-white/70 text-xs">{o.label}</SelectItem>
                               ))}
                               {triggerCategory === 'zoho' && dynamicTriggers.filter(t => t.value.startsWith('zoho.')).map(o => (
