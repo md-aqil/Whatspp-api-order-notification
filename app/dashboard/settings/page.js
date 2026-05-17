@@ -657,13 +657,19 @@ useEffect(() => {
             if (whatsappLog) {
               setWhatsappStatus('connected')
               setLastWhatsappWebhook(whatsappLog)
+            } else {
+              setLastWhatsappWebhook(null)
             }
             if (customLog) setLastCustomWebhook(customLog)
             if (zohoLog) {
               setLastZohoWebhook(zohoLog)
               setZohoWebhooks(zohoLogs.slice(0, 2))
             }
+          } else {
+            setLastWhatsappWebhook(null)
           }
+        } else {
+          setLastWhatsappWebhook(null)
         }
       } catch (e) {
         console.log('No webhook logs available')
@@ -796,13 +802,31 @@ useEffect(() => {
                           <MessageCircle className="text-green-600 w-5 h-5" />
                         </div>
                         {integrations.whatsapp.connected ? (
-                          <span className="px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-[10px] font-black uppercase">Connected</span>
+                          lastWhatsappWebhook ? (
+                            <span className="px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-[10px] font-black uppercase flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+                              Active
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-black uppercase flex items-center gap-1 animate-pulse">
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                              No Webhooks
+                            </span>
+                          )
                         ) : (
                           <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[10px] font-black uppercase">Inactive</span>
                         )}
                       </div>
                       <h4 className="font-bold mb-1">WhatsApp</h4>
-                      <p className="text-[11px] text-[#3d618c] mb-4">Business API</p>
+                      <p className="text-[11px] text-[#3d618c] mb-2">Business API</p>
+                      {integrations.whatsapp.connected && !lastWhatsappWebhook ? (
+                        <div className="flex items-center gap-1 text-[10px] text-amber-600 font-semibold mb-3">
+                          <AlertCircle className="w-3.5 h-3.5" />
+                          <span>Pending webhook setup</span>
+                        </div>
+                      ) : (
+                        <div className="h-6 mb-1"></div>
+                      )}
                       <div className="w-full py-2 rounded-lg bg-[#e5eeff] text-[#005cc0] font-bold text-xs hover:bg-[#005cc0] hover:text-white transition-all text-center">Configure</div>
                     </div>
                   </div>
@@ -813,6 +837,22 @@ useEffect(() => {
                     <DialogDescription>Configure your WhatsApp Business API integration</DialogDescription>
                   </DialogHeader>
                   <IntegrationForm type="whatsapp" integration={integrations.whatsapp} user={user} onSave={saveIntegration} />
+                  {!lastWhatsappWebhook && integrations.whatsapp.connected && (
+                    <div className="rounded-xl border border-amber-100 bg-amber-50/50 p-4 space-y-2 mt-4 text-left">
+                      <div className="flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 text-amber-600" />
+                        <span className="text-xs font-bold text-amber-800 uppercase tracking-wider">Webhook Missing</span>
+                      </div>
+                      <p className="text-xs text-amber-700 leading-relaxed">
+                        Your WhatsApp credentials are saved, but <strong>we haven't received any incoming message webhooks yet</strong>. Your auto-replies and chat dashboard will not work until this is resolved.
+                      </p>
+                      <div className="text-[11px] text-amber-600 space-y-1 mt-2 pl-4 list-disc">
+                        <div>• Make sure you have subscribed to the <strong>messages</strong> field in your Meta App Webhook settings.</div>
+                        <div>• Verify the Callback URL and Verify Token in Meta match the ones shown above.</div>
+                        <div>• Try sending a test message from a real WhatsApp number to your business API number.</div>
+                      </div>
+                    </div>
+                  )}
                 </DialogContent>
               </Dialog>
 

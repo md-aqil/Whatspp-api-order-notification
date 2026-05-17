@@ -15,7 +15,7 @@ expect {
 
 expect "aqil@"
 sleep 1
-send "sudo pm2 status\r"
+send "sudo journalctl -u lcsw -n 150 --no-pager\r"
 expect {
     "assword" {
         send "$pass\r"
@@ -23,9 +23,5 @@ expect {
     }
     "aqil@"
 }
-send "sudo pm2 logs --lines 50 --no-colors\r"
-sleep 5
-send "\x03"
-expect "aqil@"
 send "exit\r"
 expect eof
