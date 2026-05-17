@@ -3,6 +3,7 @@ import { getPool } from '@/lib/postgres'
 import { ensureSettingsTables } from '@/lib/settings-db'
 import { requireRequestUserId } from '@/lib/request-user'
 import { validateWhatsAppPhoneNumberAccess } from '@/lib/whatsapp-meta'
+import { getUserWorkspaces } from '@/lib/workspaces'
 
 let pool
 
@@ -47,26 +48,26 @@ async function saveWhatsAppAccount(accountData, userId = 'default') {
   try {
     await ensureSettingsTables()
     const pool = getMysqlPool()
-    const { id, accountName, phoneNumberId, accessToken, businessAccountId, phoneNumber } = accountData
+    const { id, accountName, phoneNumberId, accessToken, businessAccountId, phoneNumber, workspaceId } = accountData
     const accountId = id || `wa_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-    
+
     const [existing] = await pool.execute(
       'SELECT id FROM whatsapp_accounts WHERE id = ? AND userId = ?',
       [accountId, userId]
     )
-    
+
     if (existing[0]) {
       await pool.execute(
-        `UPDATE whatsapp_accounts SET accountName = ?, phoneNumberId = ?, accessToken = ?, businessAccountId = ?, phoneNumber = ?, updatedAt = NOW() WHERE id = ? AND userId = ?`,
-        [accountName, phoneNumberId, accessToken, businessAccountId, phoneNumber, accountId, userId]
+        `UPDATE whatsapp_accounts SET accountName = ?, phoneNumberId = ?, accessToken = ?, businessAccountId = ?, phoneNumber = ?, workspaceId = ?, updatedAt = NOW() WHERE id = ? AND userId = ?`,
+        [accountName, phoneNumberId, accessToken, businessAccountId, phoneNumber, workspaceId, accountId, userId]
       )
     } else {
       await pool.execute(
-        `INSERT INTO whatsapp_accounts (id, userId, accountName, phoneNumberId, accessToken, businessAccountId, phoneNumber, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-        [accountId, userId, accountName, phoneNumberId, accessToken, businessAccountId, phoneNumber]
+        `INSERT INTO whatsapp_accounts (id, userId, accountName, phoneNumberId, accessToken, businessAccountId, phoneNumber, workspaceId, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+        [accountId, userId, accountName, phoneNumberId, accessToken, businessAccountId, phoneNumber, workspaceId]
       )
     }
-    
+
     return accountId
   } catch (error) {
     console.error('[saveWhatsAppAccount] Error:', error.message)
@@ -93,9 +94,9 @@ export async function GET(request) {
   try {
     await ensureSettingsTables()
     const userId = requireRequestUserId(request)
-    
+
     const accounts = await getStoredWhatsAppAccounts(userId)
-    
+
     const safeAccounts = accounts.map(acc => ({
       id: acc.id,
       userId: acc.userId,
@@ -107,7 +108,7 @@ export async function GET(request) {
       createdAt: acc.createdAt,
       updatedAt: acc.updatedAt
     }))
-    
+
     return NextResponse.json({ accounts: safeAccounts })
   } catch (error) {
     if (error?.status === 401) {
@@ -128,7 +129,7 @@ export async function POST(request) {
   try {
     await ensureSettingsTables()
     const body = await request.json()
-    
+
     const {
       accountName,
       phoneNumberId,
@@ -137,7 +138,7 @@ export async function POST(request) {
       phoneNumber
     } = body
     const userId = requireRequestUserId(request)
-    
+
     if (!accountName || !phoneNumberId || !accessToken) {
       return NextResponse.json(
         { error: 'accountName, phoneNumberId, and accessToken are required' },
@@ -146,15 +147,19 @@ export async function POST(request) {
     }
 
     await validateWhatsAppPhoneNumberAccess(phoneNumberId, accessToken, businessAccountId)
-    
+
+    const workspaces = await getUserWorkspaces(userId)
+    const workspaceId = workspaces[0].id
+
     const accountId = await saveWhatsAppAccount({
       accountName,
       phoneNumberId,
       accessToken,
       businessAccountId,
-      phoneNumber
+      phoneNumber,
+      workspaceId
     }, userId)
-    
+
     return NextResponse.json({
       success: true,
       accountId,
@@ -179,7 +184,7 @@ export async function PUT(request) {
   try {
     await ensureSettingsTables()
     const body = await request.json()
-    
+
     const {
       id,
       accountName,
@@ -189,7 +194,7 @@ export async function PUT(request) {
       phoneNumber
     } = body
     const userId = requireRequestUserId(request)
-    
+
     if (!id || !accountName || !phoneNumberId || !accessToken) {
       return NextResponse.json(
         { error: 'id, accountName, phoneNumberId, and accessToken are required' },
@@ -198,16 +203,20 @@ export async function PUT(request) {
     }
 
     await validateWhatsAppPhoneNumberAccess(phoneNumberId, accessToken, businessAccountId)
-    
+
+    const workspaces = await getUserWorkspaces(userId)
+    const workspaceId = workspaces[0].id
+
     const accountId = await saveWhatsAppAccount({
       id,
       accountName,
       phoneNumberId,
       accessToken,
       businessAccountId,
-      phoneNumber
+      phoneNumber,
+      workspaceId
     }, userId)
-    
+
     return NextResponse.json({
       success: true,
       accountId,
@@ -234,23 +243,23 @@ export async function DELETE(request) {
     const url = new URL(request.url)
     const userId = requireRequestUserId(request)
     const accountId = url.searchParams.get('id')
-    
+
     if (!accountId) {
       return NextResponse.json(
         { error: 'Account ID is required' },
         { status: 400 }
       )
     }
-    
+
     const deleted = await deleteWhatsAppAccount(accountId, userId)
-    
+
     if (!deleted) {
       return NextResponse.json(
         { error: 'WhatsApp account not found' },
         { status: 404 }
       )
     }
-    
+
     return NextResponse.json({
       success: true,
       message: 'WhatsApp account deleted successfully'

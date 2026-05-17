@@ -6,7 +6,13 @@ export const dynamic = 'force-dynamic'
 export async function GET(request) {
   try {
     const url = new URL(request.url)
-    const userId = url.searchParams.get('userId') || 'default'
+    const userId = url.searchParams.get('userId')
+    
+    if (!userId || userId === 'default') {
+      return new NextResponse('console.error("Chatflow widget failed to load: Missing or invalid userId parameter");', {
+        headers: { 'Content-Type': 'application/javascript' },
+      });
+    }
 
     const branding = await getBranding(userId)
 

@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server'
 import { queryMany, queryOne } from '@/lib/postgres'
+import { requireRequestUserId } from '@/lib/request-user'
 
-export async function GET() {
+export async function GET(request) {
   try {
-    const userId = 'default' // In a real app, get from session
+    const userId = requireRequestUserId(request)
 
     // 1. Total Messages stats
     const totalMessages = await queryOne('SELECT COUNT(*) as count FROM messages WHERE userId = ?', [userId])
@@ -48,6 +49,9 @@ export async function GET() {
     })
 
   } catch (error) {
+    if (error?.status === 401) {
+      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+    }
     console.error('Analytics API Error:', error)
     return NextResponse.json({ error: error.message }, { status: 500 })
   }

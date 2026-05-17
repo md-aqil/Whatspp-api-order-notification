@@ -17,7 +17,7 @@ expect "aqil@"
 sleep 1
 send "sudo pm2 status\r"
 expect {
-    "password" {
+    "assword" {
         send "$pass\r"
         exp_continue
     }

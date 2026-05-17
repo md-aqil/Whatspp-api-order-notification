@@ -18,7 +18,7 @@ export async function OPTIONS() {
 export async function GET(request) {
   try {
     await ensureSettingsTables()
-    requireRequestUserId(request)
+    const userId = requireRequestUserId(request)
 
     const { searchParams } = new URL(request.url)
     const rawLimit = parseInt(searchParams.get('limit') || '10', 10)
@@ -27,9 +27,10 @@ export async function GET(request) {
     const [rows] = await query(
       `SELECT id, type, topic, payload, receivedAt, createdAt
        FROM webhook_logs
+       WHERE userId = ?
        ORDER BY receivedAt DESC
        LIMIT ?`,
-      [limit]
+      [String(userId || 'default'), limit]
     )
 
     return withCors(NextResponse.json({ logs: rows || [] }))
@@ -41,3 +42,4 @@ export async function GET(request) {
     return withCors(NextResponse.json({ logs: [] }))
   }
 }
+

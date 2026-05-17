@@ -221,13 +221,13 @@ function mergeShopifyProductsWithMetaCatalog(shopifyProducts = [], metaProducts 
 // insertStoredMessage is now imported
 
 
-async function saveStoredWebhooks(webhooks) {
+async function saveStoredWebhooks(webhooks, userId = 'default') {
   await ensureSettingsTables()
 
   const pool = getPool()
   const existing = await queryOne(
     'SELECT id FROM webhooks WHERE userId = ? AND type = ? ORDER BY createdAt IS NULL, createdAt DESC, id DESC LIMIT 1',
-    ['default', 'shopify']
+    [String(userId || 'default'), 'shopify']
   )
 
   if (existing) {
@@ -240,29 +240,31 @@ async function saveStoredWebhooks(webhooks) {
 
   await pool.execute(
     'INSERT INTO webhooks (userId, type, webhooks, createdAt) VALUES (?, ?, ?, NOW())',
-    ['default', 'shopify', JSON.stringify(webhooks)]
+    [String(userId || 'default'), 'shopify', JSON.stringify(webhooks)]
   )
 }
 
-async function getStoredWebhooks(type = 'shopify') {
+async function getStoredWebhooks(type = 'shopify', userId = 'default') {
   await ensureSettingsTables()
 
   const result = await getPool().execute(
     'SELECT id, type, webhooks, createdAt FROM webhooks WHERE userId = ? AND type = ? ORDER BY createdAt IS NULL, createdAt DESC, id DESC LIMIT 1',
-    ['default', type]
+    [String(userId || 'default'), type]
   )
   return result[0][0] || null
 }
 
 
-async function getWebhookLogs(limit = 10) {
+async function getWebhookLogs(limit = 10, userId = 'default') {
   await ensureSettingsTables()
 
   const [rows] = await getPool().query(
     `SELECT id, type, topic, payload, receivedAt, createdAt
      FROM webhook_logs
+     WHERE userId = ?
      ORDER BY receivedAt DESC
-     LIMIT ${parseInt(limit, 10) || 10}`
+     LIMIT ${parseInt(limit, 10) || 10}`,
+    [String(userId || 'default')]
   )
 
   return rows || []
@@ -765,7 +767,7 @@ async function fetchShopifyOrders(shopify) {
   // Transform Shopify orders to match our internal format
   return data.orders.map(order => ({
     id: `shopify-${order.id}`,
-    userId: 'default',
+    userId: shopify._resolvedUserId || 'default',
     shopifyOrderId: order.id.toString(),
     orderNumber: order.order_number,
     customerName: `${order.customer?.first_name || ''} ${order.customer?.last_name || ''}`.trim(),
@@ -906,8 +908,14 @@ async function handleRoute(request, { params }) {
       try {
         const body = await request.json()
 
-        // Log webhook for debugging
-        await insertWebhookLog('whatsapp', null, body)
+        // Log webhook for debugging - userId resolved per phone number below
+        // We do a quick pre-check to find the user and log under them
+        let webhookLogUserId = 'default'
+        if (body.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id) {
+          const pidForLog = body.entry[0].changes[0].value.metadata.phone_number_id
+          webhookLogUserId = await getUserIdByWhatsAppPhoneNumberId(pidForLog)
+        }
+        await insertWebhookLog('whatsapp', null, body, webhookLogUserId)
 
         console.log('WhatsApp webhook received:', JSON.stringify(body, null, 2));
 
@@ -1053,7 +1061,7 @@ async function handleRoute(request, { params }) {
             error_description: tokens.error_description || null,
             dc,
             redirectUri
-          })
+          }, zohoUserId)
           const zohoAuthError = encodeURIComponent(zohoTokenError)
           return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/dashboard/settings?error=zoho_auth_failed&detail=${zohoAuthError}`)
         }
@@ -1076,7 +1084,7 @@ async function handleRoute(request, { params }) {
           userId: zohoUserId,
           dc,
           apiDomain: tokens.api_domain || null
-        })
+        }, zohoUserId)
         
         return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/dashboard/settings?zoho=connected`)
       } catch (err) {
@@ -1085,7 +1093,7 @@ async function handleRoute(request, { params }) {
           stage: 'callback_exception',
           error: err.message,
           dc
-        })
+        }, zohoUserId)
         return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/dashboard/settings?error=zoho_auth_failed`)
       }
     }
@@ -1252,7 +1260,7 @@ async function handleRoute(request, { params }) {
 
     // Setup webhooks endpoint
     if (route === '/setup-webhooks' && method === 'POST') {
-      const integrations = await getStoredIntegrations();
+      const integrations = await getStoredIntegrations(currentUserId);
 
       if (!integrations?.shopify?.shopDomain || !integrations?.shopify?.clientId || !integrations?.shopify?.clientSecret) {
         return handleCORS(NextResponse.json(
@@ -1300,7 +1308,7 @@ async function handleRoute(request, { params }) {
         }
 
         // Save webhook info
-        await saveStoredWebhooks(createdWebhooks)
+        await saveStoredWebhooks(createdWebhooks, currentUserId)
 
         return handleCORS(NextResponse.json({
           success: true,
@@ -1317,13 +1325,14 @@ async function handleRoute(request, { params }) {
     // Webhook logs endpoint
     if (route === '/webhook-logs' && method === 'GET') {
       try {
+        requireRequestUserId(request)
         const webhookUrl = new URL(request.url)
         const limit = parseInt(webhookUrl.searchParams.get('limit')) || 10
-        const logs = await getWebhookLogs(limit)
+        const logs = await getWebhookLogs(limit, currentUserId)
         return handleCORS(NextResponse.json({ logs }))
       } catch (error) {
         return handleCORS(NextResponse.json(
-          { error: `Failed to get webhook logs: ${error.message}` },
+          { error: error.status === 401 ? 'Not authenticated' : `Failed to get webhook logs: ${error.message}` },
           { status: error.status || 500 }
         ))
       }
@@ -1336,7 +1345,7 @@ async function handleRoute(request, { params }) {
       let webhooks = null
 
       try {
-        webhooks = await getStoredWebhooks(type)
+        webhooks = await getStoredWebhooks(type, currentUserId)
       } catch (error) {
         console.error(`Failed to load stored ${type} webhooks:`, error)
       }
@@ -1350,7 +1359,7 @@ async function handleRoute(request, { params }) {
 
     // Products endpoint
     if (route === '/products' && method === 'GET') {
-      const integrations = await getStoredIntegrations()
+      const integrations = await getStoredIntegrations(currentUserId)
 
       try {
         const hasMetaCatalog = !!(integrations?.whatsapp?.catalogId && integrations?.whatsapp?.accessToken)
@@ -1378,7 +1387,7 @@ async function handleRoute(request, { params }) {
     if (route === '/orders' && method === 'GET') {
       try {
         // Try to fetch orders from Shopify if integration is configured
-        const integrations = await getStoredIntegrations()
+        const integrations = await getStoredIntegrations(currentUserId)
 
         if (integrations?.shopify?.shopDomain && integrations?.shopify?.clientId && integrations?.shopify?.clientSecret) {
           try {
@@ -1421,7 +1430,7 @@ async function handleRoute(request, { params }) {
         }
 
         const persistedCart = await persistCartRecoveryEvent({
-          userId: 'default',
+          userId: currentUserId,
           eventType,
           payload: body,
           platformHint: body.platform || eventType,
@@ -1447,8 +1456,8 @@ async function handleRoute(request, { params }) {
         )
 
         if (shouldTriggerAutomation) {
-          const integrations = await getStoredIntegrations()
-          await triggerAutomationEvent(eventType, context, integrations)
+          const integrations = await getStoredIntegrations(currentUserId)
+          await triggerAutomationEvent(eventType, context, integrations, currentUserId)
         }
 
         return handleCORS(NextResponse.json({
@@ -1475,7 +1484,7 @@ async function handleRoute(request, { params }) {
         const platform = typeof body.platform === 'string' ? body.platform : ''
 
         const sessions = await findCartSessionsReadyForAbandonment({
-          userId: 'default',
+          userId: currentUserId,
           thresholdMinutes,
           limit,
           platform
@@ -1507,7 +1516,7 @@ async function handleRoute(request, { params }) {
           }))
         }
 
-        const integrations = await getStoredIntegrations()
+        const integrations = await getStoredIntegrations(currentUserId)
         let processed = 0
         let failed = 0
         const errors = []
@@ -1531,7 +1540,8 @@ async function handleRoute(request, { params }) {
             await triggerAutomationEvent(
               `${eventPlatform}.cart_abandoned`,
               context,
-              integrations
+              integrations,
+              currentUserId
             )
 
             processed += 1
@@ -1580,7 +1590,7 @@ async function handleRoute(request, { params }) {
         }
 
         // Get integrations
-        const integrations = await getStoredIntegrations();
+        const integrations = await getStoredIntegrations(currentUserId);
 
         if (!integrations?.whatsapp?.phoneNumberId || !integrations?.whatsapp?.accessToken) {
           return handleCORS(NextResponse.json(
@@ -1701,7 +1711,7 @@ async function handleRoute(request, { params }) {
               // Log the message
               await insertStoredMessage({
                 id: uuidv4(),
-                userId: 'default',
+                userId: currentUserId,
                 recipient: formattedRecipient,
                 phone: formattedRecipient,
                 message: `Catalog template sent: ${templateName}`,
@@ -1780,7 +1790,7 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
               // Log the message
               await insertStoredMessage({
                 id: uuidv4(),
-                userId: 'default',
+                userId: currentUserId,
                 recipient: formattedRecipient,
                 phone: formattedRecipient,
                 message: catalogMessage,
@@ -1966,7 +1976,7 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
     if (route === '/whatsapp-templates' && method === 'GET') {
       try {
         // Get WhatsApp integration details
-        const integrations = await getStoredIntegrations();
+        const integrations = await getStoredIntegrations(currentUserId);
 
         if (!integrations?.whatsapp?.phoneNumberId || !integrations?.whatsapp?.accessToken) {
           return handleCORS(NextResponse.json(

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { generateAIResponseWithBranding, generateAISuggestions } from '@/lib/ai'
+import { requireRequestUserId } from '@/lib/request-user'
 import { queryMany } from '@/lib/postgres'
 import { getStoredMessagesByPhone } from '@/lib/db/chat-repository'
 
@@ -10,7 +11,8 @@ export const dynamic = 'force-dynamic'
  */
 export async function POST(req) {
   try {
-    const { message, userId = 'default', history = [] } = await req.json()
+    const userId = requireRequestUserId(req)
+    const { message, history = [] } = await req.json()
 
     if (!message) {
       return NextResponse.json({ error: 'Message is required' }, { status: 400 })

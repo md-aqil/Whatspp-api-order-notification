@@ -162,33 +162,46 @@ export async function POST(request) {
         const requestSiteId = body.site_id || request.headers.get('x-wordpress-site-id') || null
         const requestSignature = request.headers.get('x-wordpress-webhook-signature')
         let signatureVerified = false
+        let resolvedUserId = null
 
-        if (requestSiteId && requestSignature) {
-            const connection = await query(
-                `SELECT webhook_secret FROM wordpress_connections
-                 WHERE site_id = ? AND userId = ?
+        if (requestSiteId) {
+            // Find the connection row that owns this site_id (any user)
+            const [connRows] = await query(
+                `SELECT userId, webhook_secret FROM wordpress_connections
+                 WHERE site_id = ?
                  ORDER BY updatedAt IS NULL, updatedAt DESC, createdAt IS NULL, createdAt DESC
                  LIMIT 1`,
-                [requestSiteId, 'default']
+                [requestSiteId]
             )
+            const connRow = connRows?.[0]
 
-            const webhookSecret = connection?.[0]?.[0]?.webhook_secret
-            if (webhookSecret) {
-                const expectedSignature = crypto
-                    .createHmac('sha256', webhookSecret)
-                    .update(rawBody)
-                    .digest('hex')
+            if (connRow) {
+                resolvedUserId = connRow.userId
 
-                if (expectedSignature !== requestSignature) {
-                    return NextResponse.json(
-                        { error: 'Invalid webhook signature' },
-                        { status: 401 }
-                    )
+                if (requestSignature && connRow.webhook_secret) {
+                    const expectedSignature = crypto
+                        .createHmac('sha256', connRow.webhook_secret)
+                        .update(rawBody)
+                        .digest('hex')
+
+                    if (expectedSignature !== requestSignature) {
+                        return NextResponse.json(
+                            { error: 'Invalid webhook signature' },
+                            { status: 401 }
+                        )
+                    }
+                    signatureVerified = true
                 }
-
-                signatureVerified = true
             }
         }
+
+        // Fallback: body.userId → query param → 'default'
+        if (!resolvedUserId) {
+            const url = new URL(request.url)
+            resolvedUserId = body.userId || url.searchParams.get('userId') || 'default'
+        }
+
+        const userId = resolvedUserId
 
         // Check if this is a query-based request (WordPress database lookup)
         const { source_table, source_id, source_mode, field_mapping, event, event_type, ...inlineData } = body
@@ -223,23 +236,25 @@ export async function POST(request) {
 
         // Log the received webhook for debugging
         console.log('Custom webhook received:', {
+            userId,
             eventType,
             context,
             sourceTable: source_table || 'inline',
             sourceId: source_id || 'N/A'
         })
 
-        // Log to webhook_logs table with site identification
+        // Log to webhook_logs table with site identification — scoped to resolved user
         try {
             const siteId = body.site_id || body.siteName || 'unknown'
             const siteName = body.site_name || body.siteName || 'Unknown Site'
             const siteUrl = body.site_url || 'unknown'
 
             await query(
-                `INSERT INTO webhook_logs (id, type, topic, payload, receivedAt, createdAt)
-                 VALUES (?, ?, ?, ?, NOW(), NOW())`,
+                `INSERT INTO webhook_logs (id, userId, type, topic, payload, receivedAt, createdAt)
+                 VALUES (?, ?, ?, ?, ?, NOW(), NOW())`,
                 [
                     `custom_${Date.now()}`,
+                    userId,
                     'custom',
                     eventType,
                     JSON.stringify({
@@ -253,7 +268,7 @@ export async function POST(request) {
                     })
                 ]
             )
-            console.log('Webhook logged with site info:', { siteId, siteName, siteUrl })
+            console.log('Webhook logged with site info:', { userId, siteId, siteName, siteUrl })
 
             if (requestSiteId) {
                 await query(
@@ -272,7 +287,7 @@ export async function POST(request) {
                             last_webhook_payload_source: 'custom-webhook'
                         }),
                         requestSiteId,
-                        'default'
+                        userId
                     ]
                 )
             }
@@ -280,14 +295,14 @@ export async function POST(request) {
             console.error('Failed to log webhook:', logError)
         }
 
-        const matchingAutomations = await getMatchingAutomations(eventType)
+        const matchingAutomations = await getMatchingAutomations(eventType, userId)
         const warnings = []
         let allowAutomationExecution = true
 
         if (eventType.includes('.cart_')) {
             try {
                 const cartEvent = await persistCartRecoveryEvent({
-                    userId: 'default',
+                    userId,
                     eventType,
                     payload: {
                         ...body,
@@ -326,10 +341,10 @@ export async function POST(request) {
             warnings.push(`Missing fields for direct customer delivery: ${validation.missingFields.join(', ')}`)
         }
 
-        // Get user integrations
+        // Get user integrations — scoped to the resolved owner
         const [intRows] = await query(
             `SELECT whatsapp FROM integrations WHERE userId = ? ORDER BY updatedAt IS NULL, updatedAt DESC, id DESC LIMIT 1`,
-            ['default']
+            [userId]
         )
 
         const rawWa = intRows[0]?.whatsapp
@@ -350,14 +365,15 @@ export async function POST(request) {
             })
         }
 
-        // Find and execute automations for this event type
+        // Find and execute automations for this event type — scoped to the resolved owner
         const automationResult = allowAutomationExecution
             ? await executeCustomWebhookAutomations(
                 eventType,
                 context,
                 whatsappConfig,
                 matchingAutomations,
-                body
+                body,
+                userId
             )
             : { processed: 0, matchedAutomations: matchingAutomations.length, warnings: [] }
 
@@ -853,11 +869,11 @@ async function executeAutomationHttpRequest(step, context) {
     }
 }
 
-async function getMatchingAutomations(eventType) {
+async function getMatchingAutomations(eventType, userId = 'default') {
     const [rows] = await query(
         `SELECT id, name, status, steps FROM automations
          WHERE userId = ? AND status = true`,
-        ['default']
+        [userId]
     )
 
     const automations = rows?.map(row => ({
@@ -889,7 +905,7 @@ function validateWebhookContext(eventType, context, automations = []) {
     return { missingFields }
 }
 
-async function executeCustomWebhookAutomations(eventType, context, whatsappConfig, matchingAutomations, payload = {}) {
+async function executeCustomWebhookAutomations(eventType, context, whatsappConfig, matchingAutomations, payload = {}, userId = 'default') {
     let automationJobsCreated = 0
     const warnings = []
 
@@ -924,7 +940,7 @@ async function executeCustomWebhookAutomations(eventType, context, whatsappConfi
                      payload = VALUES(payload),
                      lastInboundAt = NOW(),
                      updatedAt = NOW()`,
-                    [stateId, 'default', automation.id, stateRecipient, 'active', JSON.stringify(automationContext)]
+                    [stateId, userId, automation.id, stateRecipient, 'active', JSON.stringify(automationContext)]
                 )
 
                 let totalDelayMs = 0
@@ -972,7 +988,7 @@ async function executeCustomWebhookAutomations(eventType, context, whatsappConfi
                             [
                                 crypto.randomUUID(),
                                 automation.id,
-                                'default',
+                                userId,
                                 recipient,
                                 interpolateAutomationMessage(step.message, automationContext),
                                 step.template || null,

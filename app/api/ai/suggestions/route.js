@@ -1,11 +1,13 @@
 import { NextResponse } from 'next/server'
 import { generateAISuggestions } from '@/lib/ai'
+import { requireRequestUserId } from '@/lib/request-user'
 import { queryMany } from '@/lib/postgres' // postgres.js is actually mysql
 import { getStoredMessagesByPhone } from '@/lib/db/chat-repository'
 
 export async function POST(req) {
   try {
-    const { phone, userId = 'default' } = await req.json()
+    const userId = requireRequestUserId(req)
+    const { phone } = await req.json()
 
     if (!phone) {
       return NextResponse.json({ error: 'Phone is required' }, { status: 400 })

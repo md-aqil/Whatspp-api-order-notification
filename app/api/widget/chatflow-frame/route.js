@@ -6,7 +6,11 @@ export const dynamic = 'force-dynamic'
 export async function GET(request) {
   try {
     const url = new URL(request.url)
-    const userId = url.searchParams.get('userId') || 'default'
+    const userId = url.searchParams.get('userId')
+    
+    if (!userId || userId === 'default') {
+      return new NextResponse('Missing or invalid userId parameter', { status: 400 })
+    }
 
     const branding = await getBranding(userId)
 
