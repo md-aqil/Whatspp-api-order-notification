@@ -1423,8 +1423,8 @@ async function handleRoute(request, { params }) {
 
       const pool = getPool();
       await pool.execute(
-        "DELETE FROM instagram_accounts WHERE id = ? AND userId = ?",
-        [accountId, authenticatedUserId],
+        "DELETE FROM instagram_accounts WHERE (id = ? OR instagramAccountId = ?) AND userId = ?",
+        [accountId, accountId, authenticatedUserId],
       );
       return handleCORS(NextResponse.json({ success: true }));
     }
@@ -2082,13 +2082,14 @@ async function handleRoute(request, { params }) {
       try {
         const pool = getPool();
         const [igRows] = await pool.execute(
-          "SELECT pageId, instagramAccountId, accountName FROM instagram_accounts WHERE userId = ? LIMIT 1",
+          "SELECT id, pageId, instagramAccountId, accountName FROM instagram_accounts WHERE userId = ? LIMIT 1",
           [currentUserId],
         );
         if (igRows && igRows.length > 0) {
           defaultIntegrations.instagram = {
             connected: true,
             data: {
+              id: igRows[0].id,
               accountName: igRows[0].accountName,
               pageId: igRows[0].pageId,
               instagramAccountId: igRows[0].instagramAccountId,
