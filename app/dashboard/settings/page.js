@@ -532,11 +532,17 @@ useEffect(() => {
         toast.success('Google Sheets connected successfully!')
         window.history.replaceState({}, document.title, window.location.pathname)
         loadIntegrations()
+      } else if (urlParams.get('instagram') === 'connected') {
+        toast.success('Instagram Business connected successfully!')
+        window.history.replaceState({}, document.title, window.location.pathname)
+        loadIntegrations()
       } else if (urlParams.get('error')) {
         const error = urlParams.get('error')
         const detail = urlParams.get('detail')
         if (error.startsWith('google_sheets_')) {
           toast.error(`Failed to connect Google Sheets: ${detail ? `${error} - ${detail}` : error}`)
+        } else if (error.startsWith('instagram_')) {
+          toast.error(`Failed to connect Instagram: ${detail ? `${error} - ${detail}` : error}`)
         } else {
           toast.error(`Failed to connect Zoho: ${detail ? `${error} - ${detail}` : error}`)
         }
