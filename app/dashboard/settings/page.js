@@ -52,6 +52,7 @@ export default function SettingsPage() {
   const [shopifyStatus, setShopifyStatus] = useState('unknown')
   const [lastWebhook, setLastWebhook] = useState(null)
   const [lastWhatsappWebhook, setLastWhatsappWebhook] = useState(null)
+  const [lastInstagramWebhook, setLastInstagramWebhook] = useState(null)
   const [lastCustomWebhook, setLastCustomWebhook] = useState(null)
   const [lastZohoWebhook, setLastZohoWebhook] = useState(null)
   const [zohoWebhooks, setZohoWebhooks] = useState([])
@@ -848,6 +849,7 @@ useEffect(() => {
           if (data.logs && data.logs.length > 0) {
             const shopifyLog = data.logs.find(l => l.type === 'shopify')
             const whatsappLog = data.logs.find(l => l.type === 'whatsapp')
+            const instagramLog = data.logs.find(l => l.type === 'instagram')
             const customLog = data.logs.find(l => l.type === 'custom')
             const zohoLogs = data.logs.filter(l => l.type === 'zoho')
             const zohoLog = zohoLogs[0]
@@ -859,6 +861,11 @@ useEffect(() => {
             } else {
               setLastWhatsappWebhook(null)
             }
+            if (instagramLog) {
+              setLastInstagramWebhook(instagramLog)
+            } else {
+              setLastInstagramWebhook(null)
+            }
             if (customLog) setLastCustomWebhook(customLog)
             if (zohoLog) {
               setLastZohoWebhook(zohoLog)
@@ -866,9 +873,11 @@ useEffect(() => {
             }
           } else {
             setLastWhatsappWebhook(null)
+            setLastInstagramWebhook(null)
           }
         } else {
           setLastWhatsappWebhook(null)
+          setLastInstagramWebhook(null)
         }
       } catch (e) {
         console.log('No webhook logs available')
@@ -1930,6 +1939,26 @@ useEffect(() => {
                       </div>
                     ) : (
                       <div className="p-3 border border-dashed border-[#e5eeff] rounded-xl text-center text-[10px] text-gray-400">Waiting for WhatsApp activity...</div>
+                    )}
+                  </div>
+
+                  {/* Instagram Activity */}
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-[#3d618c] mb-3 flex items-center gap-2">
+                      <Instagram className="w-3 h-3 text-pink-600" /> Latest Instagram
+                    </p>
+                    {lastInstagramWebhook ? (
+                      <div className="bg-[#f8f9ff] p-3 rounded-xl border border-[#e5eeff] space-y-3">
+                        <div className="flex items-center justify-between text-[10px]">
+                          <span className="text-gray-500">{lastInstagramWebhook.topic || lastInstagramWebhook.payload?.object || 'Message/Comment'}</span>
+                          <span className="font-mono text-white bg-[#05345c] px-1.5 py-0.5 rounded">{new Date(lastInstagramWebhook.receivedAt || lastInstagramWebhook.createdAt).toLocaleTimeString()}</span>
+                        </div>
+                        <pre className="max-h-32 overflow-auto p-2 text-[9px] bg-[#05345c] text-[#dff3ff] rounded-lg whitespace-pre-wrap break-words">
+                          {JSON.stringify(lastInstagramWebhook.payload || {}, null, 2)}
+                        </pre>
+                      </div>
+                    ) : (
+                      <div className="p-3 border border-dashed border-[#e5eeff] rounded-xl text-center text-[10px] text-gray-400">Waiting for Instagram activity...</div>
                     )}
                   </div>
 
