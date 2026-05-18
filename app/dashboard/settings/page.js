@@ -1169,6 +1169,9 @@ useEffect(() => {
                         Select your Zoho Data Center region to continue.
                       </DialogDescription>
                     </DialogHeader>
+                    <p className="text-xs text-[#3d618c] leading-relaxed">
+                      Use the same Zoho CRM organization and data center as your API Console app. For India, confirm both crm.zoho.in and api-console.zoho.in are configured, and make sure the app logo is uploaded before OAuth review.
+                    </p>
                     <div className="grid gap-4 py-4">
                       <div className="grid gap-2">
                         <Label htmlFor="zoho-dc">Data Center</Label>

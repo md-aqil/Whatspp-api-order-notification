@@ -72,6 +72,7 @@ import {
   getStoredProducts,
   saveStoredProducts,
 } from "@/lib/db/product-repository";
+import { buildInstagramAutomationEvents } from "@/lib/instagram-webhook";
 import { enqueueAutomationEvent } from "@/lib/queue";
 import { triggerAutomationEvent } from "@/lib/automation-engine";
 import { getGoogleSheetsClient } from "@/lib/google-sheets-api";
@@ -1246,73 +1247,15 @@ async function handleRoute(request, { params }) {
 
         if (body.entry && Array.isArray(body.entry)) {
           const integrations = await getStoredIntegrations(resolvedUserId);
-          for (const entry of body.entry) {
-            // A. Handle Comments (Comment Growth Hack)
-            if (entry.changes && Array.isArray(entry.changes)) {
-              for (const change of entry.changes) {
-                if (change.field === "comments") {
-                  const commentVal = change.value;
-                  if (commentVal && commentVal.id) {
-                    const context = {
-                      commentId: commentVal.id,
-                      commentText: commentVal.text || "",
-                      senderId: commentVal.from?.id,
-                      username: commentVal.from?.username || "customer",
-                      mediaId: commentVal.media?.id,
-                      instagramAccountId: entry.id,
-                      messageText: commentVal.text || "", // mapped for simple keyword matching in flows
-                      platform: "instagram",
-                    };
+          const events = buildInstagramAutomationEvents(body);
 
-                    await triggerAutomationEvent(
-                      "instagram.comment_created",
-                      context,
-                      integrations,
-                      resolvedUserId,
-                    );
-                  }
-                }
-              }
-            }
-
-            // B. Handle DMs
-            if (entry.messaging && Array.isArray(entry.messaging)) {
-              for (const messagingEvent of entry.messaging) {
-                if (messagingEvent.message || messagingEvent.message_edit) {
-                  const senderId = messagingEvent.sender?.id;
-                  const recipientId = messagingEvent.recipient?.id;
-                  const messageText =
-                    messagingEvent.message?.text ||
-                    messagingEvent.message_edit?.text ||
-                    "";
-
-                  // Ignore echo messages (messages sent by the page itself)
-                  if (senderId === igAccountId) {
-                    console.log(
-                      `Ignoring echo message from Instagram account ${igAccountId}`,
-                    );
-                    continue;
-                  }
-
-                  const context = {
-                    senderId,
-                    recipientId,
-                    instagramAccountId: igAccountId,
-                    messageText,
-                    username: messagingEvent.sender?.username || "customer",
-                    timestamp: messagingEvent.timestamp || Date.now(),
-                    platform: "instagram",
-                  };
-
-                  await triggerAutomationEvent(
-                    "instagram.message_received",
-                    context,
-                    integrations,
-                    resolvedUserId,
-                  );
-                }
-              }
-            }
+          for (const { event, context } of events) {
+            await triggerAutomationEvent(
+              event,
+              context,
+              integrations,
+              resolvedUserId,
+            );
           }
         }
 
