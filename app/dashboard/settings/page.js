@@ -1287,7 +1287,7 @@ export default function SettingsPage() {
                           variant="destructive"
                           onClick={() => {
                             setInstagramDialogOpen(false)
-                            handleDisconnectInstagram(integrations.instagram.id)
+                            handleDisconnectInstagram(integrations.instagram.data.id)
                           }}
                         >
                           Disconnect Account

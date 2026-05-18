@@ -494,12 +494,12 @@ function buildCatalogProductContext(products, shopify, whatsapp = null) {
 function getOrderLineItemTitle(item) {
   return String(
     item?.title ||
-      item?.name ||
-      item?.product_title ||
-      item?.productTitle ||
-      item?.variant_title ||
-      item?.variantTitle ||
-      "",
+    item?.name ||
+    item?.product_title ||
+    item?.productTitle ||
+    item?.variant_title ||
+    item?.variantTitle ||
+    "",
   ).trim();
 }
 
@@ -518,18 +518,18 @@ function buildOrderProductContext(order = null) {
 function extractShopifyOrderCartIdentifiers(orderPayload = {}) {
   const checkoutToken = String(
     orderPayload.checkout_token ||
-      orderPayload.checkoutToken ||
-      orderPayload.token ||
-      "",
+    orderPayload.checkoutToken ||
+    orderPayload.token ||
+    "",
   ).trim();
 
   const externalCartId = String(
     orderPayload.checkout_id ||
-      orderPayload.checkoutId ||
-      orderPayload.cart_token ||
-      orderPayload.cartToken ||
-      orderPayload.token ||
-      "",
+    orderPayload.checkoutId ||
+    orderPayload.cart_token ||
+    orderPayload.cartToken ||
+    orderPayload.token ||
+    "",
   ).trim();
 
   return {
@@ -614,19 +614,19 @@ function inferCatalogTemplateVariable(
 
   const fallbacks = prefersOrderProductContext
     ? [
-        "{{customer_name}}",
-        "{{order_number}}",
-        "{{order_product_name}}",
-        "{{tracking_url}}",
-        "{{tracking_number}}",
-      ]
+      "{{customer_name}}",
+      "{{order_number}}",
+      "{{order_product_name}}",
+      "{{tracking_url}}",
+      "{{tracking_number}}",
+    ]
     : [
-        "{{customer_name}}",
-        "{{catalog_link}}",
-        "{{product_name}}",
-        "{{product_link}}",
-        "{{product_price}}",
-      ];
+      "{{customer_name}}",
+      "{{catalog_link}}",
+      "{{product_name}}",
+      "{{product_link}}",
+      "{{product_price}}",
+    ];
   return fallbacks[index] || "{{catalog_link}}";
 }
 
@@ -718,7 +718,7 @@ function templateRequiresProductContext(
   const slots = getTemplateParameterSlots(templateComponents);
   const resolvedVariableOrder = slots.map((slot, index) =>
     typeof templateVariables[index] === "string" &&
-    templateVariables[index].trim()
+      templateVariables[index].trim()
       ? templateVariables[index].trim()
       : inferCatalogTemplateVariable(slot.example, index, templateName),
   );
@@ -750,7 +750,7 @@ function templateRequiresOrderContext(
   const slots = getTemplateParameterSlots(templateComponents);
   const resolvedVariableOrder = slots.map((slot, index) =>
     typeof templateVariables[index] === "string" &&
-    templateVariables[index].trim()
+      templateVariables[index].trim()
       ? templateVariables[index].trim()
       : inferCatalogTemplateVariable(slot.example, index, templateName),
   );
@@ -773,7 +773,7 @@ function buildCatalogTemplatePayload({
   const slots = getTemplateParameterSlots(templateComponents);
   const resolvedVariableOrder = slots.map((slot, index) =>
     typeof templateVariables[index] === "string" &&
-    templateVariables[index].trim()
+      templateVariables[index].trim()
       ? templateVariables[index].trim()
       : inferCatalogTemplateVariable(slot.example, index, templateName),
   );
@@ -945,7 +945,7 @@ async function sendWhatsAppMessage(
     console.error("WhatsApp API Error:", data);
     const metaMessage = mapMetaAccessTokenError(
       data.error?.message ||
-        `WhatsApp API error: ${response.status} ${response.statusText}`,
+      `WhatsApp API error: ${response.status} ${response.statusText}`,
     );
     const unsupportedPost = /unsupported post request/i.test(metaMessage);
     if (unsupportedPost || data.error?.code === 100) {
@@ -2054,6 +2054,10 @@ async function handleRoute(request, { params }) {
 
       try {
         integrations = await getStoredIntegrations(currentUserId);
+        const instagram = await getStoredInstagramAccounts(currentUserId);
+        if (instagram.length > 0) {
+          integrations.instagram = { connected: true, data: instagram[0] };
+        }
       } catch (error) {
         console.error("Failed to load stored integrations:", error);
       }
@@ -2507,7 +2511,7 @@ async function handleRoute(request, { params }) {
         const shouldTriggerAutomation =
           body.triggerAutomation !== false &&
           (eventType !== "shopify.cart_recovered" &&
-          eventType !== "woocommerce.cart_recovered"
+            eventType !== "woocommerce.cart_recovered"
             ? true
             : Boolean(persistedCart?.transitionedToRecovered));
 
@@ -2733,17 +2737,17 @@ async function handleRoute(request, { params }) {
           : [];
         const requiresProducts = templateName
           ? templateRequiresProductContext(
-              selectedTemplateComponents,
-              selectedTemplateVariables,
-              templateName,
-            )
+            selectedTemplateComponents,
+            selectedTemplateVariables,
+            templateName,
+          )
           : false;
         const requiresOrderContext = templateName
           ? templateRequiresOrderContext(
-              selectedTemplateComponents,
-              selectedTemplateVariables,
-              templateName,
-            )
+            selectedTemplateComponents,
+            selectedTemplateVariables,
+            templateName,
+          )
           : false;
 
         if (normalizedProductIds.length > 0 && selectedProducts.length === 0) {
@@ -3073,10 +3077,10 @@ ${productInfo ? `${productInfo}` : ""}Browse our full collection and find someth
               typeof automation.metrics === "string"
                 ? JSON.parse(automation.metrics)
                 : automation.metrics || {
-                    sent: 0,
-                    openRate: 0,
-                    conversions: 0,
-                  };
+                  sent: 0,
+                  openRate: 0,
+                  conversions: 0,
+                };
 
             automationIds.push(automationId);
 
