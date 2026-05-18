@@ -69,7 +69,7 @@ export default function SettingsPage() {
   const [instagramDialogOpen, setInstagramDialogOpen] = useState(false)
   const [zohoDc, setZohoDc] = useState('zoho.com')
   const [user, setUser] = useState(null)
-  
+
   // Google Sheets integration states
   const [googleSheetsDialogOpen, setGoogleSheetsDialogOpen] = useState(false)
   const [spreadsheets, setSpreadsheets] = useState([])
@@ -79,7 +79,7 @@ export default function SettingsPage() {
   const [loadingSpreadsheets, setLoadingSpreadsheets] = useState(false)
   const [loadingSheets, setLoadingSheets] = useState(false)
   const [savingGoogleSheetsSettings, setSavingGoogleSheetsSettings] = useState(false)
-  
+
   // Instagram connection states
   const [igAccountName, setIgAccountName] = useState('')
   const [igPageId, setIgPageId] = useState('')
@@ -88,22 +88,22 @@ export default function SettingsPage() {
   const [savingInstagram, setSavingInstagram] = useState(false)
   const [showManualConfig, setShowManualConfig] = useState(false)
 
-    // Branding state
-    const [branding, setBranding] = useState({
-      businessName: 'Our Business',
-      logoUrl: '',
-      welcomeMessage: 'Hello! How can I help you today?',
-      primaryColor: '#005cc0',
-      fontFamily: 'Inter',
-      position: 'bottom-right',
-      botName: 'Support Bot',
-      enabled: true
-    })
-    const [brandingLoading, setBrandingLoading] = useState(false)
-    const [logoPreview, setLogoPreview] = useState(null)
-    const [logoFile, setLogoFile] = useState(null)
+  // Branding state
+  const [branding, setBranding] = useState({
+    businessName: 'Our Business',
+    logoUrl: '',
+    welcomeMessage: 'Hello! How can I help you today?',
+    primaryColor: '#005cc0',
+    fontFamily: 'Inter',
+    position: 'bottom-right',
+    botName: 'Support Bot',
+    enabled: true
+  })
+  const [brandingLoading, setBrandingLoading] = useState(false)
+  const [logoPreview, setLogoPreview] = useState(null)
+  const [logoFile, setLogoFile] = useState(null)
 
-    const toggleWebhook = (type) => {
+  const toggleWebhook = (type) => {
     setExpandedWebhook(expandedWebhook === type ? null : type)
   }
 
@@ -134,28 +134,28 @@ export default function SettingsPage() {
     site_id: '',
   })
 
-    useEffect(() => {
-      setMounted(true)
-  
-      if (typeof window !== 'undefined' && !process.env.NEXT_PUBLIC_BASE_URL) {
-        setBaseUrl(window.location.origin)
-      }
+  useEffect(() => {
+    setMounted(true)
 
-      if (typeof window !== 'undefined') {
-        const params = new URLSearchParams(window.location.search)
-        if (params.get('connect') === 'instagram') {
-          setInstagramDialogOpen(true)
-        }
-      }
+    if (typeof window !== 'undefined' && !process.env.NEXT_PUBLIC_BASE_URL) {
+      setBaseUrl(window.location.origin)
+    }
 
-      // Fetch user info
-      fetch('/api/auth/me')
-        .then(res => res.ok ? res.json() : null)
-        .then(data => {
-          if (data?.user) setUser(data.user)
-        })
-        .catch(err => console.error('Failed to fetch user:', err))
-    }, [])
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search)
+      if (params.get('connect') === 'instagram') {
+        setInstagramDialogOpen(true)
+      }
+    }
+
+    // Fetch user info
+    fetch('/api/auth/me')
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data?.user) setUser(data.user)
+      })
+      .catch(err => console.error('Failed to fetch user:', err))
+  }, [])
 
   // Registered webhooks state (user-added)
   const [registeredWebhooks, setRegisteredWebhooks] = useState([])
@@ -501,11 +501,11 @@ export default function SettingsPage() {
   }
 
   // Load registered webhooks on mount
-useEffect(() => {
-     loadBranding()
-     loadRegisteredWebhooks()
-     loadWordPressConnections()
-   }, [])
+  useEffect(() => {
+    loadBranding()
+    loadRegisteredWebhooks()
+    loadWordPressConnections()
+  }, [])
 
   // Integration state
   const [integrations, setIntegrations] = useState({
@@ -519,7 +519,7 @@ useEffect(() => {
   // Load integrations status on mount
   useEffect(() => {
     loadIntegrations()
-    
+
     // Handle Zoho OAuth status from URL
     if (typeof window !== 'undefined') {
       const urlParams = new URLSearchParams(window.location.search)
@@ -668,16 +668,16 @@ useEffect(() => {
       })
       const payload = await response.json()
 
-        if (response.ok) {
-          await loadIntegrations()
-          toast.success(`${type.charAt(0).toUpperCase() + type.slice(1)} integration saved successfully!`)
-          
-          // Close the corresponding dialog
-          if (type === 'whatsapp') setWhatsappDialogOpen(false)
-          if (type === 'shopify') setShopifyDialogOpen(false)
-          if (type === 'stripe') setStripeDialogOpen(false)
+      if (response.ok) {
+        await loadIntegrations()
+        toast.success(`${type.charAt(0).toUpperCase() + type.slice(1)} integration saved successfully!`)
 
-          if (payload.warning) {
+        // Close the corresponding dialog
+        if (type === 'whatsapp') setWhatsappDialogOpen(false)
+        if (type === 'shopify') setShopifyDialogOpen(false)
+        if (type === 'stripe') setStripeDialogOpen(false)
+
+        if (payload.warning) {
           toast.warning(payload.warning)
         }
       } else {
@@ -696,7 +696,7 @@ useEffect(() => {
       toast.error('All fields are required to connect your Instagram Account.')
       return
     }
-    
+
     try {
       setSavingInstagram(true)
       const res = await fetch('/api/integrations/instagram/accounts', {
@@ -984,12 +984,12 @@ useEffect(() => {
           <TabsTrigger value="webhooks" className="rounded-lg px-6 py-2.5 font-bold data-[state=active]:bg-white data-[state=active]:text-[#005cc0]">
             Webhooks & API
           </TabsTrigger>
-<TabsTrigger value="preferences" className="rounded-lg px-6 py-2.5 font-bold data-[state=active]:bg-white data-[state=active]:text-[#005cc0]">
-             Preferences
-           </TabsTrigger>
-           <TabsTrigger value="branding" className="rounded-lg px-6 py-2.5 font-bold data-[state=active]:bg-white data-[state=active]:text-[#005cc0]">
-             Branding
-           </TabsTrigger>
+          <TabsTrigger value="preferences" className="rounded-lg px-6 py-2.5 font-bold data-[state=active]:bg-white data-[state=active]:text-[#005cc0]">
+            Preferences
+          </TabsTrigger>
+          <TabsTrigger value="branding" className="rounded-lg px-6 py-2.5 font-bold data-[state=active]:bg-white data-[state=active]:text-[#005cc0]">
+            Branding
+          </TabsTrigger>
         </TabsList>
 
         {/* Integrations Tab */}
@@ -1127,7 +1127,7 @@ useEffect(() => {
               {/* Zoho CRM */}
               <Dialog open={zohoDialogOpen} onOpenChange={setZohoDialogOpen}>
                 <DialogTrigger asChild>
-                  <div 
+                  <div
                     className="flex flex-col gap-4 cursor-pointer"
                     onClick={(e) => {
                       if (integrations.zoho.connected) {
@@ -1175,8 +1175,8 @@ useEffect(() => {
                     <div className="grid gap-4 py-4">
                       <div className="grid gap-2">
                         <Label htmlFor="zoho-dc">Data Center</Label>
-                        <select 
-                          id="zoho-dc" 
+                        <select
+                          id="zoho-dc"
                           className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                           value={zohoDc}
                           onChange={(e) => setZohoDc(e.target.value)}
@@ -1244,14 +1244,14 @@ useEffect(() => {
                       </span>
                       <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">Need help setting up?</span>
                     </div>
-                    <a 
+                    <a
                       href="/dashboard/docs/instagram"
                       className="text-xs font-black text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 transition-colors flex items-center gap-1"
                     >
                       Step-by-Step Guide ➔
                     </a>
                   </div>
-                  
+
                   {integrations.instagram?.connected ? (
                     <div className="space-y-4">
                       <div className="p-4 bg-green-50/50 border border-green-100 rounded-xl space-y-2">
@@ -1283,11 +1283,11 @@ useEffect(() => {
                         <Button variant="outline" onClick={() => setInstagramDialogOpen(false)}>
                           Close
                         </Button>
-                        <Button 
+                        <Button
                           variant="destructive"
                           onClick={() => {
                             setInstagramDialogOpen(false)
-                            handleDisconnectInstagram(integrations.instagram.data.instagramAccountId)
+                            handleDisconnectInstagram(integrations.instagram.id)
                           }}
                         >
                           Disconnect Account
@@ -1304,19 +1304,19 @@ useEffect(() => {
                         <p className="text-xs text-blue-700 leading-relaxed">
                           Securely link your Instagram Professional Account and Facebook Page in just a single click. No developer setups required.
                         </p>
-                        <Button 
+                        <Button
                           className="w-full bg-[#1877F2] hover:bg-[#166FE5] text-white font-bold flex items-center justify-center gap-2.5 py-6 shadow-sm rounded-xl transition-all"
                           onClick={() => window.location.href = '/api/integrations/instagram/auth'}
                         >
                           <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24" style={{ width: '16px', height: '16px' }}>
-                            <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
+                            <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" />
                           </svg>
                           Connect with Facebook
                         </Button>
                       </div>
 
                       <div className="pt-2 text-center">
-                        <button 
+                        <button
                           type="button"
                           onClick={() => setShowManualConfig(!showManualConfig)}
                           className="text-xs text-gray-500 hover:text-gray-800 transition-colors font-medium underline underline-offset-4"
@@ -1381,7 +1381,7 @@ useEffect(() => {
                             <Button variant="outline" onClick={() => setInstagramDialogOpen(false)} disabled={savingInstagram}>
                               Cancel
                             </Button>
-                            <Button 
+                            <Button
                               onClick={handleSaveInstagram}
                               disabled={savingInstagram}
                               className="bg-pink-600 hover:bg-pink-700 text-white font-bold"
@@ -1448,7 +1448,7 @@ useEffect(() => {
                       Export conversation leads and customer events automatically to your spreadsheets.
                     </DialogDescription>
                   </DialogHeader>
-                  
+
                   {integrations.googleSheets?.connected ? (
                     <div className="space-y-4">
                       <div className="p-4 bg-green-50/50 border border-green-100 rounded-xl space-y-2">
@@ -1512,7 +1512,7 @@ useEffect(() => {
                       </div>
 
                       <div className="pt-6 flex justify-between gap-3 border-t border-gray-100">
-                        <Button 
+                        <Button
                           variant="destructive"
                           onClick={() => {
                             setGoogleSheetsDialogOpen(false)
@@ -1525,7 +1525,7 @@ useEffect(() => {
                           <Button variant="outline" onClick={() => setGoogleSheetsDialogOpen(false)}>
                             Cancel
                           </Button>
-                          <Button 
+                          <Button
                             onClick={saveGoogleSheetsSettings}
                             disabled={savingGoogleSheetsSettings}
                             className="bg-green-700 hover:bg-green-800 text-white font-bold"
@@ -1545,15 +1545,15 @@ useEffect(() => {
                         <p className="text-xs text-green-700 leading-relaxed">
                           Link your Google account and send incoming customer profiles, contact numbers, order info, and conversation histories directly to your spreadsheets in real-time.
                         </p>
-                        <Button 
+                        <Button
                           className="w-full bg-[#0F9D58] hover:bg-[#0B8043] text-white font-bold flex items-center justify-center gap-2.5 py-6 shadow-sm rounded-xl transition-all"
                           onClick={() => window.location.href = '/api/integrations/google/auth'}
                         >
                           <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24" style={{ width: '16px', height: '16px' }}>
-                            <path d="M21.356 11.1H12v2.7h5.385c-.233 1.222-1.002 2.257-2.185 3.003V18.6h3.535c2.068-1.9 3.265-4.7 3.265-8 0-.54-.045-1.07-.129-1.5z" fill="#4285F4"/>
-                            <path d="M12 20.6c2.7 0 4.96-.9 6.615-2.457l-3.535-2.733c-.98.656-2.233 1.05-3.08 1.05-2.915 0-5.385-1.97-6.265-4.6H1.547v2.8C3.256 17.8 7.356 20.6 12 20.6z" fill="#34A853"/>
-                            <path d="M5.735 11.86c-.223-.666-.35-1.378-.35-2.11s.127-1.444.35-2.11V4.84H1.547A11.96 11.96 0 0 0 0 9.75c0 1.777.389 3.466 1.082 4.978l4.653-2.868z" fill="#FBBC05"/>
-                            <path d="M12 4.45c1.478 0 2.805.51 3.85 1.503l2.892-2.892C17 1.344 14.7 0 12 0 7.356 0 3.256 2.8 1.547 5.95l4.188 2.8C6.615 6.13 9.085 4.45 12 4.45z" fill="#EA4335"/>
+                            <path d="M21.356 11.1H12v2.7h5.385c-.233 1.222-1.002 2.257-2.185 3.003V18.6h3.535c2.068-1.9 3.265-4.7 3.265-8 0-.54-.045-1.07-.129-1.5z" fill="#4285F4" />
+                            <path d="M12 20.6c2.7 0 4.96-.9 6.615-2.457l-3.535-2.733c-.98.656-2.233 1.05-3.08 1.05-2.915 0-5.385-1.97-6.265-4.6H1.547v2.8C3.256 17.8 7.356 20.6 12 20.6z" fill="#34A853" />
+                            <path d="M5.735 11.86c-.223-.666-.35-1.378-.35-2.11s.127-1.444.35-2.11V4.84H1.547A11.96 11.96 0 0 0 0 9.75c0 1.777.389 3.466 1.082 4.978l4.653-2.868z" fill="#FBBC05" />
+                            <path d="M12 4.45c1.478 0 2.805.51 3.85 1.503l2.892-2.892C17 1.344 14.7 0 12 0 7.356 0 3.256 2.8 1.547 5.95l4.188 2.8C6.615 6.13 9.085 4.45 12 4.45z" fill="#EA4335" />
                           </svg>
                           Connect Google Sheets
                         </Button>
@@ -1923,7 +1923,7 @@ useEffect(() => {
                 <h3 className="text-xl font-bold font-headline mb-6 flex items-center gap-2">
                   <Monitor className="w-5 h-5 text-[#005cc0]" /> Live Feed
                 </h3>
-                
+
                 <div className="space-y-8">
                   {/* WhatsApp Activity */}
                   <div>
@@ -2014,148 +2014,148 @@ useEffect(() => {
           </div>
         </TabsContent>
 
-{/* Branding Tab */}
-         <TabsContent value="branding" className="space-y-8 mt-0 focus-visible:outline-none">
-           <div className="bg-white p-8 rounded-2xl shadow-sm border-none ring-1 ring-black/[0.03] max-w-2xl">
-             <h3 className="text-xl font-bold font-headline mb-2 flex items-center gap-3">
-               <Palette className="w-6 h-6 text-[#005cc0]" />
-               Chatbot Branding
-             </h3>
-             <p className="text-sm text-[#3d618c] mb-8">Customize your chatbot's appearance, logo, and messaging to match your brand identity.</p>
+        {/* Branding Tab */}
+        <TabsContent value="branding" className="space-y-8 mt-0 focus-visible:outline-none">
+          <div className="bg-white p-8 rounded-2xl shadow-sm border-none ring-1 ring-black/[0.03] max-w-2xl">
+            <h3 className="text-xl font-bold font-headline mb-2 flex items-center gap-3">
+              <Palette className="w-6 h-6 text-[#005cc0]" />
+              Chatbot Branding
+            </h3>
+            <p className="text-sm text-[#3d618c] mb-8">Customize your chatbot's appearance, logo, and messaging to match your brand identity.</p>
 
-             <div className="space-y-8">
-               {/* Logo Upload */}
-               <div className="space-y-3">
-                 <Label className="font-bold text-sm">Bot Logo</Label>
-                 <div className="flex items-center gap-6">
-                   <div className="relative w-20 h-20 rounded-2xl overflow-hidden bg-[#f8f9ff] border border-[#e5eeff] flex items-center justify-center flex-shrink-0 group">
-                     {logoPreview || branding.logoUrl ? (
-                       <img
-                         src={logoPreview || branding.logoUrl}
-                         alt="Brand logo"
-                         className="w-full h-full object-contain"
-                       />
-                     ) : (
-                       <ImageIcon className="w-8 h-8 text-[#3d618c]" />
-                     )}
-                     <label className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer flex items-center justify-center rounded-2xl">
-                       <span className="text-white text-xs font-bold">Change</span>
-                       <input
-                         type="file"
-                         accept="image/jpeg,image/png,image/webp,image/svg+xml"
-                         className="hidden"
-                         onChange={handleLogoUpload}
-                       />
-                     </label>
-                   </div>
-                   <div className="text-[11px] text-[#3d618c] space-y-1">
-                     <p>Upload your company logo or</p>
-                     <p className="font-medium">brand icon (JPG, PNG, WebP, SVG)</p>
-                     <p className="text-[10px]">Max 2MB</p>
-                   </div>
-                 </div>
-               </div>
+            <div className="space-y-8">
+              {/* Logo Upload */}
+              <div className="space-y-3">
+                <Label className="font-bold text-sm">Bot Logo</Label>
+                <div className="flex items-center gap-6">
+                  <div className="relative w-20 h-20 rounded-2xl overflow-hidden bg-[#f8f9ff] border border-[#e5eeff] flex items-center justify-center flex-shrink-0 group">
+                    {logoPreview || branding.logoUrl ? (
+                      <img
+                        src={logoPreview || branding.logoUrl}
+                        alt="Brand logo"
+                        className="w-full h-full object-contain"
+                      />
+                    ) : (
+                      <ImageIcon className="w-8 h-8 text-[#3d618c]" />
+                    )}
+                    <label className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer flex items-center justify-center rounded-2xl">
+                      <span className="text-white text-xs font-bold">Change</span>
+                      <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,image/svg+xml"
+                        className="hidden"
+                        onChange={handleLogoUpload}
+                      />
+                    </label>
+                  </div>
+                  <div className="text-[11px] text-[#3d618c] space-y-1">
+                    <p>Upload your company logo or</p>
+                    <p className="font-medium">brand icon (JPG, PNG, WebP, SVG)</p>
+                    <p className="text-[10px]">Max 2MB</p>
+                  </div>
+                </div>
+              </div>
 
-               {/* Business Name */}
-               <div className="grid grid-cols-2 gap-6">
-                 <div className="space-y-2">
-                   <Label htmlFor="branding-businessName" className="font-bold text-sm">Business Name</Label>
-                   <Input
-                     id="branding-businessName"
-                     placeholder="Your business name"
-                     value={branding.businessName}
-                     onChange={(e) => setBranding(prev => ({ ...prev, businessName: e.target.value }))}
-                   />
-                 </div>
-                 <div className="space-y-2">
-                   <Label htmlFor="branding-botName" className="font-bold text-sm">Bot Name</Label>
-                   <Input
-                     id="branding-botName"
-                     placeholder="e.g. Support Assistant"
-                     value={branding.botName}
-                     onChange={(e) => setBranding(prev => ({ ...prev, botName: e.target.value }))}
-                   />
-                 </div>
-               </div>
+              {/* Business Name */}
+              <div className="grid grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <Label htmlFor="branding-businessName" className="font-bold text-sm">Business Name</Label>
+                  <Input
+                    id="branding-businessName"
+                    placeholder="Your business name"
+                    value={branding.businessName}
+                    onChange={(e) => setBranding(prev => ({ ...prev, businessName: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="branding-botName" className="font-bold text-sm">Bot Name</Label>
+                  <Input
+                    id="branding-botName"
+                    placeholder="e.g. Support Assistant"
+                    value={branding.botName}
+                    onChange={(e) => setBranding(prev => ({ ...prev, botName: e.target.value }))}
+                  />
+                </div>
+              </div>
 
-               {/* Welcome Message */}
-               <div className="space-y-2">
-                 <Label htmlFor="branding-welcomeMessage" className="font-bold text-sm">Welcome Message</Label>
-                 <textarea
-                   id="branding-welcomeMessage"
-                   rows={3}
-                   placeholder="Hello! How can I help you today?"
-                   value={branding.welcomeMessage}
-                   onChange={(e) => setBranding(prev => ({ ...prev, welcomeMessage: e.target.value }))}
-                   className="w-full resize-none border border-gray-200 bg-white rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-offset-0 focus:ring-[#005cc0]/30 text-sm"
-                 />
-               </div>
+              {/* Welcome Message */}
+              <div className="space-y-2">
+                <Label htmlFor="branding-welcomeMessage" className="font-bold text-sm">Welcome Message</Label>
+                <textarea
+                  id="branding-welcomeMessage"
+                  rows={3}
+                  placeholder="Hello! How can I help you today?"
+                  value={branding.welcomeMessage}
+                  onChange={(e) => setBranding(prev => ({ ...prev, welcomeMessage: e.target.value }))}
+                  className="w-full resize-none border border-gray-200 bg-white rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-offset-0 focus:ring-[#005cc0]/30 text-sm"
+                />
+              </div>
 
-               {/* Primary Color & Position */}
-               <div className="grid grid-cols-2 gap-6">
-                 <div className="space-y-2">
-                   <Label className="font-bold text-sm">Primary Color</Label>
-                   <div className="flex items-center gap-3">
-                     <input
-                       type="color"
-                       value={branding.primaryColor}
-                       onChange={(e) => setBranding(prev => ({ ...prev, primaryColor: e.target.value }))}
-                       className="w-12 h-10 rounded-lg cursor-pointer border border-gray-200 p-0.5"
-                     />
-                     <code className="text-sm font-mono text-gray-600">{branding.primaryColor}</code>
-                   </div>
-                 </div>
-                 <div className="space-y-2">
-                   <Label htmlFor="branding-position" className="font-bold text-sm">Widget Position</Label>
-                   <select
-                     id="branding-position"
-                     value={branding.position}
-                     onChange={(e) => setBranding(prev => ({ ...prev, position: e.target.value }))}
-                     className="w-full border border-gray-200 bg-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-offset-0 focus:ring-[#005cc0]/30"
-                   >
-                     <option value="bottom-right">Bottom Right</option>
-                     <option value="bottom-left">Bottom Left</option>
-                   </select>
-                 </div>
-               </div>
+              {/* Primary Color & Position */}
+              <div className="grid grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <Label className="font-bold text-sm">Primary Color</Label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="color"
+                      value={branding.primaryColor}
+                      onChange={(e) => setBranding(prev => ({ ...prev, primaryColor: e.target.value }))}
+                      className="w-12 h-10 rounded-lg cursor-pointer border border-gray-200 p-0.5"
+                    />
+                    <code className="text-sm font-mono text-gray-600">{branding.primaryColor}</code>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="branding-position" className="font-bold text-sm">Widget Position</Label>
+                  <select
+                    id="branding-position"
+                    value={branding.position}
+                    onChange={(e) => setBranding(prev => ({ ...prev, position: e.target.value }))}
+                    className="w-full border border-gray-200 bg-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-offset-0 focus:ring-[#005cc0]/30"
+                  >
+                    <option value="bottom-right">Bottom Right</option>
+                    <option value="bottom-left">Bottom Left</option>
+                  </select>
+                </div>
+              </div>
 
-               {/* Enable/Disable */}
-               <div className="flex items-center justify-between p-4 bg-[#f8f9ff] rounded-xl">
-                 <div>
-                   <p className="font-bold">Enable Chatbot Widget</p>
-                   <p className="text-xs text-[#3d618c] mt-0.5">Toggle the live chat widget on your website</p>
-                 </div>
-                 <button
-                   type="button"
-                   onClick={() => setBranding(prev => ({ ...prev, enabled: !prev.enabled }))}
-                   className={`w-12 h-7 rounded-full relative p-1 transition-colors ${branding.enabled ? 'bg-[#005cc0]' : 'bg-[#d2e4ff]'}`}
-                 >
-                   <div className={`w-5 h-5 bg-white rounded-full shadow-sm transition-transform ${branding.enabled ? 'translate-x-5' : 'translate-x-0'}`} />
-                 </button>
-               </div>
+              {/* Enable/Disable */}
+              <div className="flex items-center justify-between p-4 bg-[#f8f9ff] rounded-xl">
+                <div>
+                  <p className="font-bold">Enable Chatbot Widget</p>
+                  <p className="text-xs text-[#3d618c] mt-0.5">Toggle the live chat widget on your website</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setBranding(prev => ({ ...prev, enabled: !prev.enabled }))}
+                  className={`w-12 h-7 rounded-full relative p-1 transition-colors ${branding.enabled ? 'bg-[#005cc0]' : 'bg-[#d2e4ff]'}`}
+                >
+                  <div className={`w-5 h-5 bg-white rounded-full shadow-sm transition-transform ${branding.enabled ? 'translate-x-5' : 'translate-x-0'}`} />
+                </button>
+              </div>
 
-               {/* Save Button */}
-               <div className="pt-4 border-t border-gray-100">
-                 <Button onClick={handleSaveBranding} disabled={brandingLoading} className="w-full">
-                   {brandingLoading ? (
-                     <>
-                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                       Saving...
-                     </>
-                   ) : (
-                     <>
-                       <Save className="w-4 h-4 mr-2" />
-                       Save Branding
-                     </>
-                   )}
-                 </Button>
-               </div>
-             </div>
-           </div>
-         </TabsContent>
+              {/* Save Button */}
+              <div className="pt-4 border-t border-gray-100">
+                <Button onClick={handleSaveBranding} disabled={brandingLoading} className="w-full">
+                  {brandingLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-4 h-4 mr-2" />
+                      Save Branding
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </TabsContent>
 
-         {/* Preferences Tab */}
-         <TabsContent value="preferences" className="space-y-8 mt-0 focus-visible:outline-none">
+        {/* Preferences Tab */}
+        <TabsContent value="preferences" className="space-y-8 mt-0 focus-visible:outline-none">
           <div className="bg-white p-8 rounded-2xl shadow-sm border-none ring-1 ring-black/[0.03] max-w-2xl">
             <h3 className="text-xl font-bold font-headline mb-8">App Preferences</h3>
             <div className="space-y-6">
@@ -2294,7 +2294,7 @@ function IntegrationForm({ type, integration, loading, user, onSave }) {
               <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
               <span className="text-xs font-black uppercase tracking-widest text-emerald-700">Meta Webhook Setup</span>
             </div>
-            
+
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label className="text-emerald-900 font-bold">Callback URL</Label>
