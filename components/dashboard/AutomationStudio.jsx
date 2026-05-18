@@ -478,6 +478,36 @@ export function AutomationStudio() {
   const [loadingSpreadsheets, setLoadingSpreadsheets] = useState(false)
   const [loadingSheets, setLoadingSheets] = useState(false)
 
+  const active = useMemo(() => automations.find(a => a.id === activeId) || automations[0], [activeId, automations])
+  const sel = active?.steps.find(s => s.id === selId) || active?.steps[0]
+
+  const persist = useCallback(async (list = latestAutomationsRef.current, msg = '', options = {}) => {
+    try {
+      const payload = sortAutomations(list).map(a => ({ ...a, steps: reorder(a) }))
+      if (!options.silent) {
+        setSaveState('saving')
+      }
+      console.log('Saving automations:', payload.map(a => ({ id: a.id, stepsCount: a.steps?.length, hasOptions: a.steps?.some(s => s.type === 'interactive' && s.options) })))
+      const r = await fetch('/api/automations', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ automations: payload }),
+        keepalive: options.keepalive === true
+      })
+      if (!r.ok) throw new Error('Save failed')
+      if (!options.silent) {
+        setSaveState('saved')
+        setLastSavedAt(Date.now())
+      }
+      if (msg) toast.success(msg)
+    } catch {
+      if (!options.silent) {
+        setSaveState('error')
+        toast.error('Failed to save')
+      }
+    }
+  }, [])
+
   useEffect(() => {
     if (sel?.type === 'google_sheets_action') {
       setLoadingSpreadsheets(true)
@@ -599,32 +629,6 @@ export function AutomationStudio() {
   }, [automations, hydrated])
 
   // Auto-set trigger category based on current event
-  const persist = useCallback(async (list = latestAutomationsRef.current, msg = '', options = {}) => {
-    try {
-      const payload = sortAutomations(list).map(a => ({ ...a, steps: reorder(a) }))
-      if (!options.silent) {
-        setSaveState('saving')
-      }
-      console.log('Saving automations:', payload.map(a => ({ id: a.id, stepsCount: a.steps?.length, hasOptions: a.steps?.some(s => s.type === 'interactive' && s.options) })))
-      const r = await fetch('/api/automations', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ automations: payload }),
-        keepalive: options.keepalive === true
-      })
-      if (!r.ok) throw new Error('Save failed')
-      if (!options.silent) {
-        setSaveState('saved')
-        setLastSavedAt(Date.now())
-      }
-      if (msg) toast.success(msg)
-    } catch {
-      if (!options.silent) {
-        setSaveState('error')
-        toast.error('Failed to save')
-      }
-    }
-  }, [])
 
   useEffect(() => {
     function flushPendingAutomations() {
@@ -648,8 +652,6 @@ export function AutomationStudio() {
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
   }, [hydrated, persist, saveState])
-
-  const active = useMemo(() => automations.find(a => a.id === activeId) || automations[0], [activeId, automations])
 
   const handleExport = useCallback(() => {
     if (!active) return
@@ -695,7 +697,6 @@ export function AutomationStudio() {
   }, [normalize, sortAutomations])
   const activeDef = !!active && isDefault(active.id) && active.source !== 'Custom'
   const activeDefaultTargetId = getDefaultTargetIdForAutomation(active)
-  const sel = active?.steps.find(s => s.id === selId) || active?.steps[0]
   const selLocked = false
   const msgLocked = false
   const tplNames = templates.map(t => t.name)
