@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import Link from 'next/link'
-import { BellRing, CheckCircle2, Clock3, CopyPlus, Copy, Database, HelpCircle, History, MessageSquareText, PackageCheck, PlayCircle, Plus, Settings, Sparkles, Square, Trash2, Truck, Workflow, X, Zap, ZoomIn, ZoomOut, Maximize2, ArrowLeft, Download, Upload, LayoutGrid, MousePointer2, Search, Rocket, Activity, ChevronRight, ArrowRight, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, ToggleLeft, Loader2 } from 'lucide-react'
+import { BellRing, CheckCircle2, Clock3, CopyPlus, Copy, Database, HelpCircle, History, MessageSquareText, PackageCheck, PlayCircle, Plus, Settings, Sparkles, Square, Trash2, Truck, Workflow, X, Zap, ZoomIn, ZoomOut, Maximize2, ArrowLeft, Download, Upload, LayoutGrid, MousePointer2, Search, Rocket, Activity, ChevronRight, ArrowRight, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, ToggleLeft, Loader2, Instagram } from 'lucide-react'
 import { toast, Toaster } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -38,7 +38,8 @@ const BLOCKS = [
   { type: 'test', tab: 'Triggers', label: 'Test Node', icon: PlayCircle, color: 'pink', description: 'Manual test with latest order or dummy data', defaults: { title: 'Test Flow', event: 'shopify.order_created', testSource: 'latest_order', description: 'Run this flow with latest order data or dummy values' } },
   { type: 'trigger', tab: 'Triggers', label: 'Integration Trigger', icon: BellRing, color: 'violet', description: 'Start from a commerce event', defaults: { title: 'Order Trigger', event: 'shopify.order_created', description: 'When an order is placed' } },
   { type: 'delay', tab: 'Actions', label: 'Delay', icon: Clock3, color: 'blue', description: 'Pause before next action', defaults: { title: 'Wait 2 Hours', delayValue: '2', delayUnit: 'hours', description: 'Fixed time offset' } },
-  { type: 'message', tab: 'Actions', label: 'Send Message', icon: MessageSquareText, color: 'emerald', description: 'Send a reply message', defaults: { title: 'Send Reply', template: '', templateLanguage: '', message: 'Hello {{customer_name}}, thank you for reaching out! ✨', description: 'Auto response message', recipientMode: 'customer', recipientNumber: '', variableMappings: [] } },
+  { type: 'message', tab: 'Actions', label: 'WhatsApp Message', icon: MessageSquareText, color: 'emerald', description: 'Send a WhatsApp reply message', defaults: { title: 'Send Reply', template: '', templateLanguage: '', message: 'Hello {{customer_name}}, thank you for reaching out! ✨', description: 'Auto response message', recipientMode: 'customer', recipientNumber: '', variableMappings: [] } },
+  { type: 'instagram_message', tab: 'Actions', label: 'Instagram Message', icon: Instagram, color: 'pink', description: 'Send an Instagram DM reply', defaults: { title: 'Instagram DM', channel: 'instagram', message: 'Hello {{customer_name}}, thank you for reaching out on Instagram! ✨', description: 'Auto response message via Instagram DM', recipientMode: 'customer', recipientNumber: '' } },
   { type: 'condition', tab: 'Actions', label: 'Condition', icon: Workflow, color: 'amber', description: 'Branch logic on a rule', defaults: { title: 'Order > $100', rule: 'total_price > 100', description: 'Conditional branch' } },
   { type: 'interactive', tab: 'Actions', label: 'Interactive Menu', icon: HelpCircle, color: 'fuchsia', description: 'Send a menu with reply options', defaults: { title: 'Auto Reply Menu', message: 'Hello {{customer_name}}, welcome! 👋 We\'re here to provide you with a premium experience. How can we assist you today? Please select an option below:', options: [{ id: 'opt0', label: '📦 Order Status' }, { id: 'opt1', label: '💬 Talk to Specialist' }], description: 'Professional interactive menu' } },
   { type: 'ai_reply', tab: 'Actions', label: 'AI Assistant', icon: Sparkles, color: 'indigo', description: 'Natural AI response using knowledge base', defaults: { title: 'AI Assistant', description: 'AI-powered reply', recipientMode: 'customer' } },
@@ -422,11 +423,12 @@ function validateAutomationFlow(automation) {
     }
 
     if (step.type === 'message') {
+      const isIg = step.channel === 'instagram'
       if (!step.template && !String(step.message || '').trim()) {
-        pushIssue('errors', step.id, 'Add a message body or choose a WhatsApp template.')
+        pushIssue('errors', step.id, isIg ? 'Add a message body.' : 'Add a message body or choose a WhatsApp template.')
       }
       if (step.recipientMode === 'fixed_number' && !digitsOnly(step.recipientNumber)) {
-        pushIssue('errors', step.id, 'Enter a valid fixed WhatsApp number.')
+        pushIssue('errors', step.id, isIg ? 'Enter a valid Instagram username or channel.' : 'Enter a valid fixed WhatsApp number.')
       }
     }
   })
@@ -730,9 +732,12 @@ export function AutomationStudio() {
   const selectedTemplateSlots = selTpl
     ? getAutomationTemplateParameterSlots(selTpl)
     : getAutomationTemplateParameterSlots({ components: sel?.templateComponents || [] })
-  const defaultRecipientLabel = activeTriggerEvent === 'whatsapp.message_received' ? 'Message sender' : 'Order customer'
+  const isInstagramFlow = activeTriggerEvent?.startsWith('instagram.') || active?.steps?.some(s => s.channel === 'instagram')
+  const defaultRecipientLabel = (activeTriggerEvent === 'whatsapp.message_received' || activeTriggerEvent?.startsWith('instagram.')) ? 'Message sender' : 'Order customer'
   const defaultRecipientDescription = activeTriggerEvent === 'whatsapp.message_received'
     ? 'Send the reply back to the customer who sent the WhatsApp message.'
+    : activeTriggerEvent?.startsWith('instagram.')
+    ? 'Send the reply back to the user who sent the Instagram message or comment.'
     : 'Send the message to the customer tied to the order event.'
   const activeTestNode = useMemo(() => {
     if (!active) return null
@@ -881,7 +886,7 @@ export function AutomationStudio() {
       : { x: Math.round(200 + Math.random() * 300), y: Math.round(200 + Math.random() * 200) }
     const baseStep = { 
       id: uid('step'), 
-      type: bl.type, 
+      type: bl.type === 'instagram_message' ? 'message' : bl.type, 
       ...Object.fromEntries(
         Object.entries(bl.defaults || {}).map(([k, v]) => [
           k, 
@@ -1777,8 +1782,17 @@ export function AutomationStudio() {
             </svg>
 
 	            {active?.steps.map(step => {
-	              const Icon = getBlock(step.type).icon
-	              const c = COLORS[step.type] || COLORS.message
+	              const isInstagramNode = step.channel === 'instagram' || (step.type === 'trigger' && step.event?.startsWith('instagram.'))
+	              const Icon = isInstagramNode ? Instagram : (getBlock(step.type).icon)
+	              const c = isInstagramNode ? {
+	                border: 'border-pink-500/50',
+	                bg: 'bg-[#1c0f18]',
+	                hdr: 'bg-pink-600/20',
+	                icon: 'bg-pink-600/30 text-pink-300',
+	                iconBg: 'bg-pink-600/20',
+	                lbl: 'text-pink-300',
+	                dot: 'bg-pink-500'
+	              } : (COLORS[step.type] || COLORS.message)
 	              const isSel = sel?.id === step.id
 	              const isNew = newId === step.id
 	              const stepValidation = activeValidation.stepIssues[step.id]
@@ -1808,7 +1822,7 @@ export function AutomationStudio() {
                       </div>
                       <div>
                         <h3 className="text-xs font-bold text-white leading-none">{step.title}</h3>
-                        <p className="text-[9px] text-white/40 mt-1 font-medium">{getBlock(step.type).label}</p>
+                        <p className="text-[9px] text-white/40 mt-1 font-medium">{isInstagramNode && step.type === 'message' ? 'Instagram DM' : (getBlock(step.type).label)}</p>
                       </div>
                     </div>
                     <button 
@@ -1942,7 +1956,7 @@ export function AutomationStudio() {
 	                  )}
 	                  {sel.type !== 'message' && (
 	                    <div className="rounded-xl border border-white/[0.05] bg-white/[0.02] px-3 py-2.5 text-[11px] text-white/35">
-	                      Select a <span className="font-semibold text-white/60">WhatsApp</span> node to choose whether it sends to the {defaultRecipientLabel.toLowerCase()} or a fixed number.
+	                      Select {isInstagramFlow ? 'an' : 'a'} <span className="font-semibold text-white/60">{isInstagramFlow ? 'Instagram' : 'WhatsApp'}</span> node to choose whether it sends to the {defaultRecipientLabel.toLowerCase()} or a fixed number.
                     </div>
                   )}
                   <div className="space-y-1.5">
@@ -2363,7 +2377,7 @@ export function AutomationStudio() {
                         </Select>
                       </div>
                       <div className="rounded-xl border border-white/[0.05] bg-white/[0.02] px-3 py-2.5 text-[11px] text-white/35">
-                        Run Test follows the connection coming out of this node and sends using the connected WhatsApp node settings.
+                        Run Test follows the connection coming out of this node and sends using the connected {isInstagramFlow ? 'Instagram' : 'WhatsApp'} node settings.
                       </div>
                       <Button
                         onClick={() => runFlowTest(sel.id)}
@@ -2616,36 +2630,134 @@ export function AutomationStudio() {
                           </div>
                         )}
                       </div>
-                      <div className="space-y-1.5">
-                        <Label htmlFor="tpl-sel" className="text-[10px] font-bold uppercase tracking-widest text-white/25">Template</Label>
-                        <Select value={sel.template || '__none__'} onValueChange={v => {
-                          if (v === '__none__') {
-                            if (msgLocked) return
-                            updStep({ template: '', templateLanguage: '', templateComponents: [], variableMappings: [] })
-                            return
-                          }
-                          const t = templates.find(t => t.name === v)
-                          updStep({
-                            template: v,
-                            templateLanguage: t?.language || '',
-                            templateComponents: t?.components || [],
-                            variableMappings: buildAutomationTemplateMappings(t, sel.variableMappings || [], activeTriggerEvent)
-                          })
-                        }}>
-                          <SelectTrigger id="tpl-sel" className={inputCls}><SelectValue placeholder="Choose template" /></SelectTrigger>
-                          <SelectContent className="z-[260] bg-[#13151f] border-white/10">
-                            <SelectItem value="__none__" className="text-white/40 text-xs focus:bg-white/8 focus:text-white">No template</SelectItem>
-                            {templates.map(t => <SelectItem key={t.id || t.name} value={t.name} className="text-white/70 text-xs focus:bg-white/8 focus:text-white">{t.name}{t.language ? ` (${t.language})` : ''}</SelectItem>)}
-                            {sel.template && !tplExists && <SelectItem value={sel.template} className="text-amber-400/60 text-xs">{sel.template} (not found)</SelectItem>}
-                          </SelectContent>
-                        </Select>
-                        {tplErr && <p role="alert" className="text-[10px] text-amber-500">{tplErr}</p>}
-                      </div>
-                      {!sel.template && !msgLocked && (
+                      {sel.channel !== 'instagram' && (
                         <div className="space-y-1.5">
-                          <Label htmlFor="msg-body" className="text-[10px] font-bold uppercase tracking-widest text-white/25">Message Body</Label>
-                          <Textarea id="msg-body" rows={5} value={sel.message || ''} onChange={e => updStep({ message: e.target.value })} className={textCls} />
+                          <Label htmlFor="tpl-sel" className="text-[10px] font-bold uppercase tracking-widest text-white/25">Template</Label>
+                          <Select value={sel.template || '__none__'} onValueChange={v => {
+                            if (v === '__none__') {
+                              if (msgLocked) return
+                              updStep({ template: '', templateLanguage: '', templateComponents: [], variableMappings: [] })
+                              return
+                            }
+                            const t = templates.find(t => t.name === v)
+                            updStep({
+                              template: v,
+                              templateLanguage: t?.language || '',
+                              templateComponents: t?.components || [],
+                              variableMappings: buildAutomationTemplateMappings(t, sel.variableMappings || [], activeTriggerEvent)
+                            })
+                          }}>
+                            <SelectTrigger id="tpl-sel" className={inputCls}><SelectValue placeholder="Choose template" /></SelectTrigger>
+                            <SelectContent className="z-[260] bg-[#13151f] border-white/10">
+                              <SelectItem value="__none__" className="text-white/40 text-xs focus:bg-white/8 focus:text-white">No template</SelectItem>
+                              {templates.map(t => <SelectItem key={t.id || t.name} value={t.name} className="text-white/70 text-xs focus:bg-white/8 focus:text-white">{t.name}{t.language ? ` (${t.language})` : ''}</SelectItem>)}
+                              {sel.template && !tplExists && <SelectItem value={sel.template} className="text-amber-400/60 text-xs">{sel.template} (not found)</SelectItem>}
+                            </SelectContent>
+                          </Select>
+                          {tplErr && <p role="alert" className="text-[10px] text-amber-500">{tplErr}</p>}
                         </div>
+                      )}
+                      {!sel.template && !msgLocked && (
+                        <>
+                          {activeTriggerEvent === 'instagram.comment_created' ? (
+                            <div className="space-y-4">
+                              <div className="space-y-1.5">
+                                <Label htmlFor="msg-comment-reply" className="text-[10px] font-bold uppercase tracking-widest text-indigo-400">💬 Public Comment Reply</Label>
+                                <Textarea
+                                  id="msg-comment-reply"
+                                  rows={3}
+                                  placeholder="e.g. Sent you a DM, @{{username}}! Check your inbox 📥✨"
+                                  value={sel.config?.commentReply || ''}
+                                  onChange={e => {
+                                    const val = e.target.value;
+                                    updStep({
+                                      config: { ...(sel.config || {}), commentReply: val }
+                                    });
+                                  }}
+                                  className={textCls}
+                                />
+                                <div className="text-[9px] text-white/30">
+                                  Public response posted directly under the customer's comment.
+                                </div>
+                              </div>
+
+                              <div className="space-y-1.5 pt-2 border-t border-white/[0.05]">
+                                <Label htmlFor="msg-body" className="text-[10px] font-bold uppercase tracking-widest text-pink-400">📥 Private DM Message</Label>
+                                <Textarea
+                                  id="msg-body"
+                                  rows={4}
+                                  placeholder="e.g. Here is your welcome coupon: WELCOME10! 🎟️✨"
+                                  value={sel.message || ''}
+                                  onChange={e => updStep({ message: e.target.value })}
+                                  className={textCls}
+                                />
+                                <div className="text-[9px] text-white/30">
+                                  Private direct message sent to the customer's DM inbox.
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="space-y-1.5">
+                              <Label htmlFor="msg-body" className="text-[10px] font-bold uppercase tracking-widest text-white/25">Message Body</Label>
+                              <Textarea id="msg-body" rows={5} value={sel.message || ''} onChange={e => updStep({ message: e.target.value })} className={textCls} />
+                            </div>
+                          )}
+
+                          <div className="space-y-3 pt-3 border-t border-white/[0.05]">
+                            <div className="text-[10px] font-bold uppercase tracking-widest text-white/40 flex items-center gap-1.5">
+                              <span>📁</span> Rich Media & Attachments
+                            </div>
+
+                            <div className="space-y-1">
+                              <Label htmlFor="msg-image" className="text-[9px] text-white/30 font-medium uppercase tracking-wider">Header Image URL</Label>
+                              <Input
+                                id="msg-image"
+                                placeholder="e.g. https://images.unsplash.com/photo-..."
+                                value={sel.imageUrl || sel.config?.imageUrl || ''}
+                                onChange={e => {
+                                  const val = e.target.value;
+                                  updStep({
+                                    imageUrl: val,
+                                    config: { ...(sel.config || {}), imageUrl: val }
+                                  });
+                                }}
+                                className={inputCls}
+                              />
+                            </div>
+
+                            <div className="space-y-1">
+                              <Label htmlFor="msg-pdf" className="text-[9px] text-white/30 font-medium uppercase tracking-wider">PDF Document URL</Label>
+                              <Input
+                                id="msg-pdf"
+                                placeholder="e.g. https://example.com/catalog.pdf"
+                                value={sel.config?.pdfUrl || sel.config?.fileUrl || ''}
+                                onChange={e => {
+                                  const val = e.target.value;
+                                  updStep({
+                                    config: { ...(sel.config || {}), pdfUrl: val, fileUrl: val }
+                                  });
+                                }}
+                                className={inputCls}
+                              />
+                            </div>
+
+                            <div className="space-y-1">
+                              <Label htmlFor="msg-link" className="text-[9px] text-white/30 font-medium uppercase tracking-wider">Button Link URL</Label>
+                              <Input
+                                id="msg-link"
+                                placeholder="e.g. https://vaclav.fashion/shop"
+                                value={sel.config?.linkUrl || ''}
+                                onChange={e => {
+                                  const val = e.target.value;
+                                  updStep({
+                                    config: { ...(sel.config || {}), linkUrl: val }
+                                  });
+                                }}
+                                className={inputCls}
+                              />
+                            </div>
+                          </div>
+                        </>
                       )}
                     </>
                   )}
