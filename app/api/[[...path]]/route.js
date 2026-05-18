@@ -1570,7 +1570,7 @@ async function handleRoute(request, { params }) {
             const subscribeParams = new URLSearchParams();
             subscribeParams.set(
               "subscribed_fields",
-              "messages,messaging_postbacks,messaging_seen,comments",
+              "messages,messaging_postbacks,message_reads,message_echoes",
             );
             subscribeParams.set("access_token", pageAccessToken);
 
