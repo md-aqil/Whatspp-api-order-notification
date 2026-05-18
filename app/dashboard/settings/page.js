@@ -551,7 +551,7 @@ useEffect(() => {
     }
   }, [])
 
-  const loadIntegrations = async () => {
+  async function loadIntegrations() {
     try {
       const response = await fetch('/api/integrations')
       if (response.ok) {
@@ -780,7 +780,7 @@ useEffect(() => {
   }, [])
 
   // Check webhook connectivity
-  const checkWebhookStatus = async () => {
+  async function checkWebhookStatus() {
     setChecking(true)
     try {
       // Check WhatsApp webhook
