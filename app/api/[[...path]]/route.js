@@ -1216,6 +1216,28 @@ async function handleRoute(request, { params }) {
         const pageAccessToken = connectedAccount.access_token
         const igAccountName = instagramAccount.username || instagramAccount.name || connectedAccount.name || 'Primary Account'
         
+        // 3.5. Subscribe the Facebook Page to the Meta App to receive Webhooks (DMs and Comments) automatically
+        try {
+          const subscribeUrl = `https://graph.facebook.com/v19.0/${pageId}/subscribed_apps`
+          const subscribeParams = new URLSearchParams()
+          subscribeParams.set('subscribed_fields', 'messages,messaging_postbacks,messaging_seen,comments')
+          subscribeParams.set('access_token', pageAccessToken)
+          
+          const subscribeResponse = await fetch(subscribeUrl, {
+            method: 'POST',
+            body: subscribeParams
+          })
+          const subscribeData = await subscribeResponse.json()
+          
+          if (!subscribeResponse.ok || subscribeData.error) {
+            console.error('Failed to automatically subscribe page to webhooks:', subscribeData.error)
+          } else {
+            console.log('Successfully subscribed page to webhooks:', subscribeData)
+          }
+        } catch (subErr) {
+          console.error('Error subscribing page to webhooks:', subErr.message)
+        }
+        
         // 4. Save account configuration
         await saveInstagramAccount({
           accountName: igAccountName,
