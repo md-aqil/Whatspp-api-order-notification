@@ -1,9 +1,13 @@
-import { v4 as uuidv4 } from 'uuid'
-import { NextResponse } from 'next/server'
-import crypto from 'crypto'
-import { buildMetaAuthHeaders, mapMetaAccessTokenError, sanitizeMetaAccessToken } from '@/lib/meta-auth'
-import { buildAutomationTemplateComponents as buildAutomationTemplateComponentsShared } from '@/lib/automation-template'
-import { validateWhatsAppPhoneNumberAccess } from '@/lib/whatsapp-meta'
+import { v4 as uuidv4 } from "uuid";
+import { NextResponse } from "next/server";
+import crypto from "crypto";
+import {
+  buildMetaAuthHeaders,
+  mapMetaAccessTokenError,
+  sanitizeMetaAccessToken,
+} from "@/lib/meta-auth";
+import { buildAutomationTemplateComponents as buildAutomationTemplateComponentsShared } from "@/lib/automation-template";
+import { validateWhatsAppPhoneNumberAccess } from "@/lib/whatsapp-meta";
 import {
   buildCartRecoveryContext,
   cancelPendingCartRecoveryJobs,
@@ -11,257 +15,292 @@ import {
   mapCartSessionToContext,
   markCartSessionAbandoned,
   markCartSessionsRecovered,
-  persistCartRecoveryEvent
-} from '@/lib/cart-recovery'
-import { requireRequestUserId, resolveRequestUserId } from '@/lib/request-user'
-import { ensureSettingsTables } from '@/lib/settings-db'
-import { generateAIResponse } from '@/lib/ai'
-import { getPool, query, queryOne, queryMany, insertWebhookLog } from '@/lib/mysql'
-import { 
-  getStoredIntegrations, 
-  saveStoredIntegration, 
-  getStoredWhatsAppAccounts, 
+  persistCartRecoveryEvent,
+} from "@/lib/cart-recovery";
+import { requireRequestUserId, resolveRequestUserId } from "@/lib/request-user";
+import { ensureSettingsTables } from "@/lib/settings-db";
+import { generateAIResponse } from "@/lib/ai";
+import {
+  getPool,
+  query,
+  queryOne,
+  queryMany,
+  insertWebhookLog,
+} from "@/lib/mysql";
+import {
+  getStoredIntegrations,
+  saveStoredIntegration,
+  getStoredWhatsAppAccounts,
   getWhatsAppAccountById,
   getUserIdByWhatsAppPhoneNumberId,
   getUserIdByInstagramAccountId,
   getStoredInstagramAccounts,
   getInstagramAccountByAccountId,
-  saveInstagramAccount
-} from '@/lib/db/integration-repository'
-import { 
-  getAutomationsForUser, 
-  getAutomationById, 
-  upsertAutomation, 
+  saveInstagramAccount,
+} from "@/lib/db/integration-repository";
+import {
+  getAutomationsForUser,
+  getAutomationById,
+  upsertAutomation,
   ensureAutomationsTable,
-  seedDefaultAutomationsForUser
-} from '@/lib/db/automation-repository'
-import { 
+  seedDefaultAutomationsForUser,
+} from "@/lib/db/automation-repository";
+import {
   getStoredChats,
-  getStoredMessagesByPhone, 
+  getStoredMessagesByPhone,
   getStoredChatByPhone,
   upsertStoredChat,
   insertStoredMessage,
   saveIncomingMessage,
   saveOutgoingMessage,
-  buildIncomingWhatsAppAutomationContext
-} from '@/lib/db/chat-repository'
-import { fetchMetaCatalogProducts, validateMetaCatalogAccess } from '@/lib/integrations/meta-catalog'
-import { 
-  getShopifyAccessToken, 
-  normalizeShopifyDomain, 
+  buildIncomingWhatsAppAutomationContext,
+} from "@/lib/db/chat-repository";
+import {
+  fetchMetaCatalogProducts,
+  validateMetaCatalogAccess,
+} from "@/lib/integrations/meta-catalog";
+import {
+  getShopifyAccessToken,
+  normalizeShopifyDomain,
   extractShopifyHandleFromUrl,
-} from '@/lib/integrations/shopify'
+} from "@/lib/integrations/shopify";
 import {
   getLatestStoredOrderByPhone,
-  getStoredOrders
-} from '@/lib/db/order-repository'
-import { getStoredProducts, saveStoredProducts } from '@/lib/db/product-repository'
-import { enqueueAutomationEvent } from '@/lib/queue'
-import { triggerAutomationEvent } from '@/lib/automation-engine'
-import { getGoogleSheetsClient } from '@/lib/google-sheets-api'
-
+  getStoredOrders,
+} from "@/lib/db/order-repository";
+import {
+  getStoredProducts,
+  saveStoredProducts,
+} from "@/lib/db/product-repository";
+import { enqueueAutomationEvent } from "@/lib/queue";
+import { triggerAutomationEvent } from "@/lib/automation-engine";
+import { getGoogleSheetsClient } from "@/lib/google-sheets-api";
 
 // Automation State Helpers (To be moved to lib/automation-engine.js if needed)
-
-
 
 function normalizeWhatsAppIntegrationData(data = {}) {
   return {
     ...data,
-    phoneNumberId: String(data.phoneNumberId || '').trim(),
+    phoneNumberId: String(data.phoneNumberId || "").trim(),
     accessToken: sanitizeMetaAccessToken(data.accessToken),
-    businessAccountId: String(data.businessAccountId || '').trim(),
-    catalogId: String(data.catalogId || '').trim(),
-    webhookVerifyToken: String(data.webhookVerifyToken || '').trim()
-  }
+    businessAccountId: String(data.businessAccountId || "").trim(),
+    catalogId: String(data.catalogId || "").trim(),
+    webhookVerifyToken: String(data.webhookVerifyToken || "").trim(),
+  };
 }
 
 function getZohoOAuthStateSecret() {
-  return process.env.ZOHO_OAUTH_STATE_SECRET || process.env.JWT_SECRET || process.env.NEXTAUTH_SECRET || 'fallback-secret-for-dev-only'
+  return (
+    process.env.ZOHO_OAUTH_STATE_SECRET ||
+    process.env.JWT_SECRET ||
+    process.env.NEXTAUTH_SECRET ||
+    "fallback-secret-for-dev-only"
+  );
 }
 
-function createZohoOAuthState(userId, dc = 'zoho.com') {
-  const payload = Buffer.from(JSON.stringify({
-    userId: String(userId),
-    dc: String(dc),
-    nonce: uuidv4(),
-    exp: Date.now() + (10 * 60 * 1000)
-  })).toString('base64url')
+function createZohoOAuthState(userId, dc = "zoho.com") {
+  const payload = Buffer.from(
+    JSON.stringify({
+      userId: String(userId),
+      dc: String(dc),
+      nonce: uuidv4(),
+      exp: Date.now() + 10 * 60 * 1000,
+    }),
+  ).toString("base64url");
   const signature = crypto
-    .createHmac('sha256', getZohoOAuthStateSecret())
+    .createHmac("sha256", getZohoOAuthStateSecret())
     .update(payload)
-    .digest('base64url')
+    .digest("base64url");
 
-  return `${payload}.${signature}`
+  return `${payload}.${signature}`;
 }
 
 function verifyZohoOAuthState(state) {
-  const [payload, signature] = String(state || '').split('.')
+  const [payload, signature] = String(state || "").split(".");
   if (!payload || !signature) {
-    throw new Error('Invalid Zoho OAuth state')
+    throw new Error("Invalid Zoho OAuth state");
   }
 
   const expectedSignature = crypto
-    .createHmac('sha256', getZohoOAuthStateSecret())
+    .createHmac("sha256", getZohoOAuthStateSecret())
     .update(payload)
-    .digest('base64url')
+    .digest("base64url");
 
-  const actualBuffer = Buffer.from(signature)
-  const expectedBuffer = Buffer.from(expectedSignature)
-  if (actualBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(actualBuffer, expectedBuffer)) {
-    throw new Error('Invalid Zoho OAuth state')
+  const actualBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expectedSignature);
+  if (
+    actualBuffer.length !== expectedBuffer.length ||
+    !crypto.timingSafeEqual(actualBuffer, expectedBuffer)
+  ) {
+    throw new Error("Invalid Zoho OAuth state");
   }
 
-  const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'))
+  const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
   if (!parsed.userId || !parsed.exp || Date.now() > parsed.exp) {
-    throw new Error('Expired Zoho OAuth state')
+    throw new Error("Expired Zoho OAuth state");
   }
 
-  return { userId: parsed.userId, dc: parsed.dc || 'zoho.com' }
+  return { userId: parsed.userId, dc: parsed.dc || "zoho.com" };
 }
 
 function mapMetaCatalogProductsToAppProducts(metaProducts = []) {
   return metaProducts.map((product) => {
-    const retailerId = String(product.retailer_id || '').trim()
-    const metaId = String(product.id || '').trim()
-    const url = product.url || ''
-    const handle = extractShopifyHandleFromUrl(url)
+    const retailerId = String(product.retailer_id || "").trim();
+    const metaId = String(product.id || "").trim();
+    const url = product.url || "";
+    const handle = extractShopifyHandleFromUrl(url);
 
     return {
       id: retailerId || metaId,
-      title: product.name || retailerId || metaId || 'Catalog Product',
-      description: product.description || '',
-      price: product.price || '',
-      image: product.image_url || '',
+      title: product.name || retailerId || metaId || "Catalog Product",
+      description: product.description || "",
+      price: product.price || "",
+      image: product.image_url || "",
       handle,
       url,
       retailer_id: retailerId,
       metaCatalogProductId: metaId,
       metaCatalogMatched: !!retailerId,
-      metaCatalogMatchedBy: 'catalog',
-      source: 'meta'
-    }
-  })
+      metaCatalogMatchedBy: "catalog",
+      source: "meta",
+    };
+  });
 }
 
-function mergeShopifyProductsWithMetaCatalog(shopifyProducts = [], metaProducts = []) {
-  if (!Array.isArray(shopifyProducts) || shopifyProducts.length === 0) return []
+function mergeShopifyProductsWithMetaCatalog(
+  shopifyProducts = [],
+  metaProducts = [],
+) {
+  if (!Array.isArray(shopifyProducts) || shopifyProducts.length === 0)
+    return [];
   if (!Array.isArray(metaProducts) || metaProducts.length === 0) {
     return shopifyProducts.map((product) => ({
       ...product,
-      retailer_id: String(product?.retailer_id || product?.retailerId || '').trim(),
+      retailer_id: String(
+        product?.retailer_id || product?.retailerId || "",
+      ).trim(),
       metaCatalogMatched: false,
-      metaCatalogMatchedBy: '',
-      metaCatalogProductId: ''
-    }))
+      metaCatalogMatchedBy: "",
+      metaCatalogProductId: "",
+    }));
   }
 
-  const byRetailerId = new Map()
-  const byHandle = new Map()
-  const byUniqueTitle = new Map()
-  const titleBuckets = new Map()
+  const byRetailerId = new Map();
+  const byHandle = new Map();
+  const byUniqueTitle = new Map();
+  const titleBuckets = new Map();
 
   for (const product of metaProducts) {
-    const retailerIdKey = normalizeComparableValue(product.retailer_id)
-    if (retailerIdKey && !byRetailerId.has(retailerIdKey)) byRetailerId.set(retailerIdKey, product)
+    const retailerIdKey = normalizeComparableValue(product.retailer_id);
+    if (retailerIdKey && !byRetailerId.has(retailerIdKey))
+      byRetailerId.set(retailerIdKey, product);
 
-    const handleKey = normalizeComparableValue(extractShopifyHandleFromUrl(product.url))
-    if (handleKey && !byHandle.has(handleKey)) byHandle.set(handleKey, product)
+    const handleKey = normalizeComparableValue(
+      extractShopifyHandleFromUrl(product.url),
+    );
+    if (handleKey && !byHandle.has(handleKey)) byHandle.set(handleKey, product);
 
-    const titleKey = normalizeComparableValue(product.name)
+    const titleKey = normalizeComparableValue(product.name);
     if (titleKey) {
-      const bucket = titleBuckets.get(titleKey) || []
-      bucket.push(product)
-      titleBuckets.set(titleKey, bucket)
+      const bucket = titleBuckets.get(titleKey) || [];
+      bucket.push(product);
+      titleBuckets.set(titleKey, bucket);
     }
   }
 
   for (const [titleKey, bucket] of titleBuckets.entries()) {
-    if (bucket.length === 1) byUniqueTitle.set(titleKey, bucket[0])
+    if (bucket.length === 1) byUniqueTitle.set(titleKey, bucket[0]);
   }
 
   return shopifyProducts.map((product) => {
-    const explicitRetailerId = String(product?.retailer_id || product?.retailerId || '').trim()
-    const retailerIdCandidate = byRetailerId.get(normalizeComparableValue(explicitRetailerId))
-    const idCandidate = byRetailerId.get(normalizeComparableValue(product.id))
-    const handleCandidate = byHandle.get(normalizeComparableValue(product.handle))
-    const titleCandidate = byUniqueTitle.get(normalizeComparableValue(product.title))
+    const explicitRetailerId = String(
+      product?.retailer_id || product?.retailerId || "",
+    ).trim();
+    const retailerIdCandidate = byRetailerId.get(
+      normalizeComparableValue(explicitRetailerId),
+    );
+    const idCandidate = byRetailerId.get(normalizeComparableValue(product.id));
+    const handleCandidate = byHandle.get(
+      normalizeComparableValue(product.handle),
+    );
+    const titleCandidate = byUniqueTitle.get(
+      normalizeComparableValue(product.title),
+    );
 
-    const matchedProduct = retailerIdCandidate || idCandidate || handleCandidate || titleCandidate || null
+    const matchedProduct =
+      retailerIdCandidate ||
+      idCandidate ||
+      handleCandidate ||
+      titleCandidate ||
+      null;
     const matchedBy = retailerIdCandidate
-      ? 'retailer_id'
+      ? "retailer_id"
       : idCandidate
-        ? 'shopify_id'
+        ? "shopify_id"
         : handleCandidate
-          ? 'handle'
+          ? "handle"
           : titleCandidate
-            ? 'title'
-            : ''
+            ? "title"
+            : "";
 
     return {
       ...product,
-      retailer_id: matchedProduct?.retailer_id || explicitRetailerId || '',
+      retailer_id: matchedProduct?.retailer_id || explicitRetailerId || "",
       metaCatalogMatched: !!matchedProduct,
       metaCatalogMatchedBy: matchedBy,
-      metaCatalogProductId: matchedProduct?.id || '',
-      metaCatalogUrl: matchedProduct?.url || '',
-      metaCatalogImage: matchedProduct?.image_url || '',
-      metaCatalogName: matchedProduct?.name || ''
-    }
-  })
+      metaCatalogProductId: matchedProduct?.id || "",
+      metaCatalogUrl: matchedProduct?.url || "",
+      metaCatalogImage: matchedProduct?.image_url || "",
+      metaCatalogName: matchedProduct?.name || "",
+    };
+  });
 }
 
 // getStoredChats is now imported from @/lib/db/chat-repository
 
-
 // getStoredMessagesByPhone is now imported
-
 
 // getStoredChatByPhone is now imported
 
-
 // upsertStoredChat is now imported
-
 
 // insertStoredMessage is now imported
 
+async function saveStoredWebhooks(webhooks, userId = "default") {
+  await ensureSettingsTables();
 
-async function saveStoredWebhooks(webhooks, userId = 'default') {
-  await ensureSettingsTables()
-
-  const pool = getPool()
+  const pool = getPool();
   const existing = await queryOne(
-    'SELECT id FROM webhooks WHERE userId = ? AND type = ? ORDER BY createdAt IS NULL, createdAt DESC, id DESC LIMIT 1',
-    [String(userId || 'default'), 'shopify']
-  )
+    "SELECT id FROM webhooks WHERE userId = ? AND type = ? ORDER BY createdAt IS NULL, createdAt DESC, id DESC LIMIT 1",
+    [String(userId || "default"), "shopify"],
+  );
 
   if (existing) {
     await pool.execute(
-      'UPDATE webhooks SET webhooks = ?, createdAt = NOW() WHERE id = ?',
-      [JSON.stringify(webhooks), existing.id]
-    )
-    return
+      "UPDATE webhooks SET webhooks = ?, createdAt = NOW() WHERE id = ?",
+      [JSON.stringify(webhooks), existing.id],
+    );
+    return;
   }
 
   await pool.execute(
-    'INSERT INTO webhooks (userId, type, webhooks, createdAt) VALUES (?, ?, ?, NOW())',
-    [String(userId || 'default'), 'shopify', JSON.stringify(webhooks)]
-  )
+    "INSERT INTO webhooks (userId, type, webhooks, createdAt) VALUES (?, ?, ?, NOW())",
+    [String(userId || "default"), "shopify", JSON.stringify(webhooks)],
+  );
 }
 
-async function getStoredWebhooks(type = 'shopify', userId = 'default') {
-  await ensureSettingsTables()
+async function getStoredWebhooks(type = "shopify", userId = "default") {
+  await ensureSettingsTables();
 
   const result = await getPool().execute(
-    'SELECT id, type, webhooks, createdAt FROM webhooks WHERE userId = ? AND type = ? ORDER BY createdAt IS NULL, createdAt DESC, id DESC LIMIT 1',
-    [String(userId || 'default'), type]
-  )
-  return result[0][0] || null
+    "SELECT id, type, webhooks, createdAt FROM webhooks WHERE userId = ? AND type = ? ORDER BY createdAt IS NULL, createdAt DESC, id DESC LIMIT 1",
+    [String(userId || "default"), type],
+  );
+  return result[0][0] || null;
 }
 
-
-async function getWebhookLogs(limit = 10, userId = 'default') {
-  await ensureSettingsTables()
+async function getWebhookLogs(limit = 10, userId = "default") {
+  await ensureSettingsTables();
 
   const [rows] = await getPool().query(
     `SELECT id, type, topic, payload, receivedAt, createdAt
@@ -269,361 +308,479 @@ async function getWebhookLogs(limit = 10, userId = 'default') {
      WHERE userId = ?
      ORDER BY receivedAt DESC
      LIMIT ${parseInt(limit, 10) || 10}`,
-    [String(userId || 'default')]
-  )
+    [String(userId || "default")],
+  );
 
-  return rows || []
+  return rows || [];
 }
-
 
 function interpolateMessage(template, context) {
-  if (!template) return ''
+  if (!template) return "";
   return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, key) => {
-    const value = context[key]
-    return value === undefined || value === null ? '' : String(value)
-  })
+    const value = context[key];
+    return value === undefined || value === null ? "" : String(value);
+  });
 }
 
-function buildAutomationTemplateComponents(templateComponents, variableMappings, context) {
-  return buildAutomationTemplateComponentsShared(templateComponents, variableMappings, context)
+function buildAutomationTemplateComponents(
+  templateComponents,
+  variableMappings,
+  context,
+) {
+  return buildAutomationTemplateComponentsShared(
+    templateComponents,
+    variableMappings,
+    context,
+  );
 }
 
 function buildCatalogProductContext(products, shopify, whatsapp = null) {
-  const firstProduct = products[0] || null
-  const normalizedDomain = normalizeShopifyDomain(shopify?.shopDomain || '')
-  const baseDomain = normalizedDomain ? `https://${normalizedDomain}` : ''
-  const whatsappCatalogLink = whatsapp?.businessAccountId || whatsapp?.phoneNumberId
-    ? `https://wa.me/c/${whatsapp.businessAccountId || whatsapp.phoneNumberId}`
-    : ''
-  const productLink = firstProduct?.url || firstProduct?.metaCatalogUrl || (firstProduct?.handle && baseDomain ? `${baseDomain}/products/${firstProduct.handle}` : '')
-  const catalogLink = baseDomain ? `${baseDomain}/collections/all` : whatsappCatalogLink
+  const firstProduct = products[0] || null;
+  const normalizedDomain = normalizeShopifyDomain(shopify?.shopDomain || "");
+  const baseDomain = normalizedDomain ? `https://${normalizedDomain}` : "";
+  const whatsappCatalogLink =
+    whatsapp?.businessAccountId || whatsapp?.phoneNumberId
+      ? `https://wa.me/c/${whatsapp.businessAccountId || whatsapp.phoneNumberId}`
+      : "";
+  const productLink =
+    firstProduct?.url ||
+    firstProduct?.metaCatalogUrl ||
+    (firstProduct?.handle && baseDomain
+      ? `${baseDomain}/products/${firstProduct.handle}`
+      : "");
+  const catalogLink = baseDomain
+    ? `${baseDomain}/collections/all`
+    : whatsappCatalogLink;
   const explicitRetailerIds = products
-    .map((product) => String(product?.retailer_id || product?.retailerId || '').trim())
-    .filter(Boolean)
+    .map((product) =>
+      String(product?.retailer_id || product?.retailerId || "").trim(),
+    )
+    .filter(Boolean);
   const retailerIds = products
-    .map((product) => String(product?.retailer_id || product?.retailerId || product?.id || '').trim())
-    .filter(Boolean)
+    .map((product) =>
+      String(
+        product?.retailer_id || product?.retailerId || product?.id || "",
+      ).trim(),
+    )
+    .filter(Boolean);
 
   return {
-    product_name: firstProduct?.title || firstProduct?.name || '',
-    product_price: firstProduct?.price ? String(firstProduct.price) : '',
+    product_name: firstProduct?.title || firstProduct?.name || "",
+    product_price: firstProduct?.price ? String(firstProduct.price) : "",
     product_link: productLink,
-    product_names: products.slice(0, 3).map((product) => product.title || product.name).filter(Boolean).join(', '),
+    product_names: products
+      .slice(0, 3)
+      .map((product) => product.title || product.name)
+      .filter(Boolean)
+      .join(", "),
     catalog_link: catalogLink,
-    product_retailer_id: retailerIds[0] || '',
+    product_retailer_id: retailerIds[0] || "",
     product_retailer_ids: retailerIds,
-    explicit_product_retailer_id: explicitRetailerIds[0] || '',
-    explicit_product_retailer_ids: explicitRetailerIds
-  }
+    explicit_product_retailer_id: explicitRetailerIds[0] || "",
+    explicit_product_retailer_ids: explicitRetailerIds,
+  };
 }
 
 function getOrderLineItemTitle(item) {
   return String(
     item?.title ||
-    item?.name ||
-    item?.product_title ||
-    item?.productTitle ||
-    item?.variant_title ||
-    item?.variantTitle ||
-    ''
-  ).trim()
+      item?.name ||
+      item?.product_title ||
+      item?.productTitle ||
+      item?.variant_title ||
+      item?.variantTitle ||
+      "",
+  ).trim();
 }
 
 function buildOrderProductContext(order = null) {
-  const lineItems = Array.isArray(order?.lineItems) ? order.lineItems : []
+  const lineItems = Array.isArray(order?.lineItems) ? order.lineItems : [];
   const itemNames = lineItems
     .map((item) => getOrderLineItemTitle(item))
-    .filter(Boolean)
+    .filter(Boolean);
 
   return {
-    order_product_name: itemNames[0] || '',
-    order_product_names: itemNames.slice(0, 3).join(', ')
-  }
+    order_product_name: itemNames[0] || "",
+    order_product_names: itemNames.slice(0, 3).join(", "),
+  };
 }
 
 function extractShopifyOrderCartIdentifiers(orderPayload = {}) {
   const checkoutToken = String(
     orderPayload.checkout_token ||
-    orderPayload.checkoutToken ||
-    orderPayload.token ||
-    ''
-  ).trim()
+      orderPayload.checkoutToken ||
+      orderPayload.token ||
+      "",
+  ).trim();
 
   const externalCartId = String(
     orderPayload.checkout_id ||
-    orderPayload.checkoutId ||
-    orderPayload.cart_token ||
-    orderPayload.cartToken ||
-    orderPayload.token ||
-    ''
-  ).trim()
+      orderPayload.checkoutId ||
+      orderPayload.cart_token ||
+      orderPayload.cartToken ||
+      orderPayload.token ||
+      "",
+  ).trim();
 
   return {
     checkoutToken,
-    externalCartId
-  }
+    externalCartId,
+  };
 }
 
 function resolveCatalogTemplateVariable(value, context) {
-  const trimmed = typeof value === 'string' ? value.trim() : ''
-  if (!trimmed) return ''
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  if (!trimmed) return "";
 
-  const normalized = trimmed.toLowerCase()
-  if (normalized === '{{customer_name}}') return context.customer_name || ''
-  if (normalized === '{{customer_phone}}') return context.customer_phone || ''
-  if (normalized === '{{order_number}}') return context.order_number || ''
-  if (normalized === '{{tracking_number}}') return context.tracking_number || ''
-  if (normalized === '{{tracking_url}}') return context.tracking_url || ''
-  if (normalized === '{{order_total}}') return context.order_total || ''
-  if (normalized === '{{currency}}') return context.currency || ''
-  if (normalized === '{{order_product_name}}') return context.order_product_name || ''
-  if (normalized === '{{order_product_names}}') return context.order_product_names || ''
-  if (normalized === '{{product_name}}') return context.product_name || ''
-  if (normalized === '{{product_price}}') return context.product_price || ''
-  if (normalized === '{{product_link}}') return context.product_link || ''
-  if (normalized === '{{product_names}}') return context.product_names || ''
-  if (normalized === '{{catalog_link}}') return context.catalog_link || ''
+  const normalized = trimmed.toLowerCase();
+  if (normalized === "{{customer_name}}") return context.customer_name || "";
+  if (normalized === "{{customer_phone}}") return context.customer_phone || "";
+  if (normalized === "{{order_number}}") return context.order_number || "";
+  if (normalized === "{{tracking_number}}")
+    return context.tracking_number || "";
+  if (normalized === "{{tracking_url}}") return context.tracking_url || "";
+  if (normalized === "{{order_total}}") return context.order_total || "";
+  if (normalized === "{{currency}}") return context.currency || "";
+  if (normalized === "{{order_product_name}}")
+    return context.order_product_name || "";
+  if (normalized === "{{order_product_names}}")
+    return context.order_product_names || "";
+  if (normalized === "{{product_name}}") return context.product_name || "";
+  if (normalized === "{{product_price}}") return context.product_price || "";
+  if (normalized === "{{product_link}}") return context.product_link || "";
+  if (normalized === "{{product_names}}") return context.product_names || "";
+  if (normalized === "{{catalog_link}}") return context.catalog_link || "";
 
-  return trimmed
+  return trimmed;
 }
 
-function inferCatalogTemplateVariable(exampleText, index = 0, templateName = '') {
-  const sample = String(exampleText || '').trim().toLowerCase()
-  const templateLabel = String(templateName || '').trim().toLowerCase()
-  const prefersOrderProductContext = /tracking|shipment|shipping|fulfill|delivery|order/i.test(templateLabel)
+function inferCatalogTemplateVariable(
+  exampleText,
+  index = 0,
+  templateName = "",
+) {
+  const sample = String(exampleText || "")
+    .trim()
+    .toLowerCase();
+  const templateLabel = String(templateName || "")
+    .trim()
+    .toLowerCase();
+  const prefersOrderProductContext =
+    /tracking|shipment|shipping|fulfill|delivery|order/i.test(templateLabel);
 
-  if (sample.includes('customer') && sample.includes('name')) return '{{customer_name}}'
-  if (sample.includes('customer') && sample.includes('phone')) return '{{customer_phone}}'
-  if (sample.includes('order') && sample.includes('number')) return '{{order_number}}'
-  if (sample.includes('tracking') && sample.includes('number')) return '{{tracking_number}}'
-  if (sample.includes('tracking') && (sample.includes('link') || sample.includes('url'))) return '{{tracking_url}}'
-  if (sample.includes('catalog') || sample.includes('collection')) return '{{catalog_link}}'
-  if (sample.includes('product') && sample.includes('name')) {
-    return prefersOrderProductContext ? '{{order_product_name}}' : '{{product_name}}'
+  if (sample.includes("customer") && sample.includes("name"))
+    return "{{customer_name}}";
+  if (sample.includes("customer") && sample.includes("phone"))
+    return "{{customer_phone}}";
+  if (sample.includes("order") && sample.includes("number"))
+    return "{{order_number}}";
+  if (sample.includes("tracking") && sample.includes("number"))
+    return "{{tracking_number}}";
+  if (
+    sample.includes("tracking") &&
+    (sample.includes("link") || sample.includes("url"))
+  )
+    return "{{tracking_url}}";
+  if (sample.includes("catalog") || sample.includes("collection"))
+    return "{{catalog_link}}";
+  if (sample.includes("product") && sample.includes("name")) {
+    return prefersOrderProductContext
+      ? "{{order_product_name}}"
+      : "{{product_name}}";
   }
-  if (sample.includes('product') && sample.includes('price')) return '{{product_price}}'
-  if (sample.includes('product') && (sample.includes('link') || sample.includes('url'))) return '{{product_link}}'
-  if (sample.includes('browse') || sample.includes('link') || sample.includes('url')) return '{{product_link}}'
+  if (sample.includes("product") && sample.includes("price"))
+    return "{{product_price}}";
+  if (
+    sample.includes("product") &&
+    (sample.includes("link") || sample.includes("url"))
+  )
+    return "{{product_link}}";
+  if (
+    sample.includes("browse") ||
+    sample.includes("link") ||
+    sample.includes("url")
+  )
+    return "{{product_link}}";
 
   const fallbacks = prefersOrderProductContext
-    ? ['{{customer_name}}', '{{order_number}}', '{{order_product_name}}', '{{tracking_url}}', '{{tracking_number}}']
-    : ['{{customer_name}}', '{{catalog_link}}', '{{product_name}}', '{{product_link}}', '{{product_price}}']
-  return fallbacks[index] || '{{catalog_link}}'
+    ? [
+        "{{customer_name}}",
+        "{{order_number}}",
+        "{{order_product_name}}",
+        "{{tracking_url}}",
+        "{{tracking_number}}",
+      ]
+    : [
+        "{{customer_name}}",
+        "{{catalog_link}}",
+        "{{product_name}}",
+        "{{product_link}}",
+        "{{product_price}}",
+      ];
+  return fallbacks[index] || "{{catalog_link}}";
 }
 
 function getTemplateSlotExamples(component, groupKey) {
-  const exampleGroup = component?.example?.[groupKey]
-  if (Array.isArray(exampleGroup) && Array.isArray(exampleGroup[0])) return exampleGroup[0]
-  return []
+  const exampleGroup = component?.example?.[groupKey];
+  if (Array.isArray(exampleGroup) && Array.isArray(exampleGroup[0]))
+    return exampleGroup[0];
+  return [];
 }
 
 function getTemplateParameterSlots(templateComponents = []) {
-  const slots = []
+  const slots = [];
 
   for (const component of templateComponents) {
-    if (component?.type === 'HEADER' && component.format === 'TEXT') {
-      const matches = component.text?.match(/\{\{\d+\}\}/g) || []
-      const examples = getTemplateSlotExamples(component, 'header_text')
+    if (component?.type === "HEADER" && component.format === "TEXT") {
+      const matches = component.text?.match(/\{\{\d+\}\}/g) || [];
+      const examples = getTemplateSlotExamples(component, "header_text");
       matches.forEach((_match, index) => {
         slots.push({
-          componentType: 'HEADER',
-          parameterType: 'text',
-          example: examples[index] || ''
-        })
-      })
+          componentType: "HEADER",
+          parameterType: "text",
+          example: examples[index] || "",
+        });
+      });
     }
 
-    if (component?.type === 'BODY') {
-      const matches = component.text?.match(/\{\{\d+\}\}/g) || []
-      const examples = getTemplateSlotExamples(component, 'body_text')
+    if (component?.type === "BODY") {
+      const matches = component.text?.match(/\{\{\d+\}\}/g) || [];
+      const examples = getTemplateSlotExamples(component, "body_text");
       matches.forEach((_match, index) => {
         slots.push({
-          componentType: 'BODY',
-          parameterType: 'text',
-          example: examples[index] || ''
-        })
-      })
+          componentType: "BODY",
+          parameterType: "text",
+          example: examples[index] || "",
+        });
+      });
     }
 
-    if (component?.type === 'BUTTONS' && Array.isArray(component.buttons)) {
+    if (component?.type === "BUTTONS" && Array.isArray(component.buttons)) {
       component.buttons.forEach((button) => {
-        const matches = button?.url?.match(/\{\{\d+\}\}/g) || []
+        const matches = button?.url?.match(/\{\{\d+\}\}/g) || [];
         matches.forEach((_match, index) => {
           slots.push({
-            componentType: 'BUTTON',
-            parameterType: 'text',
-            buttonType: String(button.type || '').toUpperCase(),
-            example: button?.example?.[index] || ''
-          })
-        })
-      })
+            componentType: "BUTTON",
+            parameterType: "text",
+            buttonType: String(button.type || "").toUpperCase(),
+            example: button?.example?.[index] || "",
+          });
+        });
+      });
     }
   }
 
-  return slots
+  return slots;
 }
 
-function isProductDependentTemplateVariable(value = '') {
-  const normalized = String(value || '').trim().toLowerCase()
+function isProductDependentTemplateVariable(value = "") {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
   return (
-    normalized === '{{product_name}}' ||
-    normalized === '{{product_price}}' ||
-    normalized === '{{product_link}}' ||
-    normalized === '{{product_names}}'
-  )
+    normalized === "{{product_name}}" ||
+    normalized === "{{product_price}}" ||
+    normalized === "{{product_link}}" ||
+    normalized === "{{product_names}}"
+  );
 }
 
-function isOrderDependentTemplateVariable(value = '') {
-  const normalized = String(value || '').trim().toLowerCase()
+function isOrderDependentTemplateVariable(value = "") {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
   return (
-    normalized === '{{order_number}}' ||
-    normalized === '{{tracking_number}}' ||
-    normalized === '{{tracking_url}}' ||
-    normalized === '{{order_total}}' ||
-    normalized === '{{currency}}' ||
-    normalized === '{{order_product_name}}' ||
-    normalized === '{{order_product_names}}'
-  )
+    normalized === "{{order_number}}" ||
+    normalized === "{{tracking_number}}" ||
+    normalized === "{{tracking_url}}" ||
+    normalized === "{{order_total}}" ||
+    normalized === "{{currency}}" ||
+    normalized === "{{order_product_name}}" ||
+    normalized === "{{order_product_names}}"
+  );
 }
 
-function templateRequiresProductContext(templateComponents = [], templateVariables = [], templateName = '') {
-  const slots = getTemplateParameterSlots(templateComponents)
-  const resolvedVariableOrder = slots.map((slot, index) => (
-    typeof templateVariables[index] === 'string' && templateVariables[index].trim()
+function templateRequiresProductContext(
+  templateComponents = [],
+  templateVariables = [],
+  templateName = "",
+) {
+  const slots = getTemplateParameterSlots(templateComponents);
+  const resolvedVariableOrder = slots.map((slot, index) =>
+    typeof templateVariables[index] === "string" &&
+    templateVariables[index].trim()
       ? templateVariables[index].trim()
-      : inferCatalogTemplateVariable(slot.example, index, templateName)
-  ))
+      : inferCatalogTemplateVariable(slot.example, index, templateName),
+  );
 
-  if (resolvedVariableOrder.some((value) => isProductDependentTemplateVariable(value))) {
-    return true
+  if (
+    resolvedVariableOrder.some((value) =>
+      isProductDependentTemplateVariable(value),
+    )
+  ) {
+    return true;
   }
 
-  return templateComponents.some((component) => (
-    component?.type === 'BUTTONS' &&
-    Array.isArray(component.buttons) &&
-    component.buttons.some((button) => {
-      const buttonType = String(button?.type || '').toUpperCase()
-      return buttonType === 'MPM' || buttonType === 'CATALOG'
-    })
-  ))
+  return templateComponents.some(
+    (component) =>
+      component?.type === "BUTTONS" &&
+      Array.isArray(component.buttons) &&
+      component.buttons.some((button) => {
+        const buttonType = String(button?.type || "").toUpperCase();
+        return buttonType === "MPM" || buttonType === "CATALOG";
+      }),
+  );
 }
 
-function templateRequiresOrderContext(templateComponents = [], templateVariables = [], templateName = '') {
-  const slots = getTemplateParameterSlots(templateComponents)
-  const resolvedVariableOrder = slots.map((slot, index) => (
-    typeof templateVariables[index] === 'string' && templateVariables[index].trim()
+function templateRequiresOrderContext(
+  templateComponents = [],
+  templateVariables = [],
+  templateName = "",
+) {
+  const slots = getTemplateParameterSlots(templateComponents);
+  const resolvedVariableOrder = slots.map((slot, index) =>
+    typeof templateVariables[index] === "string" &&
+    templateVariables[index].trim()
       ? templateVariables[index].trim()
-      : inferCatalogTemplateVariable(slot.example, index, templateName)
-  ))
+      : inferCatalogTemplateVariable(slot.example, index, templateName),
+  );
 
-  return resolvedVariableOrder.some((value) => isOrderDependentTemplateVariable(value))
+  return resolvedVariableOrder.some((value) =>
+    isOrderDependentTemplateVariable(value),
+  );
 }
 
-function buildCatalogTemplatePayload({ templateName, templateLanguage, templateComponents = [], templateVariables = [], templateHeaderImageUrl = '', productContext, recipientContext }) {
-  const mergedContext = { ...productContext, ...recipientContext }
-  const slots = getTemplateParameterSlots(templateComponents)
-  const resolvedVariableOrder = slots.map((slot, index) => (
-    typeof templateVariables[index] === 'string' && templateVariables[index].trim()
+function buildCatalogTemplatePayload({
+  templateName,
+  templateLanguage,
+  templateComponents = [],
+  templateVariables = [],
+  templateHeaderImageUrl = "",
+  productContext,
+  recipientContext,
+}) {
+  const mergedContext = { ...productContext, ...recipientContext };
+  const slots = getTemplateParameterSlots(templateComponents);
+  const resolvedVariableOrder = slots.map((slot, index) =>
+    typeof templateVariables[index] === "string" &&
+    templateVariables[index].trim()
       ? templateVariables[index].trim()
-      : inferCatalogTemplateVariable(slot.example, index, templateName)
-  ))
+      : inferCatalogTemplateVariable(slot.example, index, templateName),
+  );
 
-  let cursor = 0
-  const components = []
+  let cursor = 0;
+  const components = [];
 
   for (const component of templateComponents) {
-    if (component?.type === 'HEADER') {
-      if (component.format === 'IMAGE') {
+    if (component?.type === "HEADER") {
+      if (component.format === "IMAGE") {
         if (!templateHeaderImageUrl) {
-          throw new Error('Template requires an image header. Upload an image or provide a public image URL.')
+          throw new Error(
+            "Template requires an image header. Upload an image or provide a public image URL.",
+          );
         }
 
-        const headerUrl = templateHeaderImageUrl.trim()
-        if (headerUrl.startsWith('http://localhost') || headerUrl.startsWith('http://0.0.0.0') || headerUrl.startsWith('http://127.0.0.1')) {
-          throw new Error(`Header image URL must be publicly accessible. "${headerUrl}" points to a local server.`)
+        const headerUrl = templateHeaderImageUrl.trim();
+        if (
+          headerUrl.startsWith("http://localhost") ||
+          headerUrl.startsWith("http://0.0.0.0") ||
+          headerUrl.startsWith("http://127.0.0.1")
+        ) {
+          throw new Error(
+            `Header image URL must be publicly accessible. "${headerUrl}" points to a local server.`,
+          );
         }
 
         components.push({
-          type: 'header',
+          type: "header",
           parameters: [
             {
-              type: 'image',
-              image: { link: headerUrl }
-            }
-          ]
-        })
-      } else if (component.format === 'VIDEO') {
+              type: "image",
+              image: { link: headerUrl },
+            },
+          ],
+        });
+      } else if (component.format === "VIDEO") {
         if (!templateHeaderImageUrl) {
-          throw new Error('Template requires a video header but no public video URL was provided.')
+          throw new Error(
+            "Template requires a video header but no public video URL was provided.",
+          );
         }
 
         components.push({
-          type: 'header',
+          type: "header",
           parameters: [
             {
-              type: 'video',
-              video: { link: templateHeaderImageUrl.trim() }
-            }
-          ]
-        })
-      } else if (component.format === 'TEXT') {
-        const matches = component.text?.match(/\{\{\d+\}\}/g) || []
+              type: "video",
+              video: { link: templateHeaderImageUrl.trim() },
+            },
+          ],
+        });
+      } else if (component.format === "TEXT") {
+        const matches = component.text?.match(/\{\{\d+\}\}/g) || [];
         if (matches.length > 0) {
           components.push({
-            type: 'header',
+            type: "header",
             parameters: matches.map(() => {
-              const value = resolveCatalogTemplateVariable(resolvedVariableOrder[cursor] || '', mergedContext)
-              cursor += 1
-              return { type: 'text', text: value }
-            })
-          })
+              const value = resolveCatalogTemplateVariable(
+                resolvedVariableOrder[cursor] || "",
+                mergedContext,
+              );
+              cursor += 1;
+              return { type: "text", text: value };
+            }),
+          });
         }
       }
     }
 
-    if (component?.type === 'BODY') {
-      const matches = component.text?.match(/\{\{\d+\}\}/g) || []
+    if (component?.type === "BODY") {
+      const matches = component.text?.match(/\{\{\d+\}\}/g) || [];
       components.push({
-        type: 'body',
+        type: "body",
         parameters: matches.map(() => {
-          const value = resolveCatalogTemplateVariable(resolvedVariableOrder[cursor] || '', mergedContext)
-          cursor += 1
-          return { type: 'text', text: value }
-        })
-      })
+          const value = resolveCatalogTemplateVariable(
+            resolvedVariableOrder[cursor] || "",
+            mergedContext,
+          );
+          cursor += 1;
+          return { type: "text", text: value };
+        }),
+      });
     }
 
-    if (component?.type === 'BUTTONS' && Array.isArray(component.buttons)) {
+    if (component?.type === "BUTTONS" && Array.isArray(component.buttons)) {
       component.buttons.forEach((button, bIdx) => {
-        const matches = button?.url?.match(/\{\{\d+\}\}/g) || []
+        const matches = button?.url?.match(/\{\{\d+\}\}/g) || [];
         if (matches.length > 0) {
           components.push({
-            type: 'button',
-            sub_type: 'url',
+            type: "button",
+            sub_type: "url",
             index: String(bIdx),
             parameters: matches.map(() => {
-              const value = resolveCatalogTemplateVariable(resolvedVariableOrder[cursor] || '', mergedContext)
-              cursor += 1
-              return { type: 'text', text: value }
-            })
-          })
+              const value = resolveCatalogTemplateVariable(
+                resolvedVariableOrder[cursor] || "",
+                mergedContext,
+              );
+              cursor += 1;
+              return { type: "text", text: value };
+            }),
+          });
         }
-      })
+      });
     }
   }
 
   return {
-    messaging_product: 'whatsapp',
-    type: 'template',
+    messaging_product: "whatsapp",
+    type: "template",
     template: {
       name: templateName,
       language: { code: templateLanguage },
-      components
-    }
-  }
+      components,
+    },
+  };
 }
-
-
 
 // Legacy executeAutomationsForEvent removed. Using triggerAutomationEvent queue instead.
 
@@ -631,94 +788,121 @@ function buildCatalogTemplatePayload({ templateName, templateLanguage, templateC
 
 // Helper function to handle CORS
 function handleCORS(response) {
-  response.headers.set('Access-Control-Allow-Origin', process.env.CORS_ORIGINS || '*')
-  response.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
-  response.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-  response.headers.set('Access-Control-Allow-Credentials', 'true')
-  return response
+  response.headers.set(
+    "Access-Control-Allow-Origin",
+    process.env.CORS_ORIGINS || "*",
+  );
+  response.headers.set(
+    "Access-Control-Allow-Methods",
+    "GET, POST, PUT, DELETE, OPTIONS",
+  );
+  response.headers.set(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization",
+  );
+  response.headers.set("Access-Control-Allow-Credentials", "true");
+  return response;
 }
 
 // OPTIONS handler for CORS
 export async function OPTIONS() {
-  return handleCORS(new NextResponse('', { status: 200 }))
+  return handleCORS(new NextResponse("", { status: 200 }));
 }
 
 // WhatsApp API functions
-async function sendWhatsAppMessage(phoneNumberId, accessToken, to, messageData) {
+async function sendWhatsAppMessage(
+  phoneNumberId,
+  accessToken,
+  to,
+  messageData,
+) {
   // Updated to use the same version as your working cURL command
-  const url = `https://graph.facebook.com/v22.0/${phoneNumberId}/messages`
+  const url = `https://graph.facebook.com/v22.0/${phoneNumberId}/messages`;
 
   const response = await fetch(url, {
-    method: 'POST',
+    method: "POST",
     headers: {
       ...buildMetaAuthHeaders(accessToken),
-      'Content-Type': 'application/json'
+      "Content-Type": "application/json",
     },
-    body: JSON.stringify(messageData)
-  })
+    body: JSON.stringify(messageData),
+  });
 
-  const data = await response.json()
+  const data = await response.json();
 
   // Improved error handling to ensure we only return success when the message is actually sent
   if (!response.ok) {
-    console.error('WhatsApp API Error:', data);
-    const metaMessage = mapMetaAccessTokenError(data.error?.message || `WhatsApp API error: ${response.status} ${response.statusText}`)
-    const unsupportedPost = /unsupported post request/i.test(metaMessage)
+    console.error("WhatsApp API Error:", data);
+    const metaMessage = mapMetaAccessTokenError(
+      data.error?.message ||
+        `WhatsApp API error: ${response.status} ${response.statusText}`,
+    );
+    const unsupportedPost = /unsupported post request/i.test(metaMessage);
     if (unsupportedPost || data.error?.code === 100) {
-      throw new Error('Phone Number ID is invalid, inaccessible for this token, or you pasted a Business Account ID instead of a Phone Number ID.')
+      throw new Error(
+        "Phone Number ID is invalid, inaccessible for this token, or you pasted a Business Account ID instead of a Phone Number ID.",
+      );
     }
-    throw new Error(metaMessage)
+    throw new Error(metaMessage);
   }
 
   // Additional validation that the message was accepted
-  if (!data.messages || !Array.isArray(data.messages) || data.messages.length === 0) {
-    console.error('Unexpected WhatsApp API response:', data);
-    throw new Error('WhatsApp API returned unexpected response format')
+  if (
+    !data.messages ||
+    !Array.isArray(data.messages) ||
+    data.messages.length === 0
+  ) {
+    console.error("Unexpected WhatsApp API response:", data);
+    throw new Error("WhatsApp API returned unexpected response format");
   }
 
-  return data
+  return data;
 }
 
-
-
-async function sendOrderStatusUpdate(phoneNumberId, accessToken, to, order, newStatus) {
+async function sendOrderStatusUpdate(
+  phoneNumberId,
+  accessToken,
+  to,
+  order,
+  newStatus,
+) {
   // Format the status message
-  let statusMessage = '';
-  let statusEmoji = '';
+  let statusMessage = "";
+  let statusEmoji = "";
 
   switch (newStatus) {
-    case 'fulfilled':
-      statusEmoji = '✅';
+    case "fulfilled":
+      statusEmoji = "✅";
       statusMessage = `Your order #${order.orderNumber} has been fulfilled and is on its way!`;
       break;
-    case 'shipped':
-      statusEmoji = '🚚';
+    case "shipped":
+      statusEmoji = "🚚";
       statusMessage = `Your order #${order.orderNumber} has been shipped!`;
       break;
-    case 'cancelled':
-      statusEmoji = '❌';
+    case "cancelled":
+      statusEmoji = "❌";
       statusMessage = `Your order #${order.orderNumber} has been cancelled.`;
       break;
-    case 'refunded':
-      statusEmoji = '💰';
+    case "refunded":
+      statusEmoji = "💰";
       statusMessage = `Your order #${order.orderNumber} has been refunded.`;
       break;
     default:
-      statusEmoji = '🔄';
+      statusEmoji = "🔄";
       statusMessage = `Your order #${order.orderNumber} status has been updated to: ${newStatus}`;
   }
 
   const messageData = {
     messaging_product: "whatsapp",
-    to: to.replace(/\D/g, ''),
+    to: to.replace(/\D/g, ""),
     type: "text",
     text: {
       body: `${statusEmoji} *Order Status Update*
 
 ${statusMessage}
 
-Thank you for your purchase!`
-    }
+Thank you for your purchase!`,
+    },
   };
 
   return await sendWhatsAppMessage(phoneNumberId, accessToken, to, messageData);
@@ -726,56 +910,57 @@ Thank you for your purchase!`
 
 // Shopify API functions
 async function fetchShopifyProducts(shopify) {
-  const accessToken = await getShopifyAccessToken(shopify)
-  const { shopDomain } = shopify
-  const url = `https://${shopDomain}/admin/api/2023-10/products.json`
+  const accessToken = await getShopifyAccessToken(shopify);
+  const { shopDomain } = shopify;
+  const url = `https://${shopDomain}/admin/api/2023-10/products.json`;
 
   const response = await fetch(url, {
     headers: {
-      'X-Shopify-Access-Token': accessToken,
-      'Content-Type': 'application/json'
-    }
-  })
+      "X-Shopify-Access-Token": accessToken,
+      "Content-Type": "application/json",
+    },
+  });
 
-  const data = await response.json()
+  const data = await response.json();
   if (!response.ok) {
-    throw new Error(data.errors || 'Shopify API error')
+    throw new Error(data.errors || "Shopify API error");
   }
 
-  return data.products.map(product => ({
+  return data.products.map((product) => ({
     id: product.id.toString(),
     title: product.title,
-    description: product.body_html?.replace(/<[^>]*>/g, '').substring(0, 200),
-    price: product.variants[0]?.price || '0.00',
+    description: product.body_html?.replace(/<[^>]*>/g, "").substring(0, 200),
+    price: product.variants[0]?.price || "0.00",
     image: product.images[0]?.src,
-    handle: product.handle
-  }))
+    handle: product.handle,
+  }));
 }
 
 async function fetchShopifyOrders(shopify) {
-  const accessToken = await getShopifyAccessToken(shopify)
-  const { shopDomain } = shopify
-  const url = `https://${shopDomain}/admin/api/2023-10/orders.json?status=any`
+  const accessToken = await getShopifyAccessToken(shopify);
+  const { shopDomain } = shopify;
+  const url = `https://${shopDomain}/admin/api/2023-10/orders.json?status=any`;
 
   const response = await fetch(url, {
     headers: {
-      'X-Shopify-Access-Token': accessToken,
-      'Content-Type': 'application/json'
-    }
-  })
+      "X-Shopify-Access-Token": accessToken,
+      "Content-Type": "application/json",
+    },
+  });
 
-  const data = await response.json()
+  const data = await response.json();
   if (!response.ok) {
-    throw new Error(data.errors || 'Shopify API error')
+    throw new Error(data.errors || "Shopify API error");
   }
 
   // Transform Shopify orders to match our internal format
-  return data.orders.map(order => ({
+  return data.orders.map((order) => ({
     id: `shopify-${order.id}`,
-    userId: shopify._resolvedUserId || 'default',
+    userId: shopify._resolvedUserId || "default",
     shopifyOrderId: order.id.toString(),
     orderNumber: order.order_number,
-    customerName: `${order.customer?.first_name || ''} ${order.customer?.last_name || ''}`.trim(),
+    customerName:
+      `${order.customer?.first_name || ""} ${order.customer?.last_name || ""}`.trim(),
     customerEmail: order.customer?.email,
     customerPhone: order.customer?.phone,
     total: order.total_price,
@@ -783,28 +968,31 @@ async function fetchShopifyOrders(shopify) {
     status: order.financial_status,
     lineItems: order.line_items || [],
     createdAt: new Date(order.created_at),
-    updatedAt: new Date(order.updated_at || order.created_at)
-  }))
+    updatedAt: new Date(order.updated_at || order.created_at),
+  }));
 }
 
 async function fetchCompleteShopifyOrder(shopify, orderId) {
-  const accessToken = await getShopifyAccessToken(shopify)
-  const { shopDomain } = shopify
+  const accessToken = await getShopifyAccessToken(shopify);
+  const { shopDomain } = shopify;
   const url = `https://${shopDomain}/admin/api/2023-10/orders/${orderId}.json`;
 
   console.log(`Fetching complete order ${orderId} from Shopify API: ${url}`);
 
   const response = await fetch(url, {
     headers: {
-      'X-Shopify-Access-Token': accessToken,
-      'Content-Type': 'application/json'
-    }
+      "X-Shopify-Access-Token": accessToken,
+      "Content-Type": "application/json",
+    },
   });
 
   const data = await response.json();
   if (!response.ok) {
-    console.error(`Shopify API error fetching complete order ${orderId}:`, data.errors || response.status);
-    throw new Error(data.errors || 'Shopify API error fetching complete order');
+    console.error(
+      `Shopify API error fetching complete order ${orderId}:`,
+      data.errors || response.status,
+    );
+    throw new Error(data.errors || "Shopify API error fetching complete order");
   }
 
   console.log(`Successfully fetched complete order ${orderId}`);
@@ -812,78 +1000,84 @@ async function fetchCompleteShopifyOrder(shopify, orderId) {
 }
 
 async function createShopifyWebhook(shopify, topic, webhookUrl) {
-  const accessToken = await getShopifyAccessToken(shopify)
-  const { shopDomain } = shopify
-  const url = `https://${shopDomain}/admin/api/2023-10/webhooks.json`
+  const accessToken = await getShopifyAccessToken(shopify);
+  const { shopDomain } = shopify;
+  const url = `https://${shopDomain}/admin/api/2023-10/webhooks.json`;
 
   const response = await fetch(url, {
-    method: 'POST',
+    method: "POST",
     headers: {
-      'X-Shopify-Access-Token': accessToken,
-      'Content-Type': 'application/json'
+      "X-Shopify-Access-Token": accessToken,
+      "Content-Type": "application/json",
     },
     body: JSON.stringify({
       webhook: {
         topic: topic,
         address: webhookUrl,
-        format: 'json'
-      }
-    })
-  })
+        format: "json",
+      },
+    }),
+  });
 
-  const data = await response.json()
+  const data = await response.json();
   if (!response.ok) {
-    throw new Error(data.errors || 'Shopify webhook creation error')
+    throw new Error(data.errors || "Shopify webhook creation error");
   }
 
-  return data.webhook
+  return data.webhook;
 }
 
 // Stripe functions
 async function createStripeCheckoutSession(lineItems, metadata) {
   // This would integrate with Stripe API
   // Placeholder for now
-  const sessionId = uuidv4()
-  const checkoutUrl = `https://checkout.stripe.com/pay/${sessionId}`
+  const sessionId = uuidv4();
+  const checkoutUrl = `https://checkout.stripe.com/pay/${sessionId}`;
 
   return {
     id: sessionId,
-    url: checkoutUrl
-  }
+    url: checkoutUrl,
+  };
 }
 
 // Route handler function
 async function handleRoute(request, { params }) {
-  const { path = [] } = params
+  const { path = [] } = params;
   // Fix the route construction to properly handle webhook paths
-  const route = path.length > 0 ? `/${path.join('/')}` : '/'
-  const method = request.method
-  const currentUserId = resolveRequestUserId(request)
+  const route = path.length > 0 ? `/${path.join("/")}` : "/";
+  const method = request.method;
+  const currentUserId = resolveRequestUserId(request);
 
   // Add debugging for route matching
-  console.log(`Processing route: ${route}, method: ${method}, path array:`, path)
-  console.log(`Full params:`, params)
+  console.log(
+    `Processing route: ${route}, method: ${method}, path array:`,
+    path,
+  );
+  console.log(`Full params:`, params);
 
   try {
     // WhatsApp webhook verification - MUST BE FAST to avoid Meta timeout
-    if (route === '/webhook/whatsapp' && method === 'GET') {
-      const verifyToken = request.nextUrl.searchParams.get('hub.verify_token')
-      const challenge = request.nextUrl.searchParams.get('hub.challenge')
+    if (route === "/webhook/whatsapp" && method === "GET") {
+      const verifyToken = request.nextUrl.searchParams.get("hub.verify_token");
+      const challenge = request.nextUrl.searchParams.get("hub.challenge");
 
       if (verifyToken) {
-        const envToken = process.env.WHATSAPP_VERIFY_TOKEN
-        const fallbackToken = '41ddad7ee4b44d0418876d444b36f4ac817c042c36265b5d'
-        
-        let isVerified = (verifyToken === envToken) || (verifyToken === fallbackToken)
-        
+        const envToken = process.env.WHATSAPP_VERIFY_TOKEN;
+        const fallbackToken =
+          "41ddad7ee4b44d0418876d444b36f4ac817c042c36265b5d";
+
+        let isVerified =
+          verifyToken === envToken || verifyToken === fallbackToken;
+
         if (!isVerified) {
           try {
             // Try to resolve the specific user's integrations if userId is in query
-            const queryUserId = request.nextUrl.searchParams.get('userId') || 'default'
-            const userIntegrations = await getStoredIntegrations(queryUserId)
-            const storedToken = userIntegrations?.whatsapp?.webhookVerifyToken
+            const queryUserId =
+              request.nextUrl.searchParams.get("userId") || "default";
+            const userIntegrations = await getStoredIntegrations(queryUserId);
+            const storedToken = userIntegrations?.whatsapp?.webhookVerifyToken;
             if (storedToken && verifyToken === storedToken) {
-              isVerified = true
+              isVerified = true;
             }
           } catch (e) {
             // Ignore DB errors for speed
@@ -891,38 +1085,45 @@ async function handleRoute(request, { params }) {
         }
 
         if (isVerified) {
-          console.log('WhatsApp webhook verification successful')
+          console.log("WhatsApp webhook verification successful");
           return new NextResponse(challenge, {
-            headers: { 'Content-Type': 'text/plain' }
-          })
+            headers: { "Content-Type": "text/plain" },
+          });
         } else {
-          console.warn('WhatsApp webhook verification failed: Token mismatch')
-          return new NextResponse('Forbidden', { status: 403 })
+          console.warn("WhatsApp webhook verification failed: Token mismatch");
+          return new NextResponse("Forbidden", { status: 403 });
         }
       }
 
       // If no verify token provided, return a message indicating endpoint is configured
-      return handleCORS(NextResponse.json({
-        message: "WhatsApp webhook endpoint is configured. Provide hub.verify_token for verification.",
-        status: "ready"
-      }))
+      return handleCORS(
+        NextResponse.json({
+          message:
+            "WhatsApp webhook endpoint is configured. Provide hub.verify_token for verification.",
+          status: "ready",
+        }),
+      );
     }
 
     // WhatsApp webhook POST - incoming messages
-    if (route === '/webhook/whatsapp' && method === 'POST') {
+    if (route === "/webhook/whatsapp" && method === "POST") {
       try {
-        const body = await request.json()
+        const body = await request.json();
 
         // Log webhook for debugging - userId resolved per phone number below
         // We do a quick pre-check to find the user and log under them
-        let webhookLogUserId = 'default'
+        let webhookLogUserId = "default";
         if (body.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id) {
-          const pidForLog = body.entry[0].changes[0].value.metadata.phone_number_id
-          webhookLogUserId = await getUserIdByWhatsAppPhoneNumberId(pidForLog)
+          const pidForLog =
+            body.entry[0].changes[0].value.metadata.phone_number_id;
+          webhookLogUserId = await getUserIdByWhatsAppPhoneNumberId(pidForLog);
         }
-        await insertWebhookLog('whatsapp', null, body, webhookLogUserId)
+        await insertWebhookLog("whatsapp", null, body, webhookLogUserId);
 
-        console.log('WhatsApp webhook received:', JSON.stringify(body, null, 2));
+        console.log(
+          "WhatsApp webhook received:",
+          JSON.stringify(body, null, 2),
+        );
 
         // Process incoming WhatsApp messages
         if (body.entry && Array.isArray(body.entry)) {
@@ -930,33 +1131,47 @@ async function handleRoute(request, { params }) {
             if (entry.changes && Array.isArray(entry.changes)) {
               for (const change of entry.changes) {
                 // Handle incoming messages
-                if (change.field === 'messages') {
-                  const incomingPhoneNumberId = change.value?.metadata?.phone_number_id || ''
-                  const incomingUserId = await getUserIdByWhatsAppPhoneNumberId(incomingPhoneNumberId)
-                  
+                if (change.field === "messages") {
+                  const incomingPhoneNumberId =
+                    change.value?.metadata?.phone_number_id || "";
+                  const incomingUserId = await getUserIdByWhatsAppPhoneNumberId(
+                    incomingPhoneNumberId,
+                  );
+
                   const contactsByWaId = new Map(
                     (change.value?.contacts || [])
                       .filter((contact) => contact?.wa_id)
-                      .map((contact) => [contact.wa_id, contact])
-                  )
+                      .map((contact) => [contact.wa_id, contact]),
+                  );
 
-                  if (change.value?.messages && Array.isArray(change.value.messages)) {
-                    const integrations = await getStoredIntegrations(incomingUserId)
-                    
+                  if (
+                    change.value?.messages &&
+                    Array.isArray(change.value.messages)
+                  ) {
+                    const integrations =
+                      await getStoredIntegrations(incomingUserId);
+
                     for (const message of change.value.messages) {
                       // Save incoming message to database
-                      const contact = contactsByWaId.get(message.from)
-                      const savedMessage = await saveIncomingMessage(message, incomingUserId)
-                      
-                      const context = buildIncomingWhatsAppAutomationContext(message, savedMessage, contact)
-                      
+                      const contact = contactsByWaId.get(message.from);
+                      const savedMessage = await saveIncomingMessage(
+                        message,
+                        incomingUserId,
+                      );
+
+                      const context = buildIncomingWhatsAppAutomationContext(
+                        message,
+                        savedMessage,
+                        contact,
+                      );
+
                       // Trigger automation asynchronously via Queue
                       await triggerAutomationEvent(
-                        'whatsapp.message_received',
+                        "whatsapp.message_received",
                         context,
                         integrations,
-                        incomingUserId
-                      )
+                        incomingUserId,
+                      );
                     }
                   }
                 }
@@ -965,831 +1180,1064 @@ async function handleRoute(request, { params }) {
           }
         }
 
-        return handleCORS(NextResponse.json({ success: true }))
+        return handleCORS(NextResponse.json({ success: true }));
       } catch (error) {
-        console.error('WhatsApp Webhook POST error:', error)
-        return handleCORS(NextResponse.json({ error: 'Webhook processing failed' }, { status: 500 }))
+        console.error("WhatsApp Webhook POST error:", error);
+        return handleCORS(
+          NextResponse.json(
+            { error: "Webhook processing failed" },
+            { status: 500 },
+          ),
+        );
       }
     }
 
     // Instagram Webhook GET - Verification
-    if (route === '/webhook/instagram' && method === 'GET') {
-      const verifyToken = request.nextUrl.searchParams.get('hub.verify_token')
-      const challenge = request.nextUrl.searchParams.get('hub.challenge')
-      const expectedToken = process.env.INSTAGRAM_VERIFY_TOKEN || 'instagram_verify_token_default'
-      
+    if (route === "/webhook/instagram" && method === "GET") {
+      const verifyToken = request.nextUrl.searchParams.get("hub.verify_token");
+      const challenge = request.nextUrl.searchParams.get("hub.challenge");
+      const expectedToken =
+        process.env.INSTAGRAM_VERIFY_TOKEN || "instagram_verify_token_default";
+
       if (verifyToken === expectedToken) {
-        console.log('Instagram webhook verification successful')
+        console.log("Instagram webhook verification successful");
         return new NextResponse(challenge, {
-          headers: { 'Content-Type': 'text/plain' }
-        })
+          headers: { "Content-Type": "text/plain" },
+        });
       }
-      
+
       try {
-        const queryUserId = request.nextUrl.searchParams.get('userId') || 'default'
-        const userIntegrations = await getStoredIntegrations(queryUserId)
-        const storedToken = userIntegrations?.instagram?.webhookVerifyToken
+        const queryUserId =
+          request.nextUrl.searchParams.get("userId") || "default";
+        const userIntegrations = await getStoredIntegrations(queryUserId);
+        const storedToken = userIntegrations?.instagram?.webhookVerifyToken;
         if (storedToken && verifyToken === storedToken) {
-          console.log('Instagram webhook verification successful via integrated user verify token')
+          console.log(
+            "Instagram webhook verification successful via integrated user verify token",
+          );
           return new NextResponse(challenge, {
-            headers: { 'Content-Type': 'text/plain' }
-          })
+            headers: { "Content-Type": "text/plain" },
+          });
         }
       } catch (e) {
         // ignore db error
       }
-      
-      console.warn('Instagram webhook verification failed')
-      return new NextResponse('Forbidden', { status: 403 })
+
+      console.warn("Instagram webhook verification failed");
+      return new NextResponse("Forbidden", { status: 403 });
     }
 
     // Instagram Webhook POST - incoming messages/comments
-    if (route === '/webhook/instagram' && method === 'POST') {
+    if (route === "/webhook/instagram" && method === "POST") {
       try {
-        const body = await request.json()
-        
-        let resolvedUserId = 'default'
-        const igAccountId = body.entry?.[0]?.id
+        const body = await request.json();
+
+        let resolvedUserId = "default";
+        const igAccountId = body.entry?.[0]?.id;
         if (igAccountId) {
-          resolvedUserId = await getUserIdByInstagramAccountId(igAccountId)
+          resolvedUserId = await getUserIdByInstagramAccountId(igAccountId);
         }
-        
-        await insertWebhookLog('instagram', null, body, resolvedUserId)
-        console.log('Instagram webhook received:', JSON.stringify(body, null, 2))
-        
+
+        await insertWebhookLog("instagram", null, body, resolvedUserId);
+        console.log(
+          "Instagram webhook received:",
+          JSON.stringify(body, null, 2),
+        );
+
         if (body.entry && Array.isArray(body.entry)) {
-          const integrations = await getStoredIntegrations(resolvedUserId)
+          const integrations = await getStoredIntegrations(resolvedUserId);
           for (const entry of body.entry) {
             // A. Handle Comments (Comment Growth Hack)
             if (entry.changes && Array.isArray(entry.changes)) {
               for (const change of entry.changes) {
-                if (change.field === 'comments') {
-                  const commentVal = change.value
+                if (change.field === "comments") {
+                  const commentVal = change.value;
                   if (commentVal && commentVal.id) {
                     const context = {
                       commentId: commentVal.id,
-                      commentText: commentVal.text || '',
+                      commentText: commentVal.text || "",
                       senderId: commentVal.from?.id,
-                      username: commentVal.from?.username || 'customer',
+                      username: commentVal.from?.username || "customer",
                       mediaId: commentVal.media?.id,
                       instagramAccountId: entry.id,
-                      messageText: commentVal.text || '', // mapped for simple keyword matching in flows
-                      platform: 'instagram'
-                    }
-                    
+                      messageText: commentVal.text || "", // mapped for simple keyword matching in flows
+                      platform: "instagram",
+                    };
+
                     await triggerAutomationEvent(
-                      'instagram.comment_created',
+                      "instagram.comment_created",
                       context,
                       integrations,
-                      resolvedUserId
-                    )
+                      resolvedUserId,
+                    );
                   }
                 }
               }
             }
-            
+
             // B. Handle DMs
             if (entry.messaging && Array.isArray(entry.messaging)) {
               for (const messagingEvent of entry.messaging) {
-                if (messagingEvent.message) {
-                  const senderId = messagingEvent.sender?.id
-                  const recipientId = messagingEvent.recipient?.id
-                  const messageText = messagingEvent.message?.text || ''
-                  
+                if (messagingEvent.message || messagingEvent.message_edit) {
+                  const senderId = messagingEvent.sender?.id;
+                  const recipientId = messagingEvent.recipient?.id;
+                  const messageText =
+                    messagingEvent.message?.text ||
+                    messagingEvent.message_edit?.text ||
+                    "";
+
+                  // Ignore echo messages (messages sent by the page itself)
+                  if (senderId === igAccountId) {
+                    console.log(
+                      `Ignoring echo message from Instagram account ${igAccountId}`,
+                    );
+                    continue;
+                  }
+
                   const context = {
                     senderId,
                     recipientId,
                     instagramAccountId: igAccountId,
                     messageText,
-                    username: messagingEvent.sender?.username || 'customer',
+                    username: messagingEvent.sender?.username || "customer",
                     timestamp: messagingEvent.timestamp || Date.now(),
-                    platform: 'instagram'
-                  }
-                  
+                    platform: "instagram",
+                  };
+
                   await triggerAutomationEvent(
-                    'instagram.message_received',
+                    "instagram.message_received",
                     context,
                     integrations,
-                    resolvedUserId
-                  )
+                    resolvedUserId,
+                  );
                 }
               }
             }
           }
         }
-        
-        return handleCORS(NextResponse.json({ success: true }))
+
+        return handleCORS(NextResponse.json({ success: true }));
       } catch (error) {
-        console.error('Instagram Webhook POST error:', error)
-        return handleCORS(NextResponse.json({ error: 'Webhook processing failed' }, { status: 500 }))
+        console.error("Instagram Webhook POST error:", error);
+        return handleCORS(
+          NextResponse.json(
+            { error: "Webhook processing failed" },
+            { status: 500 },
+          ),
+        );
       }
     }
 
     // Instagram Accounts connected list
-    if (route === '/integrations/instagram/accounts' && method === 'GET') {
-      const authenticatedUserId = requireRequestUserId(request)
-      const accounts = await getStoredInstagramAccounts(authenticatedUserId)
-      return handleCORS(NextResponse.json({ accounts }))
+    if (route === "/integrations/instagram/accounts" && method === "GET") {
+      const authenticatedUserId = requireRequestUserId(request);
+      const accounts = await getStoredInstagramAccounts(authenticatedUserId);
+      return handleCORS(NextResponse.json({ accounts }));
     }
 
     // Save Instagram connection
-    if (route === '/integrations/instagram/accounts' && method === 'POST') {
-      const authenticatedUserId = requireRequestUserId(request)
-      const data = await request.json()
-      
+    if (route === "/integrations/instagram/accounts" && method === "POST") {
+      const authenticatedUserId = requireRequestUserId(request);
+      const data = await request.json();
+
       if (!data.pageId || !data.instagramAccountId || !data.accessToken) {
-        return handleCORS(NextResponse.json({ error: 'Missing required parameters' }, { status: 400 }))
+        return handleCORS(
+          NextResponse.json(
+            { error: "Missing required parameters" },
+            { status: 400 },
+          ),
+        );
       }
-      
-      const accountId = await saveInstagramAccount(data, authenticatedUserId)
-      return handleCORS(NextResponse.json({ success: true, accountId }))
+
+      const accountId = await saveInstagramAccount(data, authenticatedUserId);
+      return handleCORS(NextResponse.json({ success: true, accountId }));
     }
 
     // Delete Instagram connection
-    if (route === '/integrations/instagram/accounts' && method === 'DELETE') {
-      const authenticatedUserId = requireRequestUserId(request)
-      const accountId = request.nextUrl.searchParams.get('id')
-      
+    if (route === "/integrations/instagram/accounts" && method === "DELETE") {
+      const authenticatedUserId = requireRequestUserId(request);
+      const accountId = request.nextUrl.searchParams.get("id");
+
       if (!accountId) {
-        return handleCORS(NextResponse.json({ error: 'Missing account ID' }, { status: 400 }))
+        return handleCORS(
+          NextResponse.json({ error: "Missing account ID" }, { status: 400 }),
+        );
       }
-      
-      const pool = getPool()
+
+      const pool = getPool();
       await pool.execute(
-        'DELETE FROM instagram_accounts WHERE id = ? AND userId = ?',
-        [accountId, authenticatedUserId]
-      )
-      return handleCORS(NextResponse.json({ success: true }))
+        "DELETE FROM instagram_accounts WHERE id = ? AND userId = ?",
+        [accountId, authenticatedUserId],
+      );
+      return handleCORS(NextResponse.json({ success: true }));
     }
 
     // Instagram OAuth Initiation
-    if (route === '/integrations/instagram/auth' && method === 'GET') {
-      const authenticatedUserId = requireRequestUserId(request)
-      const clientId = process.env.INSTAGRAM_APP_ID || '821548740438122'
-      const redirectUri = process.env.INSTAGRAM_REDIRECT_URI || 'https://chatflow.vibeship.in/api/integrations/instagram/callback'
-      
-      const authParams = new URLSearchParams()
-      authParams.set('client_id', clientId)
-      authParams.set('redirect_uri', redirectUri)
-      authParams.set('response_type', 'code')
-      authParams.set('state', authenticatedUserId)
-      authParams.set('scope', 'pages_show_list,pages_messaging,instagram_basic,instagram_manage_comments,instagram_manage_messages,pages_read_engagement')
-      
-      const authUrl = `https://www.facebook.com/v19.0/dialog/oauth?${authParams.toString()}`
-      return NextResponse.redirect(authUrl)
+    if (route === "/integrations/instagram/auth" && method === "GET") {
+      const authenticatedUserId = requireRequestUserId(request);
+      const clientId = process.env.INSTAGRAM_APP_ID || "821548740438122";
+      const redirectUri =
+        process.env.INSTAGRAM_REDIRECT_URI ||
+        "https://chatflow.vibeship.in/api/integrations/instagram/callback";
+
+      const authParams = new URLSearchParams();
+      authParams.set("client_id", clientId);
+      authParams.set("redirect_uri", redirectUri);
+      authParams.set("response_type", "code");
+      authParams.set("state", authenticatedUserId);
+      authParams.set(
+        "scope",
+        "pages_show_list,pages_messaging,instagram_basic,instagram_manage_comments,instagram_manage_messages,pages_read_engagement",
+      );
+
+      const authUrl = `https://www.facebook.com/v19.0/dialog/oauth?${authParams.toString()}`;
+      return NextResponse.redirect(authUrl);
     }
 
     // Instagram OAuth Callback
-    if (route === '/integrations/instagram/callback' && method === 'GET') {
-      const code = request.nextUrl.searchParams.get('code')
-      const error = request.nextUrl.searchParams.get('error')
-      const state = request.nextUrl.searchParams.get('state') // userId
-      
-      const redirectBase = process.env.NEXT_PUBLIC_BASE_URL || 'https://chatflow.vibeship.in'
-      
+    if (route === "/integrations/instagram/callback" && method === "GET") {
+      const code = request.nextUrl.searchParams.get("code");
+      const error = request.nextUrl.searchParams.get("error");
+      const state = request.nextUrl.searchParams.get("state"); // userId
+
+      const redirectBase =
+        process.env.NEXT_PUBLIC_BASE_URL || "https://chatflow.vibeship.in";
+
       if (error) {
-        console.error('Instagram OAuth Failed:', error)
-        return NextResponse.redirect(`${redirectBase}/dashboard/settings?error=instagram_oauth_failed&detail=${encodeURIComponent(error)}`)
+        console.error("Instagram OAuth Failed:", error);
+        return NextResponse.redirect(
+          `${redirectBase}/dashboard/settings?error=instagram_oauth_failed&detail=${encodeURIComponent(error)}`,
+        );
       }
-      
+
       if (!code) {
-        return NextResponse.redirect(`${redirectBase}/dashboard/settings?error=instagram_no_code`)
+        return NextResponse.redirect(
+          `${redirectBase}/dashboard/settings?error=instagram_no_code`,
+        );
       }
-      
-      const userId = state || 'default'
-      
+
+      const userId = state || "default";
+
       try {
-        const clientId = process.env.INSTAGRAM_APP_ID || '821548740438122'
-        const clientSecret = process.env.INSTAGRAM_APP_SECRET || '4452e8bfd6873c729063dc49ee1e58cc'
-        const redirectUri = process.env.INSTAGRAM_REDIRECT_URI || 'https://chatflow.vibeship.in/api/integrations/instagram/callback'
-        
+        const clientId = process.env.INSTAGRAM_APP_ID || "821548740438122";
+        const clientSecret =
+          process.env.INSTAGRAM_APP_SECRET ||
+          "4452e8bfd6873c729063dc49ee1e58cc";
+        const redirectUri =
+          process.env.INSTAGRAM_REDIRECT_URI ||
+          "https://chatflow.vibeship.in/api/integrations/instagram/callback";
+
         // 1. Exchange authorization code for short-lived access token
-        const tokenUrl = `https://graph.facebook.com/v19.0/oauth/access_token?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&client_secret=${clientSecret}&code=${code}`
-        
-        const tokenResponse = await fetch(tokenUrl)
-        const tokenData = await tokenResponse.json()
-        
+        const tokenUrl = `https://graph.facebook.com/v19.0/oauth/access_token?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&client_secret=${clientSecret}&code=${code}`;
+
+        const tokenResponse = await fetch(tokenUrl);
+        const tokenData = await tokenResponse.json();
+
         if (!tokenResponse.ok || tokenData.error) {
-          const errMsg = tokenData.error?.message || 'Token exchange failed'
-          console.error('Instagram OAuth token exchange failed:', tokenData.error)
-          return NextResponse.redirect(`${redirectBase}/dashboard/settings?error=instagram_token_failed&detail=${encodeURIComponent(errMsg)}`)
+          const errMsg = tokenData.error?.message || "Token exchange failed";
+          console.error(
+            "Instagram OAuth token exchange failed:",
+            tokenData.error,
+          );
+          return NextResponse.redirect(
+            `${redirectBase}/dashboard/settings?error=instagram_token_failed&detail=${encodeURIComponent(errMsg)}`,
+          );
         }
-        
-        const shortLivedToken = tokenData.access_token
-        
+
+        const shortLivedToken = tokenData.access_token;
+
         // 2. Exchange short-lived token for long-lived User Access Token
-        const longLivedUrl = `https://graph.facebook.com/v19.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${clientId}&client_secret=${clientSecret}&fb_exchange_token=${shortLivedToken}`
-        
-        const longLivedResponse = await fetch(longLivedUrl)
-        const longLivedData = await longLivedResponse.json()
-        
+        const longLivedUrl = `https://graph.facebook.com/v19.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${clientId}&client_secret=${clientSecret}&fb_exchange_token=${shortLivedToken}`;
+
+        const longLivedResponse = await fetch(longLivedUrl);
+        const longLivedData = await longLivedResponse.json();
+
         if (!longLivedResponse.ok || longLivedData.error) {
-          const errMsg = longLivedData.error?.message || 'Long-lived token exchange failed'
-          console.error('Instagram long-lived exchange failed:', longLivedData.error)
-          return NextResponse.redirect(`${redirectBase}/dashboard/settings?error=instagram_long_token_failed&detail=${encodeURIComponent(errMsg)}`)
+          const errMsg =
+            longLivedData.error?.message || "Long-lived token exchange failed";
+          console.error(
+            "Instagram long-lived exchange failed:",
+            longLivedData.error,
+          );
+          return NextResponse.redirect(
+            `${redirectBase}/dashboard/settings?error=instagram_long_token_failed&detail=${encodeURIComponent(errMsg)}`,
+          );
         }
-        
-        const longLivedToken = longLivedData.access_token
-        
+
+        const longLivedToken = longLivedData.access_token;
+
         // 3. Fetch connected pages and linked Instagram accounts
-        const pagesUrl = `https://graph.facebook.com/v19.0/me/accounts?fields=name,access_token,instagram_business_account{id,username,name}&access_token=${longLivedToken}`
-        const pagesResponse = await fetch(pagesUrl)
-        const pagesData = await pagesResponse.json()
-        
+        const pagesUrl = `https://graph.facebook.com/v19.0/me/accounts?fields=name,access_token,instagram_business_account{id,username,name}&access_token=${longLivedToken}`;
+        const pagesResponse = await fetch(pagesUrl);
+        const pagesData = await pagesResponse.json();
+
         if (!pagesResponse.ok || pagesData.error) {
-          const errMsg = pagesData.error?.message || 'Failed to fetch connected Facebook pages'
-          console.error('Instagram fetch pages failed:', pagesData.error)
-          return NextResponse.redirect(`${redirectBase}/dashboard/settings?error=instagram_fetch_pages_failed&detail=${encodeURIComponent(errMsg)}`)
+          const errMsg =
+            pagesData.error?.message ||
+            "Failed to fetch connected Facebook pages";
+          console.error("Instagram fetch pages failed:", pagesData.error);
+          return NextResponse.redirect(
+            `${redirectBase}/dashboard/settings?error=instagram_fetch_pages_failed&detail=${encodeURIComponent(errMsg)}`,
+          );
         }
-        
-        const pages = pagesData.data || []
-        const connectedAccounts = pages.filter(p => p.instagram_business_account && p.instagram_business_account.id)
-        
+
+        const pages = pagesData.data || [];
+        const connectedAccounts = pages.filter(
+          (p) =>
+            p.instagram_business_account && p.instagram_business_account.id,
+        );
+
         if (connectedAccounts.length === 0) {
-          console.error('No connected Instagram Business Account found for the authorized pages.')
-          return NextResponse.redirect(`${redirectBase}/dashboard/settings?error=instagram_no_business_account`)
+          console.error(
+            "No connected Instagram Business Account found for the authorized pages.",
+          );
+          return NextResponse.redirect(
+            `${redirectBase}/dashboard/settings?error=instagram_no_business_account`,
+          );
         }
-        
+
         for (const connectedAccount of connectedAccounts) {
-          const instagramAccount = connectedAccount.instagram_business_account
-          const pageId = connectedAccount.id
-          const igAccountId = instagramAccount.id
-          const pageAccessToken = connectedAccount.access_token
-          const igAccountName = instagramAccount.username || instagramAccount.name || connectedAccount.name || 'Primary Account'
-          
+          const instagramAccount = connectedAccount.instagram_business_account;
+          const pageId = connectedAccount.id;
+          const igAccountId = instagramAccount.id;
+          const pageAccessToken = connectedAccount.access_token;
+          const igAccountName =
+            instagramAccount.username ||
+            instagramAccount.name ||
+            connectedAccount.name ||
+            "Primary Account";
+
           // 3.5. Subscribe the Facebook Page to the Meta App to receive Webhooks (DMs and Comments) automatically
           try {
-            const subscribeUrl = `https://graph.facebook.com/v19.0/${pageId}/subscribed_apps`
-            const subscribeParams = new URLSearchParams()
-            subscribeParams.set('subscribed_fields', 'messages,messaging_postbacks,messaging_seen,comments')
-            subscribeParams.set('access_token', pageAccessToken)
-            
+            const subscribeUrl = `https://graph.facebook.com/v19.0/${pageId}/subscribed_apps`;
+            const subscribeParams = new URLSearchParams();
+            subscribeParams.set(
+              "subscribed_fields",
+              "messages,messaging_postbacks,messaging_seen,comments",
+            );
+            subscribeParams.set("access_token", pageAccessToken);
+
             const subscribeResponse = await fetch(subscribeUrl, {
-              method: 'POST',
-              body: subscribeParams
-            })
-            const subscribeData = await subscribeResponse.json()
-            
+              method: "POST",
+              body: subscribeParams,
+            });
+            const subscribeData = await subscribeResponse.json();
+
             if (!subscribeResponse.ok || subscribeData.error) {
-              console.error(`Failed to automatically subscribe page ${pageId} to webhooks:`, subscribeData.error)
+              console.error(
+                `Failed to automatically subscribe page ${pageId} to webhooks:`,
+                subscribeData.error,
+              );
             } else {
-              console.log(`Successfully subscribed page ${pageId} to webhooks:`, subscribeData)
+              console.log(
+                `Successfully subscribed page ${pageId} to webhooks:`,
+                subscribeData,
+              );
             }
           } catch (subErr) {
-            console.error(`Error subscribing page ${pageId} to webhooks:`, subErr.message)
+            console.error(
+              `Error subscribing page ${pageId} to webhooks:`,
+              subErr.message,
+            );
           }
-          
+
           // 4. Save account configuration
-          await saveInstagramAccount({
-            accountName: igAccountName,
-            pageId,
-            instagramAccountId: igAccountId,
-            accessToken: pageAccessToken
-          }, userId)
-          
-          // 5. Insert webhook log
-          await insertWebhookLog('instagram', 'oauth_connected', {
-            stage: 'connected',
+          await saveInstagramAccount(
+            {
+              accountName: igAccountName,
+              pageId,
+              instagramAccountId: igAccountId,
+              accessToken: pageAccessToken,
+            },
             userId,
-            pageId,
-            instagramAccountId: igAccountId,
-            accountName: igAccountName
-          }, userId)
+          );
+
+          // 5. Insert webhook log
+          await insertWebhookLog(
+            "instagram",
+            "oauth_connected",
+            {
+              stage: "connected",
+              userId,
+              pageId,
+              instagramAccountId: igAccountId,
+              accountName: igAccountName,
+            },
+            userId,
+          );
         }
-        
-        return NextResponse.redirect(`${redirectBase}/dashboard/settings?instagram=connected`)
+
+        return NextResponse.redirect(
+          `${redirectBase}/dashboard/settings?instagram=connected`,
+        );
       } catch (err) {
-        console.error('Instagram Callback Exception:', err)
-        return NextResponse.redirect(`${redirectBase}/dashboard/settings?error=instagram_exception&detail=${encodeURIComponent(err.message)}`)
+        console.error("Instagram Callback Exception:", err);
+        return NextResponse.redirect(
+          `${redirectBase}/dashboard/settings?error=instagram_exception&detail=${encodeURIComponent(err.message)}`,
+        );
       }
     }
 
     // Zoho OAuth Initiation
-    if (route === '/integrations/zoho/auth' && method === 'GET') {
-      const authenticatedUserId = requireRequestUserId(request)
-      const clientId = process.env.ZOHO_CLIENT_ID
-      const redirectUri = process.env.ZOHO_REDIRECT_URI
-      const requestedDc = request.nextUrl.searchParams.get('dc')
-      const dc = requestedDc || process.env.ZOHO_DC || 'zoho.com'
-      const scope = 'ZohoCRM.modules.ALL,ZohoCRM.users.READ'
-      const authParams = new URLSearchParams()
+    if (route === "/integrations/zoho/auth" && method === "GET") {
+      const authenticatedUserId = requireRequestUserId(request);
+      const clientId = process.env.ZOHO_CLIENT_ID;
+      const redirectUri = process.env.ZOHO_REDIRECT_URI;
+      const requestedDc = request.nextUrl.searchParams.get("dc");
+      const dc = requestedDc || process.env.ZOHO_DC || "zoho.com";
+      const scope = "ZohoCRM.modules.ALL,ZohoCRM.users.READ";
+      const authParams = new URLSearchParams();
 
-      authParams.set('scope', scope)
-      authParams.set('client_id', clientId)
-      authParams.set('response_type', 'code')
-      authParams.set('access_type', 'offline')
-      authParams.set('redirect_uri', redirectUri)
-      authParams.set('prompt', 'consent')
-      authParams.set('state', createZohoOAuthState(authenticatedUserId, dc))
-      
-      const authUrl = `https://accounts.${dc}/oauth/v2/auth?${authParams.toString()}`
-      
-      return NextResponse.redirect(authUrl)
+      authParams.set("scope", scope);
+      authParams.set("client_id", clientId);
+      authParams.set("response_type", "code");
+      authParams.set("access_type", "offline");
+      authParams.set("redirect_uri", redirectUri);
+      authParams.set("prompt", "consent");
+      authParams.set("state", createZohoOAuthState(authenticatedUserId, dc));
+
+      const authUrl = `https://accounts.${dc}/oauth/v2/auth?${authParams.toString()}`;
+
+      return NextResponse.redirect(authUrl);
     }
 
     // Zoho OAuth Callback
-    if (route === '/integrations/zoho/callback' && method === 'GET') {
-      const code = request.nextUrl.searchParams.get('code')
-      const error = request.nextUrl.searchParams.get('error')
-      const state = request.nextUrl.searchParams.get('state')
-      
+    if (route === "/integrations/zoho/callback" && method === "GET") {
+      const code = request.nextUrl.searchParams.get("code");
+      const error = request.nextUrl.searchParams.get("error");
+      const state = request.nextUrl.searchParams.get("state");
+
       if (error) {
-        await insertWebhookLog('zoho', 'oauth_failed', {
-          stage: 'authorization',
-          error
-        })
-        return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/dashboard/settings?error=${error}`)
-      }
-      
-      if (!code) {
-        await insertWebhookLog('zoho', 'oauth_failed', {
-          stage: 'callback',
-          error: 'no_code'
-        })
-        return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/dashboard/settings?error=no_code`)
+        await insertWebhookLog("zoho", "oauth_failed", {
+          stage: "authorization",
+          error,
+        });
+        return NextResponse.redirect(
+          `${process.env.NEXT_PUBLIC_BASE_URL || ""}/dashboard/settings?error=${error}`,
+        );
       }
 
-      let zohoUserId
-      let dc
-      try {
-        const stateData = verifyZohoOAuthState(state)
-        zohoUserId = stateData.userId
-        dc = stateData.dc
-      } catch (stateError) {
-        console.error('Zoho OAuth State Error:', stateError.message)
-        await insertWebhookLog('zoho', 'oauth_failed', {
-          stage: 'state',
-          error: stateError.message
-        })
-        return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/dashboard/settings?error=zoho_invalid_state`)
+      if (!code) {
+        await insertWebhookLog("zoho", "oauth_failed", {
+          stage: "callback",
+          error: "no_code",
+        });
+        return NextResponse.redirect(
+          `${process.env.NEXT_PUBLIC_BASE_URL || ""}/dashboard/settings?error=no_code`,
+        );
       }
-      
+
+      let zohoUserId;
+      let dc;
       try {
-        const clientId = process.env.ZOHO_CLIENT_ID
-        const clientSecret = process.env.ZOHO_CLIENT_SECRET
-        const redirectUri = process.env.ZOHO_REDIRECT_URI
-        
-        const tokenUrl = `https://accounts.${dc}/oauth/v2/token`
-        const params = new URLSearchParams()
-        params.append('code', code)
-        params.append('client_id', clientId)
-        params.append('client_secret', clientSecret)
-        params.append('redirect_uri', redirectUri)
-        params.append('grant_type', 'authorization_code')
-        
+        const stateData = verifyZohoOAuthState(state);
+        zohoUserId = stateData.userId;
+        dc = stateData.dc;
+      } catch (stateError) {
+        console.error("Zoho OAuth State Error:", stateError.message);
+        await insertWebhookLog("zoho", "oauth_failed", {
+          stage: "state",
+          error: stateError.message,
+        });
+        return NextResponse.redirect(
+          `${process.env.NEXT_PUBLIC_BASE_URL || ""}/dashboard/settings?error=zoho_invalid_state`,
+        );
+      }
+
+      try {
+        const clientId = process.env.ZOHO_CLIENT_ID;
+        const clientSecret = process.env.ZOHO_CLIENT_SECRET;
+        const redirectUri = process.env.ZOHO_REDIRECT_URI;
+
+        const tokenUrl = `https://accounts.${dc}/oauth/v2/token`;
+        const params = new URLSearchParams();
+        params.append("code", code);
+        params.append("client_id", clientId);
+        params.append("client_secret", clientSecret);
+        params.append("redirect_uri", redirectUri);
+        params.append("grant_type", "authorization_code");
+
         const response = await fetch(tokenUrl, {
-          method: 'POST',
-          body: params
-        })
-        
-        const tokens = await response.json()
-        
+          method: "POST",
+          body: params,
+        });
+
+        const tokens = await response.json();
+
         if (!response.ok || tokens.error) {
-          const zohoTokenError = tokens.error_description || tokens.error || `HTTP ${response.status}`
-          console.error('Zoho OAuth token exchange failed:', {
-            status: response.status,
-            error: tokens.error || null,
-            error_description: tokens.error_description || null
-          })
-          await insertWebhookLog('zoho', 'oauth_failed', {
-            stage: 'token_exchange',
+          const zohoTokenError =
+            tokens.error_description ||
+            tokens.error ||
+            `HTTP ${response.status}`;
+          console.error("Zoho OAuth token exchange failed:", {
             status: response.status,
             error: tokens.error || null,
             error_description: tokens.error_description || null,
-            dc,
-            redirectUri
-          }, zohoUserId)
-          const zohoAuthError = encodeURIComponent(zohoTokenError)
-          return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/dashboard/settings?error=zoho_auth_failed&detail=${zohoAuthError}`)
+          });
+          await insertWebhookLog(
+            "zoho",
+            "oauth_failed",
+            {
+              stage: "token_exchange",
+              status: response.status,
+              error: tokens.error || null,
+              error_description: tokens.error_description || null,
+              dc,
+              redirectUri,
+            },
+            zohoUserId,
+          );
+          const zohoAuthError = encodeURIComponent(zohoTokenError);
+          return NextResponse.redirect(
+            `${process.env.NEXT_PUBLIC_BASE_URL || ""}/dashboard/settings?error=zoho_auth_failed&detail=${zohoAuthError}`,
+          );
         }
-        
-        // Save tokens to database
-        const integrations = (await getStoredIntegrations(zohoUserId)) || {}
-        await saveStoredIntegration('zoho', {
-          ...(integrations.zoho || {}),
-          accessToken: tokens.access_token,
-          refreshToken: tokens.refresh_token,
-          apiDomain: tokens.api_domain,
-          dc: dc,
-          clientId: clientId,
-          clientSecret: clientSecret,
-          expiresAt: Date.now() + (tokens.expires_in * 1000)
-        }, zohoUserId)
 
-        await insertWebhookLog('zoho', 'oauth_connected', {
-          stage: 'connected',
-          userId: zohoUserId,
-          dc,
-          apiDomain: tokens.api_domain || null
-        }, zohoUserId)
-        
-        return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/dashboard/settings?zoho=connected`)
+        // Save tokens to database
+        const integrations = (await getStoredIntegrations(zohoUserId)) || {};
+        await saveStoredIntegration(
+          "zoho",
+          {
+            ...(integrations.zoho || {}),
+            accessToken: tokens.access_token,
+            refreshToken: tokens.refresh_token,
+            apiDomain: tokens.api_domain,
+            dc: dc,
+            clientId: clientId,
+            clientSecret: clientSecret,
+            expiresAt: Date.now() + tokens.expires_in * 1000,
+          },
+          zohoUserId,
+        );
+
+        await insertWebhookLog(
+          "zoho",
+          "oauth_connected",
+          {
+            stage: "connected",
+            userId: zohoUserId,
+            dc,
+            apiDomain: tokens.api_domain || null,
+          },
+          zohoUserId,
+        );
+
+        return NextResponse.redirect(
+          `${process.env.NEXT_PUBLIC_BASE_URL || ""}/dashboard/settings?zoho=connected`,
+        );
       } catch (err) {
-        console.error('Zoho OAuth Callback Error:', err)
-        await insertWebhookLog('zoho', 'oauth_failed', {
-          stage: 'callback_exception',
-          error: err.message,
-          dc
-        }, zohoUserId)
-        return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/dashboard/settings?error=zoho_auth_failed`)
+        console.error("Zoho OAuth Callback Error:", err);
+        await insertWebhookLog(
+          "zoho",
+          "oauth_failed",
+          {
+            stage: "callback_exception",
+            error: err.message,
+            dc,
+          },
+          zohoUserId,
+        );
+        return NextResponse.redirect(
+          `${process.env.NEXT_PUBLIC_BASE_URL || ""}/dashboard/settings?error=zoho_auth_failed`,
+        );
       }
     }
 
     // Google Sheets OAuth Initiation
-    if (route === '/integrations/google/auth' && method === 'GET') {
-      const authenticatedUserId = requireRequestUserId(request)
-      const clientId = process.env.GOOGLE_CLIENT_ID
-      const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${process.env.NEXT_PUBLIC_BASE_URL || 'https://chatflow.vibeship.in'}/api/integrations/google/callback`
-      
-      const authParams = new URLSearchParams()
-      authParams.set('client_id', clientId)
-      authParams.set('redirect_uri', redirectUri)
-      authParams.set('response_type', 'code')
-      authParams.set('access_type', 'offline')
-      authParams.set('prompt', 'consent')
-      authParams.set('scope', 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.readonly')
-      authParams.set('state', authenticatedUserId)
-      
-      const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${authParams.toString()}`
-      return NextResponse.redirect(authUrl)
+    if (route === "/integrations/google/auth" && method === "GET") {
+      const authenticatedUserId = requireRequestUserId(request);
+      const clientId = process.env.GOOGLE_CLIENT_ID;
+      const redirectUri =
+        process.env.GOOGLE_REDIRECT_URI ||
+        `${process.env.NEXT_PUBLIC_BASE_URL || "https://chatflow.vibeship.in"}/api/integrations/google/callback`;
+
+      const authParams = new URLSearchParams();
+      authParams.set("client_id", clientId);
+      authParams.set("redirect_uri", redirectUri);
+      authParams.set("response_type", "code");
+      authParams.set("access_type", "offline");
+      authParams.set("prompt", "consent");
+      authParams.set(
+        "scope",
+        "https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.readonly",
+      );
+      authParams.set("state", authenticatedUserId);
+
+      const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${authParams.toString()}`;
+      return NextResponse.redirect(authUrl);
     }
 
     // Google Sheets OAuth Callback
-    if (route === '/integrations/google/callback' && method === 'GET') {
-      const code = request.nextUrl.searchParams.get('code')
-      const error = request.nextUrl.searchParams.get('error')
-      const state = request.nextUrl.searchParams.get('state') // userId
-      
-      const redirectBase = process.env.NEXT_PUBLIC_BASE_URL || 'https://chatflow.vibeship.in'
-      
-      if (error) {
-        console.error('Google Sheets OAuth Failed:', error)
-        return NextResponse.redirect(`${redirectBase}/dashboard/settings?error=google_sheets_oauth_failed&detail=${encodeURIComponent(error)}`)
-      }
-      
-      if (!code) {
-        return NextResponse.redirect(`${redirectBase}/dashboard/settings?error=google_sheets_no_code`)
-      }
-      
-      const userId = state || 'default'
-      
-      try {
-        const clientId = process.env.GOOGLE_CLIENT_ID
-        const clientSecret = process.env.GOOGLE_CLIENT_SECRET
-        const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${redirectBase}/api/integrations/google/callback`
-        
-        const tokenUrl = 'https://oauth2.googleapis.com/token'
-        const params = new URLSearchParams()
-        params.append('code', code)
-        params.append('client_id', clientId)
-        params.append('client_secret', clientSecret)
-        params.append('redirect_uri', redirectUri)
-        params.append('grant_type', 'authorization_code')
-        
-        const response = await fetch(tokenUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded'
-          },
-          body: params.toString()
-        })
-        
-        const tokens = await response.json()
-        
-        if (!response.ok || tokens.error) {
-          const errMsg = tokens.error_description || tokens.error || 'Token exchange failed'
-          console.error('Google Sheets OAuth token exchange failed:', tokens)
-          return NextResponse.redirect(`${redirectBase}/dashboard/settings?error=google_sheets_token_failed&detail=${encodeURIComponent(errMsg)}`)
-        }
-        
-        // Save tokens to database
-        const integrations = (await getStoredIntegrations(userId)) || {}
-        await saveStoredIntegration('googleSheets', {
-          connected: true,
-          tokens: {
-            accessToken: tokens.access_token,
-            refreshToken: tokens.refresh_token,
-            expiry: Date.now() + (tokens.expires_in * 1000)
-          },
-          defaultSettings: {
-            spreadsheetId: '',
-            sheetName: 'Sheet1',
-            columnMapping: {}
-          },
-          updatedAt: new Date().toISOString()
-        }, userId)
+    if (route === "/integrations/google/callback" && method === "GET") {
+      const code = request.nextUrl.searchParams.get("code");
+      const error = request.nextUrl.searchParams.get("error");
+      const state = request.nextUrl.searchParams.get("state"); // userId
 
-        await insertWebhookLog('google_sheets', 'oauth_connected', {
-          stage: 'connected',
-          userId
-        }, userId)
-        
-        return NextResponse.redirect(`${redirectBase}/dashboard/settings?googleSheets=connected`)
+      const redirectBase =
+        process.env.NEXT_PUBLIC_BASE_URL || "https://chatflow.vibeship.in";
+
+      if (error) {
+        console.error("Google Sheets OAuth Failed:", error);
+        return NextResponse.redirect(
+          `${redirectBase}/dashboard/settings?error=google_sheets_oauth_failed&detail=${encodeURIComponent(error)}`,
+        );
+      }
+
+      if (!code) {
+        return NextResponse.redirect(
+          `${redirectBase}/dashboard/settings?error=google_sheets_no_code`,
+        );
+      }
+
+      const userId = state || "default";
+
+      try {
+        const clientId = process.env.GOOGLE_CLIENT_ID;
+        const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+        const redirectUri =
+          process.env.GOOGLE_REDIRECT_URI ||
+          `${redirectBase}/api/integrations/google/callback`;
+
+        const tokenUrl = "https://oauth2.googleapis.com/token";
+        const params = new URLSearchParams();
+        params.append("code", code);
+        params.append("client_id", clientId);
+        params.append("client_secret", clientSecret);
+        params.append("redirect_uri", redirectUri);
+        params.append("grant_type", "authorization_code");
+
+        const response = await fetch(tokenUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: params.toString(),
+        });
+
+        const tokens = await response.json();
+
+        if (!response.ok || tokens.error) {
+          const errMsg =
+            tokens.error_description || tokens.error || "Token exchange failed";
+          console.error("Google Sheets OAuth token exchange failed:", tokens);
+          return NextResponse.redirect(
+            `${redirectBase}/dashboard/settings?error=google_sheets_token_failed&detail=${encodeURIComponent(errMsg)}`,
+          );
+        }
+
+        // Save tokens to database
+        const integrations = (await getStoredIntegrations(userId)) || {};
+        await saveStoredIntegration(
+          "googleSheets",
+          {
+            connected: true,
+            tokens: {
+              accessToken: tokens.access_token,
+              refreshToken: tokens.refresh_token,
+              expiry: Date.now() + tokens.expires_in * 1000,
+            },
+            defaultSettings: {
+              spreadsheetId: "",
+              sheetName: "Sheet1",
+              columnMapping: {},
+            },
+            updatedAt: new Date().toISOString(),
+          },
+          userId,
+        );
+
+        await insertWebhookLog(
+          "google_sheets",
+          "oauth_connected",
+          {
+            stage: "connected",
+            userId,
+          },
+          userId,
+        );
+
+        return NextResponse.redirect(
+          `${redirectBase}/dashboard/settings?googleSheets=connected`,
+        );
       } catch (err) {
-        console.error('Google Sheets Callback Exception:', err)
-        return NextResponse.redirect(`${redirectBase}/dashboard/settings?error=google_sheets_exception&detail=${encodeURIComponent(err.message)}`)
+        console.error("Google Sheets Callback Exception:", err);
+        return NextResponse.redirect(
+          `${redirectBase}/dashboard/settings?error=google_sheets_exception&detail=${encodeURIComponent(err.message)}`,
+        );
       }
     }
 
     // Google Sheets: List Spreadsheets
-    if (route === '/integrations/google/spreadsheets' && method === 'GET') {
-      const authenticatedUserId = requireRequestUserId(request)
-      const sheetClient = await getGoogleSheetsClient(authenticatedUserId)
-      
+    if (route === "/integrations/google/spreadsheets" && method === "GET") {
+      const authenticatedUserId = requireRequestUserId(request);
+      const sheetClient = await getGoogleSheetsClient(authenticatedUserId);
+
       if (!sheetClient) {
-        return handleCORS(NextResponse.json({ error: 'Google Sheets integration not connected' }, { status: 400 }))
+        return handleCORS(
+          NextResponse.json(
+            { error: "Google Sheets integration not connected" },
+            { status: 400 },
+          ),
+        );
       }
-      
+
       try {
-        const spreadsheets = await sheetClient.listSpreadsheets()
-        return handleCORS(NextResponse.json({ spreadsheets }))
+        const spreadsheets = await sheetClient.listSpreadsheets();
+        return handleCORS(NextResponse.json({ spreadsheets }));
       } catch (err) {
-        return handleCORS(NextResponse.json({ error: err.message }, { status: 500 }))
+        return handleCORS(
+          NextResponse.json({ error: err.message }, { status: 500 }),
+        );
       }
     }
 
     // Google Sheets: List Tabs inside a Spreadsheet
-    if (route === '/integrations/google/sheets' && method === 'GET') {
-      const authenticatedUserId = requireRequestUserId(request)
-      const spreadsheetId = request.nextUrl.searchParams.get('spreadsheetId')
-      const sheetClient = await getGoogleSheetsClient(authenticatedUserId)
-      
+    if (route === "/integrations/google/sheets" && method === "GET") {
+      const authenticatedUserId = requireRequestUserId(request);
+      const spreadsheetId = request.nextUrl.searchParams.get("spreadsheetId");
+      const sheetClient = await getGoogleSheetsClient(authenticatedUserId);
+
       if (!sheetClient) {
-        return handleCORS(NextResponse.json({ error: 'Google Sheets integration not connected' }, { status: 400 }))
+        return handleCORS(
+          NextResponse.json(
+            { error: "Google Sheets integration not connected" },
+            { status: 400 },
+          ),
+        );
       }
-      
+
       if (!spreadsheetId) {
-        return handleCORS(NextResponse.json({ error: 'Missing spreadsheetId parameter' }, { status: 400 }))
+        return handleCORS(
+          NextResponse.json(
+            { error: "Missing spreadsheetId parameter" },
+            { status: 400 },
+          ),
+        );
       }
-      
+
       try {
-        const sheets = await sheetClient.listSheets(spreadsheetId)
-        return handleCORS(NextResponse.json({ sheets }))
+        const sheets = await sheetClient.listSheets(spreadsheetId);
+        return handleCORS(NextResponse.json({ sheets }));
       } catch (err) {
-        return handleCORS(NextResponse.json({ error: err.message }, { status: 500 }))
+        return handleCORS(
+          NextResponse.json({ error: err.message }, { status: 500 }),
+        );
       }
     }
 
     // Google Sheets: Save Default Settings
-    if (route === '/integrations/google/settings' && method === 'POST') {
-      const authenticatedUserId = requireRequestUserId(request)
-      const { spreadsheetId, sheetName, columnMapping } = await request.json()
-      
+    if (route === "/integrations/google/settings" && method === "POST") {
+      const authenticatedUserId = requireRequestUserId(request);
+      const { spreadsheetId, sheetName, columnMapping } = await request.json();
+
       try {
-        const integrations = (await getStoredIntegrations(authenticatedUserId)) || {}
+        const integrations =
+          (await getStoredIntegrations(authenticatedUserId)) || {};
         if (!integrations.googleSheets) {
-          return handleCORS(NextResponse.json({ error: 'Google Sheets not connected' }, { status: 400 }))
+          return handleCORS(
+            NextResponse.json(
+              { error: "Google Sheets not connected" },
+              { status: 400 },
+            ),
+          );
         }
-        
-        await saveStoredIntegration('googleSheets', {
-          ...integrations.googleSheets,
-          defaultSettings: {
-            spreadsheetId: spreadsheetId || '',
-            sheetName: sheetName || 'Sheet1',
-            columnMapping: columnMapping || {}
-          }
-        }, authenticatedUserId)
-        
-        return handleCORS(NextResponse.json({ success: true }))
+
+        await saveStoredIntegration(
+          "googleSheets",
+          {
+            ...integrations.googleSheets,
+            defaultSettings: {
+              spreadsheetId: spreadsheetId || "",
+              sheetName: sheetName || "Sheet1",
+              columnMapping: columnMapping || {},
+            },
+          },
+          authenticatedUserId,
+        );
+
+        return handleCORS(NextResponse.json({ success: true }));
       } catch (err) {
-        return handleCORS(NextResponse.json({ error: err.message }, { status: 500 }))
+        return handleCORS(
+          NextResponse.json({ error: err.message }, { status: 500 }),
+        );
       }
     }
 
     // Google Sheets: Disconnect
-    if (route === '/integrations/google/disconnect' && method === 'POST') {
-      const authenticatedUserId = requireRequestUserId(request)
+    if (route === "/integrations/google/disconnect" && method === "POST") {
+      const authenticatedUserId = requireRequestUserId(request);
       try {
-        const integrations = (await getStoredIntegrations(authenticatedUserId)) || {}
+        const integrations =
+          (await getStoredIntegrations(authenticatedUserId)) || {};
         if (integrations.googleSheets) {
-          const pool = getPool()
+          const pool = getPool();
           await pool.execute(
-            'UPDATE integrations SET googleSheets = NULL, updatedAt = NOW() WHERE userId = ?',
-            [authenticatedUserId]
-          )
+            "UPDATE integrations SET googleSheets = NULL, updatedAt = NOW() WHERE userId = ?",
+            [authenticatedUserId],
+          );
         }
-        return handleCORS(NextResponse.json({ success: true }))
+        return handleCORS(NextResponse.json({ success: true }));
       } catch (err) {
-        return handleCORS(NextResponse.json({ error: err.message }, { status: 500 }))
+        return handleCORS(
+          NextResponse.json({ error: err.message }, { status: 500 }),
+        );
       }
     }
 
     // Root endpoint
-    if (route === '/' && method === 'GET') {
-      return handleCORS(NextResponse.json({ message: "WhatsApp Commerce Hub API" }))
+    if (route === "/" && method === "GET") {
+      return handleCORS(
+        NextResponse.json({ message: "WhatsApp Commerce Hub API" }),
+      );
     }
 
     // Integrations endpoints
-    if (route === '/integrations' && method === 'GET') {
-      let integrations = null
+    if (route === "/integrations" && method === "GET") {
+      let integrations = null;
 
       try {
-        integrations = await getStoredIntegrations(currentUserId)
+        integrations = await getStoredIntegrations(currentUserId);
       } catch (error) {
-        console.error('Failed to load stored integrations:', error)
+        console.error("Failed to load stored integrations:", error);
       }
 
       const defaultIntegrations = {
         whatsapp: {
           connected: false,
           data: {
-            phoneNumberId: '',
-            businessAccountId: '',
-            catalogId: '',
-            webhookVerifyToken: process.env.WHATSAPP_VERIFY_TOKEN || ''
-          }
+            phoneNumberId: "",
+            businessAccountId: "",
+            catalogId: "",
+            webhookVerifyToken: process.env.WHATSAPP_VERIFY_TOKEN || "",
+          },
         },
         shopify: { connected: false, data: {} },
         stripe: { connected: false, data: {} },
         zoho: { connected: false, data: {} },
         instagram: { connected: false, data: {} },
-        googleSheets: { connected: false, data: {} }
-      }
+        googleSheets: { connected: false, data: {} },
+      };
 
       try {
-        const pool = getPool()
+        const pool = getPool();
         const [igRows] = await pool.execute(
-          'SELECT pageId, instagramAccountId, accountName FROM instagram_accounts WHERE userId = ? LIMIT 1',
-          [currentUserId]
-        )
+          "SELECT pageId, instagramAccountId, accountName FROM instagram_accounts WHERE userId = ? LIMIT 1",
+          [currentUserId],
+        );
         if (igRows && igRows.length > 0) {
           defaultIntegrations.instagram = {
             connected: true,
             data: {
               accountName: igRows[0].accountName,
               pageId: igRows[0].pageId,
-              instagramAccountId: igRows[0].instagramAccountId
-            }
-          }
+              instagramAccountId: igRows[0].instagramAccountId,
+            },
+          };
         }
       } catch (igErr) {
-        console.error('Failed to load instagram connection status:', igErr.message)
+        console.error(
+          "Failed to load instagram connection status:",
+          igErr.message,
+        );
       }
 
       if (integrations) {
         // getStoredIntegrations now returns parsed objects
-        console.log('[GET /integrations] Integrations:', JSON.stringify(integrations))
+        console.log(
+          "[GET /integrations] Integrations:",
+          JSON.stringify(integrations),
+        );
 
         // Check if integrations are properly configured
-        defaultIntegrations.whatsapp.connected = !!(integrations.whatsapp?.phoneNumberId && integrations.whatsapp?.accessToken)
+        defaultIntegrations.whatsapp.connected = !!(
+          integrations.whatsapp?.phoneNumberId &&
+          integrations.whatsapp?.accessToken
+        );
         defaultIntegrations.shopify.connected = !!(
           integrations.shopify?.shopDomain &&
           integrations.shopify?.clientId &&
           integrations.shopify?.clientSecret
-        )
-        defaultIntegrations.stripe.connected = !!(integrations.stripe?.secretKey)
-        defaultIntegrations.zoho.connected = !!(integrations.zoho?.refreshToken)
-        defaultIntegrations.googleSheets.connected = !!(integrations.googleSheets?.connected && integrations.googleSheets?.tokens?.refreshToken)
+        );
+        defaultIntegrations.stripe.connected = !!integrations.stripe?.secretKey;
+        defaultIntegrations.zoho.connected = !!integrations.zoho?.refreshToken;
+        defaultIntegrations.googleSheets.connected = !!(
+          integrations.googleSheets?.connected &&
+          integrations.googleSheets?.tokens?.refreshToken
+        );
 
         // Return data without sensitive fields
-        const normalizedWhatsApp = normalizeWhatsAppIntegrationData(integrations.whatsapp || {})
+        const normalizedWhatsApp = normalizeWhatsAppIntegrationData(
+          integrations.whatsapp || {},
+        );
         defaultIntegrations.whatsapp.data = {
           phoneNumberId: normalizedWhatsApp.phoneNumberId,
           businessAccountId: normalizedWhatsApp.businessAccountId,
           catalogId: normalizedWhatsApp.catalogId,
-          webhookVerifyToken: normalizedWhatsApp.webhookVerifyToken || process.env.WHATSAPP_VERIFY_TOKEN || ''
-        }
+          webhookVerifyToken:
+            normalizedWhatsApp.webhookVerifyToken ||
+            process.env.WHATSAPP_VERIFY_TOKEN ||
+            "",
+        };
         defaultIntegrations.shopify.data = {
-          shopDomain: integrations.shopify?.shopDomain || '',
-          clientId: integrations.shopify?.clientId || ''
-        }
+          shopDomain: integrations.shopify?.shopDomain || "",
+          clientId: integrations.shopify?.clientId || "",
+        };
         defaultIntegrations.stripe.data = {
-          publishableKey: integrations.stripe?.publishableKey || ''
-        }
+          publishableKey: integrations.stripe?.publishableKey || "",
+        };
         defaultIntegrations.zoho.data = {
-          clientId: integrations.zoho?.clientId || '',
-          dc: integrations.zoho?.dc || 'zoho.in'
-        }
+          clientId: integrations.zoho?.clientId || "",
+          dc: integrations.zoho?.dc || "zoho.in",
+        };
         defaultIntegrations.googleSheets.data = {
           defaultSettings: integrations.googleSheets?.defaultSettings || {
-            spreadsheetId: '',
-            sheetName: 'Sheet1',
-            columnMapping: {}
-          }
-        }
+            spreadsheetId: "",
+            sheetName: "Sheet1",
+            columnMapping: {},
+          },
+        };
       }
 
-      return handleCORS(NextResponse.json(defaultIntegrations))
+      return handleCORS(NextResponse.json(defaultIntegrations));
     }
 
-    if (route === '/integrations' && method === 'POST') {
-      const body = await request.json()
-      const { type } = body
-      let { data } = body
-      let warning = ''
+    if (route === "/integrations" && method === "POST") {
+      const body = await request.json();
+      const { type } = body;
+      let { data } = body;
+      let warning = "";
 
       if (!type || !data) {
-        return handleCORS(NextResponse.json(
-          { error: "Type and data are required" },
-          { status: 400 }
-        ))
+        return handleCORS(
+          NextResponse.json(
+            { error: "Type and data are required" },
+            { status: 400 },
+          ),
+        );
       }
 
-      if (type === 'whatsapp') {
-        data = normalizeWhatsAppIntegrationData(data)
+      if (type === "whatsapp") {
+        data = normalizeWhatsAppIntegrationData(data);
       }
 
       // Test the integration before saving
       try {
-        if (type === 'whatsapp' && data.phoneNumberId && data.accessToken) {
+        if (type === "whatsapp" && data.phoneNumberId && data.accessToken) {
           await validateWhatsAppPhoneNumberAccess(
             data.phoneNumberId,
             data.accessToken,
-            data.businessAccountId
-          )
+            data.businessAccountId,
+          );
         }
 
-        if (type === 'whatsapp' && data.catalogId) {
+        if (type === "whatsapp" && data.catalogId) {
           try {
             await validateMetaCatalogAccess({
               catalogId: data.catalogId,
               accessToken: data.accessToken,
               businessAccountId: data.businessAccountId,
-              phoneNumberId: data.phoneNumberId
-            })
+              phoneNumberId: data.phoneNumberId,
+            });
           } catch (error) {
-            warning = `Catalog validation failed: ${error.message}. Catalog ID has been saved but may not work until the access token is refreshed.`
+            warning = `Catalog validation failed: ${error.message}. Catalog ID has been saved but may not work until the access token is refreshed.`;
           }
         }
 
-        if (type === 'shopify' && data.shopDomain && data.clientId && data.clientSecret) {
+        if (
+          type === "shopify" &&
+          data.shopDomain &&
+          data.clientId &&
+          data.clientSecret
+        ) {
           // Test Shopify connection
-          await fetchShopifyProducts(data)
+          await fetchShopifyProducts(data);
         }
 
-        if (type === 'stripe' && data.secretKey) {
+        if (type === "stripe" && data.secretKey) {
           // Test Stripe connection (placeholder)
-          if (!data.secretKey.startsWith('sk_')) {
-            throw new Error('Invalid Stripe secret key format')
+          if (!data.secretKey.startsWith("sk_")) {
+            throw new Error("Invalid Stripe secret key format");
           }
         }
       } catch (error) {
-        return handleCORS(NextResponse.json(
-          { error: `Integration test failed: ${error.message}` },
-          { status: 400 }
-        ))
+        return handleCORS(
+          NextResponse.json(
+            { error: `Integration test failed: ${error.message}` },
+            { status: 400 },
+          ),
+        );
       }
 
       // Ensure WhatsApp configuration has the right structure
-      if (type === 'whatsapp') {
+      if (type === "whatsapp") {
         // Force use of environment token to prevent mismatch with Meta configuration
-        data.webhookVerifyToken = process.env.WHATSAPP_VERIFY_TOKEN || ''
+        data.webhookVerifyToken = process.env.WHATSAPP_VERIFY_TOKEN || "";
 
         data.connected = !!(data.phoneNumberId && data.accessToken);
         // Ensure catalogId is properly handled
-        if (data.catalogId === '') {
+        if (data.catalogId === "") {
           delete data.catalogId;
         }
       }
 
-      if (type === 'shopify') {
+      if (type === "shopify") {
         data = {
-          shopDomain: normalizeShopifyDomain(data.shopDomain || ''),
-          clientId: data.clientId || '',
-          clientSecret: data.clientSecret || ''
-        }
+          shopDomain: normalizeShopifyDomain(data.shopDomain || ""),
+          clientId: data.clientId || "",
+          clientSecret: data.clientSecret || "",
+        };
       }
 
       // Save integration
       try {
-        await saveStoredIntegration(type, data, currentUserId)
+        await saveStoredIntegration(type, data, currentUserId);
       } catch (saveError) {
-        console.error('Failed to save integration:', saveError)
-        return handleCORS(NextResponse.json(
-          { error: `Failed to save integration: ${saveError.message}` },
-          { status: saveError.status || 500 }
-        ))
+        console.error("Failed to save integration:", saveError);
+        return handleCORS(
+          NextResponse.json(
+            { error: `Failed to save integration: ${saveError.message}` },
+            { status: saveError.status || 500 },
+          ),
+        );
       }
 
-      return handleCORS(NextResponse.json({ success: true, ...(warning ? { warning } : {}) }))
+      return handleCORS(
+        NextResponse.json({ success: true, ...(warning ? { warning } : {}) }),
+      );
     }
 
     // Setup webhooks endpoint
-    if (route === '/setup-webhooks' && method === 'POST') {
+    if (route === "/setup-webhooks" && method === "POST") {
       const integrations = await getStoredIntegrations(currentUserId);
 
-      if (!integrations?.shopify?.shopDomain || !integrations?.shopify?.clientId || !integrations?.shopify?.clientSecret) {
-        return handleCORS(NextResponse.json(
-          { error: "Shopify not configured" },
-          { status: 400 }
-        ))
+      if (
+        !integrations?.shopify?.shopDomain ||
+        !integrations?.shopify?.clientId ||
+        !integrations?.shopify?.clientSecret
+      ) {
+        return handleCORS(
+          NextResponse.json(
+            { error: "Shopify not configured" },
+            { status: 400 },
+          ),
+        );
       }
 
       try {
-        const webhookUrl = `${process.env.NEXT_PUBLIC_BASE_URL}/api/webhook/shopify`
+        const webhookUrl = `${process.env.NEXT_PUBLIC_BASE_URL}/api/webhook/shopify`;
 
         // Create webhooks for order creation and status updates
         const webhooks = [
-          { topic: 'orders/create', address: webhookUrl },
-          { topic: 'orders/updated', address: webhookUrl },
-          { topic: 'orders/paid', address: webhookUrl },
-          { topic: 'orders/fulfilled', address: webhookUrl },
-          { topic: 'orders/cancelled', address: webhookUrl },
-          { topic: 'checkouts/create', address: webhookUrl },
-          { topic: 'checkouts/update', address: webhookUrl },
+          { topic: "orders/create", address: webhookUrl },
+          { topic: "orders/updated", address: webhookUrl },
+          { topic: "orders/paid", address: webhookUrl },
+          { topic: "orders/fulfilled", address: webhookUrl },
+          { topic: "orders/cancelled", address: webhookUrl },
+          { topic: "checkouts/create", address: webhookUrl },
+          { topic: "checkouts/update", address: webhookUrl },
           // NEW: Add customer webhooks to capture phone numbers
-          { topic: 'customers/create', address: webhookUrl },
-          { topic: 'customers/update', address: webhookUrl }
+          { topic: "customers/create", address: webhookUrl },
+          { topic: "customers/update", address: webhookUrl },
         ];
 
         const createdWebhooks = [];
@@ -1799,140 +2247,185 @@ async function handleRoute(request, { params }) {
             const createdWebhook = await createShopifyWebhook(
               integrations.shopify,
               webhook.topic,
-              webhook.address
+              webhook.address,
             );
 
             createdWebhooks.push({
               webhookId: createdWebhook.id,
               topic: webhook.topic,
-              address: webhook.address
+              address: webhook.address,
             });
           } catch (error) {
-            console.error(`Failed to create webhook for ${webhook.topic}:`, error.message);
+            console.error(
+              `Failed to create webhook for ${webhook.topic}:`,
+              error.message,
+            );
             // Continue with other webhooks even if one fails
           }
         }
 
         // Save webhook info
-        await saveStoredWebhooks(createdWebhooks, currentUserId)
+        await saveStoredWebhooks(createdWebhooks, currentUserId);
 
-        return handleCORS(NextResponse.json({
-          success: true,
-          webhooks: createdWebhooks
-        }))
+        return handleCORS(
+          NextResponse.json({
+            success: true,
+            webhooks: createdWebhooks,
+          }),
+        );
       } catch (error) {
-        return handleCORS(NextResponse.json(
-          { error: `Failed to setup webhooks: ${error.message}` },
-          { status: 400 }
-        ))
+        return handleCORS(
+          NextResponse.json(
+            { error: `Failed to setup webhooks: ${error.message}` },
+            { status: 400 },
+          ),
+        );
       }
     }
 
     // Webhook logs endpoint
-    if (route === '/webhook-logs' && method === 'GET') {
+    if (route === "/webhook-logs" && method === "GET") {
       try {
-        requireRequestUserId(request)
-        const webhookUrl = new URL(request.url)
-        const limit = parseInt(webhookUrl.searchParams.get('limit')) || 10
-        const logs = await getWebhookLogs(limit, currentUserId)
-        return handleCORS(NextResponse.json({ logs }))
+        requireRequestUserId(request);
+        const webhookUrl = new URL(request.url);
+        const limit = parseInt(webhookUrl.searchParams.get("limit")) || 10;
+        const logs = await getWebhookLogs(limit, currentUserId);
+        return handleCORS(NextResponse.json({ logs }));
       } catch (error) {
-        return handleCORS(NextResponse.json(
-          { error: error.status === 401 ? 'Not authenticated' : `Failed to get webhook logs: ${error.message}` },
-          { status: error.status || 500 }
-        ))
+        return handleCORS(
+          NextResponse.json(
+            {
+              error:
+                error.status === 401
+                  ? "Not authenticated"
+                  : `Failed to get webhook logs: ${error.message}`,
+            },
+            { status: error.status || 500 },
+          ),
+        );
       }
     }
 
     // Webhooks endpoint - get registered webhooks
-    if (route === '/webhooks' && method === 'GET') {
-      const webhookUrl = new URL(request.url)
-      const type = webhookUrl.searchParams.get('type') || 'shopify'
-      let webhooks = null
+    if (route === "/webhooks" && method === "GET") {
+      const webhookUrl = new URL(request.url);
+      const type = webhookUrl.searchParams.get("type") || "shopify";
+      let webhooks = null;
 
       try {
-        webhooks = await getStoredWebhooks(type, currentUserId)
+        webhooks = await getStoredWebhooks(type, currentUserId);
       } catch (error) {
-        console.error(`Failed to load stored ${type} webhooks:`, error)
+        console.error(`Failed to load stored ${type} webhooks:`, error);
       }
 
-      return handleCORS(NextResponse.json({
-        type,
-        webhooks: webhooks?.webhooks || [],
-        createdAt: webhooks?.createdAt || null
-      }))
+      return handleCORS(
+        NextResponse.json({
+          type,
+          webhooks: webhooks?.webhooks || [],
+          createdAt: webhooks?.createdAt || null,
+        }),
+      );
     }
 
     // Products endpoint
-    if (route === '/products' && method === 'GET') {
-      const integrations = await getStoredIntegrations(currentUserId)
+    if (route === "/products" && method === "GET") {
+      const integrations = await getStoredIntegrations(currentUserId);
 
       try {
-        const hasMetaCatalog = !!(integrations?.whatsapp?.catalogId && integrations?.whatsapp?.accessToken)
+        const hasMetaCatalog = !!(
+          integrations?.whatsapp?.catalogId &&
+          integrations?.whatsapp?.accessToken
+        );
 
         if (!hasMetaCatalog) {
-          return handleCORS(NextResponse.json(
-            { error: "Meta catalog not configured. Connect WhatsApp catalog access to load products." },
-            { status: 400 }
-          ))
+          return handleCORS(
+            NextResponse.json(
+              {
+                error:
+                  "Meta catalog not configured. Connect WhatsApp catalog access to load products.",
+              },
+              { status: 400 },
+            ),
+          );
         }
 
-        const metaCatalogProducts = await fetchMetaCatalogProducts(integrations.whatsapp)
-        const metaProducts = mapMetaCatalogProductsToAppProducts(metaCatalogProducts)
-        await saveStoredProducts(metaProducts)
-        return handleCORS(NextResponse.json(metaProducts))
+        const metaCatalogProducts = await fetchMetaCatalogProducts(
+          integrations.whatsapp,
+        );
+        const metaProducts =
+          mapMetaCatalogProductsToAppProducts(metaCatalogProducts);
+        await saveStoredProducts(metaProducts);
+        return handleCORS(NextResponse.json(metaProducts));
       } catch (error) {
-        return handleCORS(NextResponse.json(
-          { error: `Failed to fetch products: ${error.message}` },
-          { status: 400 }
-        ))
+        return handleCORS(
+          NextResponse.json(
+            { error: `Failed to fetch products: ${error.message}` },
+            { status: 400 },
+          ),
+        );
       }
     }
 
     // Orders endpoint
-    if (route === '/orders' && method === 'GET') {
+    if (route === "/orders" && method === "GET") {
       try {
         // Try to fetch orders from Shopify if integration is configured
-        const integrations = await getStoredIntegrations(currentUserId)
+        const integrations = await getStoredIntegrations(currentUserId);
 
-        if (integrations?.shopify?.shopDomain && integrations?.shopify?.clientId && integrations?.shopify?.clientSecret) {
+        if (
+          integrations?.shopify?.shopDomain &&
+          integrations?.shopify?.clientId &&
+          integrations?.shopify?.clientSecret
+        ) {
           try {
             // Fetch orders directly from Shopify
-            const shopifyOrders = await fetchShopifyOrders(integrations.shopify)
+            const shopifyOrders = await fetchShopifyOrders(
+              integrations.shopify,
+            );
 
             // Return Shopify orders
-            return handleCORS(NextResponse.json(shopifyOrders))
+            return handleCORS(NextResponse.json(shopifyOrders));
           } catch (error) {
-            console.error('Failed to fetch Shopify orders:', error)
+            console.error("Failed to fetch Shopify orders:", error);
             // Fall back to database orders if Shopify fetch fails
           }
         }
 
         // Fall back to database orders
-        const orders = await getStoredOrders(100)
-        const cleanedOrders = orders.map(({ _id, ...rest }) => rest)
-        return handleCORS(NextResponse.json(cleanedOrders))
+        const orders = await getStoredOrders(100);
+        const cleanedOrders = orders.map(({ _id, ...rest }) => rest);
+        return handleCORS(NextResponse.json(cleanedOrders));
       } catch (error) {
-        console.error('Failed to fetch orders:', error)
-        return handleCORS(NextResponse.json(
-          { error: 'Failed to fetch orders' },
-          { status: error.status || 500 }
-        ))
+        console.error("Failed to fetch orders:", error);
+        return handleCORS(
+          NextResponse.json(
+            { error: "Failed to fetch orders" },
+            { status: error.status || 500 },
+          ),
+        );
       }
     }
 
-    if (route === '/cart-recovery/capture' && method === 'POST') {
+    if (route === "/cart-recovery/capture" && method === "POST") {
       try {
-        const body = await request.json()
-        const eventType = typeof body.event === 'string'
-          ? body.event
-          : (typeof body.event_type === 'string' ? body.event_type : '')
+        const body = await request.json();
+        const eventType =
+          typeof body.event === "string"
+            ? body.event
+            : typeof body.event_type === "string"
+              ? body.event_type
+              : "";
 
-        if (!eventType || !eventType.includes('.cart_')) {
-          return handleCORS(NextResponse.json(
-            { error: 'event or event_type is required and must look like shopify.cart_updated' },
-            { status: 400 }
-          ))
+        if (!eventType || !eventType.includes(".cart_")) {
+          return handleCORS(
+            NextResponse.json(
+              {
+                error:
+                  "event or event_type is required and must look like shopify.cart_updated",
+              },
+              { status: 400 },
+            ),
+          );
         }
 
         const persistedCart = await persistCartRecoveryEvent({
@@ -1941,145 +2434,183 @@ async function handleRoute(request, { params }) {
           payload: body,
           platformHint: body.platform || eventType,
           metadata: {
-            source: 'cart-recovery-capture-api'
-          }
-        })
+            source: "cart-recovery-capture-api",
+          },
+        });
 
         const context = {
           ...buildCartRecoveryContext(body, body.platform || eventType),
-          ...(persistedCart?.context || {})
-        }
+          ...(persistedCart?.context || {}),
+        };
 
         if (persistedCart?.session?.id) {
-          context.cart_session_id = persistedCart.session.id
+          context.cart_session_id = persistedCart.session.id;
         }
 
-        const shouldTriggerAutomation = (
+        const shouldTriggerAutomation =
           body.triggerAutomation !== false &&
-          (eventType !== 'shopify.cart_recovered' && eventType !== 'woocommerce.cart_recovered'
+          (eventType !== "shopify.cart_recovered" &&
+          eventType !== "woocommerce.cart_recovered"
             ? true
-            : Boolean(persistedCart?.transitionedToRecovered))
-        )
+            : Boolean(persistedCart?.transitionedToRecovered));
 
         if (shouldTriggerAutomation) {
-          const integrations = await getStoredIntegrations(currentUserId)
-          await triggerAutomationEvent(eventType, context, integrations, currentUserId)
+          const integrations = await getStoredIntegrations(currentUserId);
+          await triggerAutomationEvent(
+            eventType,
+            context,
+            integrations,
+            currentUserId,
+          );
         }
 
-        return handleCORS(NextResponse.json({
-          success: true,
-          event: eventType,
-          session: persistedCart?.session || null,
-          cancelledJobs: persistedCart?.cancelledJobs || 0,
-          context
-        }))
+        return handleCORS(
+          NextResponse.json({
+            success: true,
+            event: eventType,
+            session: persistedCart?.session || null,
+            cancelledJobs: persistedCart?.cancelledJobs || 0,
+            context,
+          }),
+        );
       } catch (error) {
-        return handleCORS(NextResponse.json(
-          { error: `Failed to capture cart recovery event: ${error.message}` },
-          { status: error.status || 500 }
-        ))
+        return handleCORS(
+          NextResponse.json(
+            {
+              error: `Failed to capture cart recovery event: ${error.message}`,
+            },
+            { status: error.status || 500 },
+          ),
+        );
       }
     }
 
-    if (route === '/cart-recovery/process' && method === 'POST') {
+    if (route === "/cart-recovery/process" && method === "POST") {
       try {
-        const body = await request.json().catch(() => ({}))
-        const thresholdMinutes = parseInt(String(body.thresholdMinutes || 60), 10) || 60
-        const limit = parseInt(String(body.limit || 25), 10) || 25
-        const dryRun = Boolean(body.dryRun)
-        const platform = typeof body.platform === 'string' ? body.platform : ''
+        const body = await request.json().catch(() => ({}));
+        const thresholdMinutes =
+          parseInt(String(body.thresholdMinutes || 60), 10) || 60;
+        const limit = parseInt(String(body.limit || 25), 10) || 25;
+        const dryRun = Boolean(body.dryRun);
+        const platform = typeof body.platform === "string" ? body.platform : "";
 
         const sessions = await findCartSessionsReadyForAbandonment({
           userId: currentUserId,
           thresholdMinutes,
           limit,
-          platform
-        })
+          platform,
+        });
 
         if (dryRun) {
-          return handleCORS(NextResponse.json({
-            success: true,
-            dryRun: true,
-            thresholdMinutes,
-            limit,
-            ready: sessions.length,
-            sessions: sessions.map((session) => ({
-              id: session.id,
-              platform: session.platform,
-              external_cart_id: session.external_cart_id,
-              customer_phone: session.customer_phone,
-              last_activity_at: session.last_activity_at
-            }))
-          }))
+          return handleCORS(
+            NextResponse.json({
+              success: true,
+              dryRun: true,
+              thresholdMinutes,
+              limit,
+              ready: sessions.length,
+              sessions: sessions.map((session) => ({
+                id: session.id,
+                platform: session.platform,
+                external_cart_id: session.external_cart_id,
+                customer_phone: session.customer_phone,
+                last_activity_at: session.last_activity_at,
+              })),
+            }),
+          );
         }
 
         if (sessions.length === 0) {
-          return handleCORS(NextResponse.json({
-            success: true,
-            processed: 0,
-            failed: 0,
-            message: 'No cart sessions are ready for abandonment processing.'
-          }))
+          return handleCORS(
+            NextResponse.json({
+              success: true,
+              processed: 0,
+              failed: 0,
+              message: "No cart sessions are ready for abandonment processing.",
+            }),
+          );
         }
 
-        const integrations = await getStoredIntegrations(currentUserId)
-        let processed = 0
-        let failed = 0
-        const errors = []
+        const integrations = await getStoredIntegrations(currentUserId);
+        let processed = 0;
+        let failed = 0;
+        const errors = [];
 
         for (const session of sessions) {
           try {
-            const abandonedSession = await markCartSessionAbandoned(session.id)
-            const activeSession = abandonedSession || session
-            const eventPlatform = String(activeSession.platform || '').toLowerCase()
+            const abandonedSession = await markCartSessionAbandoned(session.id);
+            const activeSession = abandonedSession || session;
+            const eventPlatform = String(
+              activeSession.platform || "",
+            ).toLowerCase();
 
-            if (eventPlatform !== 'shopify' && eventPlatform !== 'woocommerce') {
-              continue
+            if (
+              eventPlatform !== "shopify" &&
+              eventPlatform !== "woocommerce"
+            ) {
+              continue;
             }
 
             const context = {
               ...mapCartSessionToContext(activeSession),
               cart_session_id: activeSession.id,
-              status: 'abandoned'
-            }
+              status: "abandoned",
+            };
 
             await triggerAutomationEvent(
               `${eventPlatform}.cart_abandoned`,
               context,
               integrations,
-              currentUserId
-            )
+              currentUserId,
+            );
 
-            processed += 1
+            processed += 1;
           } catch (error) {
-            failed += 1
+            failed += 1;
             errors.push({
               sessionId: session.id,
-              error: error.message
-            })
+              error: error.message,
+            });
           }
         }
 
-        return handleCORS(NextResponse.json({
-          success: true,
-          processed,
-          failed,
-          errors
-        }))
+        return handleCORS(
+          NextResponse.json({
+            success: true,
+            processed,
+            failed,
+            errors,
+          }),
+        );
       } catch (error) {
-        return handleCORS(NextResponse.json(
-          { error: `Failed to process cart recovery sessions: ${error.message}` },
-          { status: error.status || 500 }
-        ))
+        return handleCORS(
+          NextResponse.json(
+            {
+              error: `Failed to process cart recovery sessions: ${error.message}`,
+            },
+            { status: error.status || 500 },
+          ),
+        );
       }
     }
 
     // Update the send catalog endpoint to support template selection and multiple recipients
-    if (route === '/send-catalog' && method === 'POST') {
+    if (route === "/send-catalog" && method === "POST") {
       try {
         const body = await request.json();
-        const { products: productIds, recipient, recipients, templateName, templateLanguage, templateComponents, templateVariables, templateHeaderImageUrl } = body;
-        const normalizedProductIds = Array.isArray(productIds) ? productIds : []
+        const {
+          products: productIds,
+          recipient,
+          recipients,
+          templateName,
+          templateLanguage,
+          templateComponents,
+          templateVariables,
+          templateHeaderImageUrl,
+        } = body;
+        const normalizedProductIds = Array.isArray(productIds)
+          ? productIds
+          : [];
 
         // Handle both single recipient and multiple recipients
         let recipientList = [];
@@ -2087,58 +2618,96 @@ async function handleRoute(request, { params }) {
           recipientList = recipients;
         } else if (recipient) {
           // Support both single recipient and comma-separated recipients
-          recipientList = recipient.split(',').map(r => r.trim()).filter(r => r);
+          recipientList = recipient
+            .split(",")
+            .map((r) => r.trim())
+            .filter((r) => r);
         } else {
-          return handleCORS(NextResponse.json(
-            { error: "Recipient phone number(s) required" },
-            { status: 400 }
-          ));
+          return handleCORS(
+            NextResponse.json(
+              { error: "Recipient phone number(s) required" },
+              { status: 400 },
+            ),
+          );
         }
 
         // Get integrations
         const integrations = await getStoredIntegrations(currentUserId);
 
-        if (!integrations?.whatsapp?.phoneNumberId || !integrations?.whatsapp?.accessToken) {
-          return handleCORS(NextResponse.json(
-            { error: "WhatsApp not configured" },
-            { status: 400 }
-          ));
+        if (
+          !integrations?.whatsapp?.phoneNumberId ||
+          !integrations?.whatsapp?.accessToken
+        ) {
+          return handleCORS(
+            NextResponse.json(
+              { error: "WhatsApp not configured" },
+              { status: 400 },
+            ),
+          );
         }
 
         // Get products
         const storedProducts = await getStoredProducts();
-        if (normalizedProductIds.length > 0 && (!storedProducts || storedProducts.length === 0)) {
-          return handleCORS(NextResponse.json(
-            { error: "No products found. Please sync products first." },
-            { status: 400 }
-          ));
+        if (
+          normalizedProductIds.length > 0 &&
+          (!storedProducts || storedProducts.length === 0)
+        ) {
+          return handleCORS(
+            NextResponse.json(
+              { error: "No products found. Please sync products first." },
+              { status: 400 },
+            ),
+          );
         }
 
         const selectedProducts = Array.isArray(storedProducts)
-          ? storedProducts.filter(p => normalizedProductIds.includes(p.id))
+          ? storedProducts.filter((p) => normalizedProductIds.includes(p.id))
           : [];
-        const productContext = buildCatalogProductContext(selectedProducts, integrations.shopify, integrations.whatsapp);
-        const selectedTemplateComponents = Array.isArray(templateComponents) ? templateComponents : []
-        const selectedTemplateVariables = Array.isArray(templateVariables) ? templateVariables : []
+        const productContext = buildCatalogProductContext(
+          selectedProducts,
+          integrations.shopify,
+          integrations.whatsapp,
+        );
+        const selectedTemplateComponents = Array.isArray(templateComponents)
+          ? templateComponents
+          : [];
+        const selectedTemplateVariables = Array.isArray(templateVariables)
+          ? templateVariables
+          : [];
         const requiresProducts = templateName
-          ? templateRequiresProductContext(selectedTemplateComponents, selectedTemplateVariables, templateName)
-          : false
+          ? templateRequiresProductContext(
+              selectedTemplateComponents,
+              selectedTemplateVariables,
+              templateName,
+            )
+          : false;
         const requiresOrderContext = templateName
-          ? templateRequiresOrderContext(selectedTemplateComponents, selectedTemplateVariables, templateName)
-          : false
+          ? templateRequiresOrderContext(
+              selectedTemplateComponents,
+              selectedTemplateVariables,
+              templateName,
+            )
+          : false;
 
         if (normalizedProductIds.length > 0 && selectedProducts.length === 0) {
-          return handleCORS(NextResponse.json(
-            { error: "Selected products not found" },
-            { status: 400 }
-          ));
+          return handleCORS(
+            NextResponse.json(
+              { error: "Selected products not found" },
+              { status: 400 },
+            ),
+          );
         }
 
         if (requiresProducts && selectedProducts.length === 0) {
-          return handleCORS(NextResponse.json(
-            { error: "This template requires product selection. Choose at least one WhatsApp-ready product." },
-            { status: 400 }
-          ));
+          return handleCORS(
+            NextResponse.json(
+              {
+                error:
+                  "This template requires product selection. Choose at least one WhatsApp-ready product.",
+              },
+              { status: 400 },
+            ),
+          );
         }
 
         // Send to each recipient
@@ -2146,17 +2715,20 @@ async function handleRoute(request, { params }) {
         for (const recipient of recipientList) {
           try {
             // Validate and format phone number
-            const formattedRecipient = recipient.replace(/\D/g, '');
+            const formattedRecipient = recipient.replace(/\D/g, "");
 
             // Log the recipient number for debugging
-            console.log(`Sending catalog to: ${recipient}, formatted: ${formattedRecipient}`);
+            console.log(
+              `Sending catalog to: ${recipient}, formatted: ${formattedRecipient}`,
+            );
 
             // Check if the number seems valid
             if (formattedRecipient.length < 10) {
               results.push({
                 recipient: recipient,
                 success: false,
-                error: "Invalid phone number format. Please include country code."
+                error:
+                  "Invalid phone number format. Please include country code.",
               });
               continue;
             }
@@ -2165,19 +2737,20 @@ async function handleRoute(request, { params }) {
             if (templateName) {
               const [existingChat, latestOrder] = await Promise.all([
                 getStoredChatByPhone(formattedRecipient),
-                getLatestStoredOrderByPhone(formattedRecipient)
-              ])
+                getLatestStoredOrderByPhone(formattedRecipient),
+              ]);
 
               if (requiresOrderContext && !latestOrder) {
                 results.push({
                   recipient,
                   success: false,
-                  error: 'This template is mapped to order or purchased-product fields, but no recent order was found for this recipient.'
-                })
-                continue
+                  error:
+                    "This template is mapped to order or purchased-product fields, but no recent order was found for this recipient.",
+                });
+                continue;
               }
 
-              const orderProductContext = buildOrderProductContext(latestOrder)
+              const orderProductContext = buildOrderProductContext(latestOrder);
               const templatePayload = buildCatalogTemplatePayload({
                 templateName,
                 templateLanguage,
@@ -2186,32 +2759,40 @@ async function handleRoute(request, { params }) {
                 templateHeaderImageUrl,
                 productContext: { ...productContext, ...orderProductContext },
                 recipientContext: {
-                  customer_name: existingChat?.name || latestOrder?.customerName || 'Customer',
+                  customer_name:
+                    existingChat?.name ||
+                    latestOrder?.customerName ||
+                    "Customer",
                   customer_phone: formattedRecipient,
-                  order_number: latestOrder?.orderNumber || '',
-                  tracking_number: '',
-                  tracking_url: '',
-                  order_total: latestOrder?.total ? String(latestOrder.total) : '',
-                  currency: latestOrder?.currency || ''
-                }
-              })
+                  order_number: latestOrder?.orderNumber || "",
+                  tracking_number: "",
+                  tracking_url: "",
+                  order_total: latestOrder?.total
+                    ? String(latestOrder.total)
+                    : "",
+                  currency: latestOrder?.currency || "",
+                },
+              });
 
               // Debug log the template payload
-              console.log('Template payload:', JSON.stringify(templatePayload, null, 2))
+              console.log(
+                "Template payload:",
+                JSON.stringify(templatePayload, null, 2),
+              );
 
               // Send using the selected template
               const messageData = {
                 messaging_product: "whatsapp",
                 to: formattedRecipient,
                 type: "template",
-                template: templatePayload
+                template: templatePayload,
               };
 
               const result = await sendWhatsAppMessage(
                 integrations.whatsapp.phoneNumberId,
                 integrations.whatsapp.accessToken,
                 formattedRecipient,
-                messageData
+                messageData,
               );
 
               // Log the message
@@ -2226,14 +2807,14 @@ async function handleRoute(request, { params }) {
                 products: selectedProducts,
                 template: templateName,
                 whatsappMessageId: result.messages?.[0]?.id,
-                status: 'sent',
-                sentAt: new Date()
+                status: "sent",
+                sentAt: new Date(),
               });
 
               results.push({
                 recipient: recipient,
                 success: true,
-                messageId: result.messages?.[0]?.id
+                messageId: result.messages?.[0]?.id,
               });
             } else {
               // Use the existing text-based approach
@@ -2241,20 +2822,22 @@ async function handleRoute(request, { params }) {
 
               // Always use text-based messages to avoid template approval requirements
               // Create a catalog link
-              const businessAccountId = integrations.whatsapp.businessAccountId || integrations.whatsapp.phoneNumberId;
+              const businessAccountId =
+                integrations.whatsapp.businessAccountId ||
+                integrations.whatsapp.phoneNumberId;
               const catalogLink = `https://wa.me/c/${businessAccountId}`;
 
               // Create a message that includes information about selected products with images
-              let productInfo = ''
+              let productInfo = "";
               if (selectedProducts.length > 0) {
-                productInfo = "Selected products:\n"
+                productInfo = "Selected products:\n";
                 selectedProducts.slice(0, 3).forEach((product, index) => {
                   let productEntry = `${index + 1}. *${product.title}* - $${product.price}\n`;
                   if (product.image) {
                     productEntry += `   📷 Image: ${product.image}\n`;
                   }
                   if (product.description) {
-                    productEntry += `   📝 ${product.description.substring(0, 100)}${product.description.length > 100 ? '...' : ''}\n`;
+                    productEntry += `   📝 ${product.description.substring(0, 100)}${product.description.length > 100 ? "..." : ""}\n`;
                   }
                   productInfo += productEntry + "\n";
                 });
@@ -2268,7 +2851,7 @@ async function handleRoute(request, { params }) {
 Check out our latest products:
 ${catalogLink}
 
-${productInfo ? `${productInfo}` : ''}Browse our full collection and find something special just for you!
+${productInfo ? `${productInfo}` : ""}Browse our full collection and find something special just for you!
 
 🛍️ *Shop Now* - Click the link above to browse our catalog with images`;
 
@@ -2278,20 +2861,26 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
                 type: "text",
                 text: {
                   body: catalogMessage,
-                  preview_url: true
-                }
+                  preview_url: true,
+                },
               };
 
-              console.log('Sending message with data:', JSON.stringify(messageData, null, 2));
+              console.log(
+                "Sending message with data:",
+                JSON.stringify(messageData, null, 2),
+              );
 
               const result = await sendWhatsAppMessage(
                 integrations.whatsapp.phoneNumberId,
                 integrations.whatsapp.accessToken,
                 formattedRecipient,
-                messageData
+                messageData,
               );
 
-              console.log('WhatsApp API response:', JSON.stringify(result, null, 2));
+              console.log(
+                "WhatsApp API response:",
+                JSON.stringify(result, null, 2),
+              );
 
               // Log the message
               await insertStoredMessage({
@@ -2304,60 +2893,73 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
                 timestamp: new Date(),
                 products: selectedProducts,
                 whatsappMessageId: result.messages?.[0]?.id,
-                status: 'sent',
-                sentAt: new Date()
+                status: "sent",
+                sentAt: new Date(),
               });
 
-              const existingChat = await getStoredChatByPhone(formattedRecipient);
+              const existingChat =
+                await getStoredChatByPhone(formattedRecipient);
               await upsertStoredChat({
                 phone: formattedRecipient,
                 name: existingChat?.name || `Customer ${formattedRecipient}`,
-                lastMessage: 'Catalog sent',
+                lastMessage: "Catalog sent",
                 timestamp: new Date(),
-                unread: existingChat?.unread || 0
+                unread: existingChat?.unread || 0,
               });
 
               results.push({
                 recipient: recipient,
                 success: true,
-                messageId: result.messages?.[0]?.id
+                messageId: result.messages?.[0]?.id,
               });
             }
           } catch (error) {
-            console.error(`Failed to send catalog message to ${recipient}:`, error);
+            console.error(
+              `Failed to send catalog message to ${recipient}:`,
+              error,
+            );
             results.push({
               recipient: recipient,
               success: false,
-              error: error.message || 'Failed to send message'
+              error: error.message || "Failed to send message",
             });
           }
         }
 
         // Return results
-        const successfulSends = results.filter(r => r.success).length;
-        const failedSends = results.filter(r => !r.success).length;
+        const successfulSends = results.filter((r) => r.success).length;
+        const failedSends = results.filter((r) => !r.success).length;
 
-        return handleCORS(NextResponse.json({
-          success: successfulSends > 0,
-          sentCount: successfulSends,
-          failedCount: failedSends,
-          results: results
-        }));
+        return handleCORS(
+          NextResponse.json({
+            success: successfulSends > 0,
+            sentCount: successfulSends,
+            failedCount: failedSends,
+            results: results,
+          }),
+        );
       } catch (error) {
-        console.error('Failed to send catalog:', error);
-        return handleCORS(NextResponse.json(
-          { error: 'Failed to send catalog' },
-          { status: error.status || 500 }
-        ));
+        console.error("Failed to send catalog:", error);
+        return handleCORS(
+          NextResponse.json(
+            { error: "Failed to send catalog" },
+            { status: error.status || 500 },
+          ),
+        );
       }
     }
 
     // Get automation logs/state
-    if (route === '/automations/logs' && method === 'GET') {
+    if (route === "/automations/logs" && method === "GET") {
       try {
-        const automationId = request.nextUrl.searchParams.get('automationId')
+        const automationId = request.nextUrl.searchParams.get("automationId");
         if (!automationId) {
-          return handleCORS(NextResponse.json({ error: 'automationId is required' }, { status: 400 }))
+          return handleCORS(
+            NextResponse.json(
+              { error: "automationId is required" },
+              { status: 400 },
+            ),
+          );
         }
 
         const states = await queryMany(
@@ -2366,40 +2968,60 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
            WHERE userId = ? AND automationId = ?
            ORDER BY updatedAt DESC
            LIMIT 10`,
-          [currentUserId, automationId]
-        )
+          [currentUserId, automationId],
+        );
 
-        return handleCORS(NextResponse.json(states || []))
+        return handleCORS(NextResponse.json(states || []));
       } catch (error) {
-        console.error('Failed to fetch automation logs:', error)
-        return handleCORS(NextResponse.json({ error: 'Failed to fetch automation logs' }, { status: error.status || 500 }))
+        console.error("Failed to fetch automation logs:", error);
+        return handleCORS(
+          NextResponse.json(
+            { error: "Failed to fetch automation logs" },
+            { status: error.status || 500 },
+          ),
+        );
       }
     }
 
     // Automations PUT handler - delegate to separate route file or handle here
-    if (route === '/automations' && method === 'PUT') {
+    if (route === "/automations" && method === "PUT") {
       try {
-        await ensureAutomationsTable()
-        const body = await request.json()
-        const automations = Array.isArray(body) ? body : body.automations
+        await ensureAutomationsTable();
+        const body = await request.json();
+        const automations = Array.isArray(body) ? body : body.automations;
 
         if (!Array.isArray(automations)) {
-          return handleCORS(NextResponse.json({ error: 'Automations array is required' }, { status: 400 }))
+          return handleCORS(
+            NextResponse.json(
+              { error: "Automations array is required" },
+              { status: 400 },
+            ),
+          );
         }
 
-        const connection = await getPool().getConnection()
+        const connection = await getPool().getConnection();
 
         try {
-          await connection.beginTransaction()
+          await connection.beginTransaction();
 
-          const automationIds = []
+          const automationIds = [];
 
           for (const automation of automations) {
-            const automationId = automation.id || `auto-${Date.now()}`
-            const steps = typeof automation.steps === 'string' ? JSON.parse(automation.steps) : automation.steps
-            const metrics = typeof automation.metrics === 'string' ? JSON.parse(automation.metrics) : (automation.metrics || { sent: 0, openRate: 0, conversions: 0 })
+            const automationId = automation.id || `auto-${Date.now()}`;
+            const steps =
+              typeof automation.steps === "string"
+                ? JSON.parse(automation.steps)
+                : automation.steps;
+            const metrics =
+              typeof automation.metrics === "string"
+                ? JSON.parse(automation.metrics)
+                : automation.metrics || {
+                    sent: 0,
+                    openRate: 0,
+                    conversions: 0,
+                  };
 
-            automationIds.push(automationId)
+            automationIds.push(automationId);
 
             await connection.execute(
               `INSERT INTO automations (id, userId, name, status, source, summary, steps, metrics, createdAt, updatedAt)
@@ -2409,102 +3031,138 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
               [
                 automationId,
                 currentUserId,
-                automation.name || 'Unnamed',
-                automation.status !== undefined ? (automation.status ? 1 : 0) : 0,
-                automation.source || 'Custom',
-                automation.summary || '',
+                automation.name || "Unnamed",
+                automation.status !== undefined
+                  ? automation.status
+                    ? 1
+                    : 0
+                  : 0,
+                automation.source || "Custom",
+                automation.summary || "",
                 JSON.stringify(steps || []),
-                JSON.stringify(metrics)
-              ]
-            )
+                JSON.stringify(metrics),
+              ],
+            );
           }
 
           if (automationIds.length > 0) {
-            const placeholders = automationIds.map(() => '?').join(', ')
+            const placeholders = automationIds.map(() => "?").join(", ");
             await connection.execute(
               `DELETE FROM automations
                WHERE userId = ?
                AND id NOT IN (${placeholders})`,
-              [currentUserId, ...automationIds]
-            )
+              [currentUserId, ...automationIds],
+            );
           } else {
-            await connection.execute('DELETE FROM automations WHERE userId = ?', [currentUserId])
+            await connection.execute(
+              "DELETE FROM automations WHERE userId = ?",
+              [currentUserId],
+            );
           }
 
-          await connection.commit()
+          await connection.commit();
         } catch (error) {
-          await connection.rollback()
-          throw error
+          await connection.rollback();
+          throw error;
         } finally {
-          connection.release()
+          connection.release();
         }
 
-        return handleCORS(NextResponse.json({ success: true }))
+        return handleCORS(NextResponse.json({ success: true }));
       } catch (error) {
-        console.error('Error saving automations:', error)
-        return handleCORS(NextResponse.json({ error: 'Failed to save automations', details: error.message }, { status: error.status || 500 }))
+        console.error("Error saving automations:", error);
+        return handleCORS(
+          NextResponse.json(
+            { error: "Failed to save automations", details: error.message },
+            { status: error.status || 500 },
+          ),
+        );
       }
     }
 
     // Automations GET handler
-    if (route === '/automations' && method === 'GET') {
+    if (route === "/automations" && method === "GET") {
       try {
-        await ensureAutomationsTable()
-        await seedDefaultAutomationsForUser(currentUserId)
+        await ensureAutomationsTable();
+        await seedDefaultAutomationsForUser(currentUserId);
 
         let [rows] = await query(
           `SELECT id, name, status, source, summary, steps, metrics, createdAt, updatedAt
            FROM automations
            WHERE userId = ?
            ORDER BY updatedAt DESC, createdAt DESC`,
-          [currentUserId]
-        )
+          [currentUserId],
+        );
 
         // Parse JSON columns
-        const parsedRows = (rows || []).map(row => ({
+        const parsedRows = (rows || []).map((row) => ({
           ...row,
-          steps: typeof row.steps === 'string' ? JSON.parse(row.steps) : row.steps,
-          metrics: typeof row.metrics === 'string' ? JSON.parse(row.metrics) : row.metrics
-        }))
-        console.log('Returning automations:', parsedRows.map(a => ({ id: a.id, stepsCount: a.steps?.length })))
+          steps:
+            typeof row.steps === "string" ? JSON.parse(row.steps) : row.steps,
+          metrics:
+            typeof row.metrics === "string"
+              ? JSON.parse(row.metrics)
+              : row.metrics,
+        }));
+        console.log(
+          "Returning automations:",
+          parsedRows.map((a) => ({ id: a.id, stepsCount: a.steps?.length })),
+        );
 
-        return handleCORS(NextResponse.json(parsedRows || []))
+        return handleCORS(NextResponse.json(parsedRows || []));
       } catch (error) {
-        console.error('Error fetching automations:', error)
-        return handleCORS(NextResponse.json(
-          { error: error.status === 401 ? 'Not authenticated' : 'Failed to fetch automations' }, 
-          { status: error.status || 500 }
-        ))
+        console.error("Error fetching automations:", error);
+        return handleCORS(
+          NextResponse.json(
+            {
+              error:
+                error.status === 401
+                  ? "Not authenticated"
+                  : "Failed to fetch automations",
+            },
+            { status: error.status || 500 },
+          ),
+        );
       }
     }
 
     // New endpoint to fetch WhatsApp templates
-    if (route === '/whatsapp-templates' && method === 'GET') {
+    if (route === "/whatsapp-templates" && method === "GET") {
       try {
         // Get WhatsApp integration details
         const integrations = await getStoredIntegrations(currentUserId);
 
-        if (!integrations?.whatsapp?.phoneNumberId || !integrations?.whatsapp?.accessToken) {
-          return handleCORS(NextResponse.json(
-            {
-              error: "WhatsApp not configured properly. Missing phone number ID or access token.",
-              guidance: "Please check your WhatsApp integration settings in the dashboard."
-            },
-            { status: 400 }
-          ));
+        if (
+          !integrations?.whatsapp?.phoneNumberId ||
+          !integrations?.whatsapp?.accessToken
+        ) {
+          return handleCORS(
+            NextResponse.json(
+              {
+                error:
+                  "WhatsApp not configured properly. Missing phone number ID or access token.",
+                guidance:
+                  "Please check your WhatsApp integration settings in the dashboard.",
+              },
+              { status: 400 },
+            ),
+          );
         }
 
         // Use the business account ID from integration settings
         const businessAccountId = integrations.whatsapp.businessAccountId;
 
         if (!businessAccountId) {
-          return handleCORS(NextResponse.json(
-            {
-              error: "Business account ID not found in integration settings",
-              guidance: "Please ensure your WhatsApp Business Account is properly configured."
-            },
-            { status: 400 }
-          ));
+          return handleCORS(
+            NextResponse.json(
+              {
+                error: "Business account ID not found in integration settings",
+                guidance:
+                  "Please ensure your WhatsApp Business Account is properly configured.",
+              },
+              { status: 400 },
+            ),
+          );
         }
 
         // Fetch templates from WhatsApp API using the business account ID
@@ -2513,128 +3171,157 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
         const templateResponse = await fetch(url, {
           headers: {
             ...buildMetaAuthHeaders(integrations.whatsapp.accessToken),
-            'Content-Type': 'application/json'
-          }
+            "Content-Type": "application/json",
+          },
         });
 
         const data = await templateResponse.json();
 
         if (!templateResponse.ok) {
-          console.error('WhatsApp Templates API Error:', data);
+          console.error("WhatsApp Templates API Error:", data);
 
           // Provide more detailed error information
           let errorMessage = "Failed to fetch templates from WhatsApp API";
           let guidance = "";
 
           if (data.error?.code === 100) {
-            if (data.error?.message?.includes('message_templates')) {
+            if (data.error?.message?.includes("message_templates")) {
               errorMessage = "Unable to access message templates";
-              guidance = "Your business account may not have the required permissions or the account ID may be incorrect.";
+              guidance =
+                "Your business account may not have the required permissions or the account ID may be incorrect.";
             } else {
               errorMessage = "Invalid request to WhatsApp API";
-              guidance = "There may be an issue with your business account configuration.";
+              guidance =
+                "There may be an issue with your business account configuration.";
             }
           } else if (data.error?.code === 200) {
             errorMessage = "Insufficient permissions";
-            guidance = "Your access token may not have the required business_management permissions.";
+            guidance =
+              "Your access token may not have the required business_management permissions.";
           }
 
           // Return an empty array with error details instead of an error to allow the UI to still function
-          return handleCORS(NextResponse.json({
-            data: [],
-            error: errorMessage,
-            guidance: guidance,
-            apiError: data.error
-          }));
+          return handleCORS(
+            NextResponse.json({
+              data: [],
+              error: errorMessage,
+              guidance: guidance,
+              apiError: data.error,
+            }),
+          );
         }
 
         // Filter for approved templates only
-        const approvedTemplates = data.data?.filter(template =>
-          template.status === 'APPROVED'
-        ) || [];
+        const approvedTemplates =
+          data.data?.filter((template) => template.status === "APPROVED") || [];
 
         return handleCORS(NextResponse.json(approvedTemplates));
       } catch (error) {
-        console.error('Failed to fetch WhatsApp templates:', error);
-        return handleCORS(NextResponse.json(
-          {
-            error: 'Failed to fetch WhatsApp templates',
-            guidance: "Please check your internet connection and WhatsApp integration settings.",
-            technicalError: error.message
-          },
-          { status: error.status || 500 }
-        ));
+        console.error("Failed to fetch WhatsApp templates:", error);
+        return handleCORS(
+          NextResponse.json(
+            {
+              error: "Failed to fetch WhatsApp templates",
+              guidance:
+                "Please check your internet connection and WhatsApp integration settings.",
+              technicalError: error.message,
+            },
+            { status: error.status || 500 },
+          ),
+        );
       }
     }
 
     // New endpoint to send WhatsApp messages from the dashboard
-    if (route === '/send-whatsapp-message' && method === 'POST') {
+    if (route === "/send-whatsapp-message" && method === "POST") {
       try {
-        const authenticatedUserId = requireRequestUserId(request)
-        const body = await request.json()
-        const { to, message, accountId } = body
+        const authenticatedUserId = requireRequestUserId(request);
+        const body = await request.json();
+        const { to, message, accountId } = body;
 
         if (!to || !message) {
-          return handleCORS(NextResponse.json(
-            { error: "Recipient and message are required" },
-            { status: 400 }
-          ))
+          return handleCORS(
+            NextResponse.json(
+              { error: "Recipient and message are required" },
+              { status: 400 },
+            ),
+          );
         }
 
-        let phoneNumberId, accessToken, businessAccountId
+        let phoneNumberId, accessToken, businessAccountId;
 
         // Get WhatsApp account - use accountId if provided, otherwise fallback to legacy integration
         if (accountId) {
-          const waAccount = await getWhatsAppAccountById(accountId, authenticatedUserId)
+          const waAccount = await getWhatsAppAccountById(
+            accountId,
+            authenticatedUserId,
+          );
           if (!waAccount) {
-            return handleCORS(NextResponse.json(
-              { error: "WhatsApp account not found" },
-              { status: 404 }
-            ))
+            return handleCORS(
+              NextResponse.json(
+                { error: "WhatsApp account not found" },
+                { status: 404 },
+              ),
+            );
           }
-          phoneNumberId = waAccount.phoneNumberId
-          accessToken = waAccount.accessToken
-          businessAccountId = waAccount.businessAccountId || ''
+          phoneNumberId = waAccount.phoneNumberId;
+          accessToken = waAccount.accessToken;
+          businessAccountId = waAccount.businessAccountId || "";
         } else {
           // Legacy: Get from single integration
-          const integrations = await getStoredIntegrations(authenticatedUserId)
-          const waIntegration = typeof integrations?.whatsapp === 'string' 
-            ? JSON.parse(integrations.whatsapp) 
-            : integrations?.whatsapp
+          const integrations = await getStoredIntegrations(authenticatedUserId);
+          const waIntegration =
+            typeof integrations?.whatsapp === "string"
+              ? JSON.parse(integrations.whatsapp)
+              : integrations?.whatsapp;
 
           if (!waIntegration?.phoneNumberId || !waIntegration?.accessToken) {
-            return handleCORS(NextResponse.json(
-              { error: "WhatsApp not configured. Please add a WhatsApp account first." },
-              { status: 400 }
-            ))
+            return handleCORS(
+              NextResponse.json(
+                {
+                  error:
+                    "WhatsApp not configured. Please add a WhatsApp account first.",
+                },
+                { status: 400 },
+              ),
+            );
           }
-          phoneNumberId = waIntegration.phoneNumberId
-          accessToken = waIntegration.accessToken
-          businessAccountId = waIntegration.businessAccountId || ''
+          phoneNumberId = waIntegration.phoneNumberId;
+          accessToken = waIntegration.accessToken;
+          businessAccountId = waIntegration.businessAccountId || "";
         }
 
-        await validateWhatsAppPhoneNumberAccess(phoneNumberId, accessToken, businessAccountId)
+        await validateWhatsAppPhoneNumberAccess(
+          phoneNumberId,
+          accessToken,
+          businessAccountId,
+        );
 
         // Prepare message data
         const messageData = {
           messaging_product: "whatsapp",
-          to: to.replace(/\D/g, ''), // Remove any non-digit characters
+          to: to.replace(/\D/g, ""), // Remove any non-digit characters
           type: "text",
           text: {
-            body: message
-          }
-        }
+            body: message,
+          },
+        };
 
         // Send message via WhatsApp API
         const result = await sendWhatsAppMessage(
           phoneNumberId,
           accessToken,
           to,
-          messageData
-        )
+          messageData,
+        );
 
         // Save message to database
-        const savedMessage = await saveOutgoingMessage(to, message, result, authenticatedUserId)
+        const savedMessage = await saveOutgoingMessage(
+          to,
+          message,
+          result,
+          authenticatedUserId,
+        );
 
         // Return the saved message object
         const messageResponse = {
@@ -2642,182 +3329,234 @@ ${productInfo ? `${productInfo}` : ''}Browse our full collection and find someth
           text: savedMessage.message,
           isCustomer: savedMessage.isCustomer,
           timestamp: savedMessage.timestamp,
-          phone: savedMessage.phone
-        }
+          phone: savedMessage.phone,
+        };
 
-        return handleCORS(NextResponse.json({
-          success: true,
-          message: messageResponse,
-          messageId: result.messages?.[0]?.id
-        }))
-
+        return handleCORS(
+          NextResponse.json({
+            success: true,
+            message: messageResponse,
+            messageId: result.messages?.[0]?.id,
+          }),
+        );
       } catch (error) {
-        console.error('Failed to send WhatsApp message:', error)
-        const isRecipientAllowlistError =
-          error.message?.includes('Recipient phone number not in allowed list')
+        console.error("Failed to send WhatsApp message:", error);
+        const isRecipientAllowlistError = error.message?.includes(
+          "Recipient phone number not in allowed list",
+        );
 
-        return handleCORS(NextResponse.json(
-          {
-            error: isRecipientAllowlistError
-              ? 'This phone number is not in your WhatsApp test recipient list.'
-              : `Failed to send message: ${error.message}`,
-            guidance: isRecipientAllowlistError
-              ? 'In Meta Developer Dashboard, add this number to the WhatsApp API allowed recipients list, then try again.'
-              : undefined
-          },
-          { status: isRecipientAllowlistError ? 400 : 500 }
-        ))
+        return handleCORS(
+          NextResponse.json(
+            {
+              error: isRecipientAllowlistError
+                ? "This phone number is not in your WhatsApp test recipient list."
+                : `Failed to send message: ${error.message}`,
+              guidance: isRecipientAllowlistError
+                ? "In Meta Developer Dashboard, add this number to the WhatsApp API allowed recipients list, then try again."
+                : undefined,
+            },
+            { status: isRecipientAllowlistError ? 400 : 500 },
+          ),
+        );
       }
     }
 
     // New endpoint to get chats for the dashboard
-    if (route === '/chats' && method === 'GET') {
+    if (route === "/chats" && method === "GET") {
       try {
-        const authenticatedUserId = requireRequestUserId(request)
-        const chats = await getStoredChats(authenticatedUserId)
-        console.log('[GET /chats] user:', authenticatedUserId, 'chatCount:', chats.length)
+        const authenticatedUserId = requireRequestUserId(request);
+        const chats = await getStoredChats(authenticatedUserId);
+        console.log(
+          "[GET /chats] user:",
+          authenticatedUserId,
+          "chatCount:",
+          chats.length,
+        );
 
-        const cleanedChats = chats.map(({ _id, ...rest }) => rest)
-        return handleCORS(NextResponse.json(cleanedChats))
+        const cleanedChats = chats.map(({ _id, ...rest }) => rest);
+        return handleCORS(NextResponse.json(cleanedChats));
       } catch (error) {
-        console.error('Failed to fetch chats:', error)
-        return handleCORS(NextResponse.json(
-          { error: error.status === 401 ? 'Not authenticated' : 'Failed to fetch chats' },
-          { status: error.status || 500 }
-        ))
+        console.error("Failed to fetch chats:", error);
+        return handleCORS(
+          NextResponse.json(
+            {
+              error:
+                error.status === 401
+                  ? "Not authenticated"
+                  : "Failed to fetch chats",
+            },
+            { status: error.status || 500 },
+          ),
+        );
       }
     }
 
     // New endpoint to get messages for a specific chat
-    if (route.startsWith('/chats/') && route.endsWith('/messages') && method === 'GET') {
+    if (
+      route.startsWith("/chats/") &&
+      route.endsWith("/messages") &&
+      method === "GET"
+    ) {
       try {
-        const authenticatedUserId = requireRequestUserId(request)
-        const phone = route.split('/')[2]; // Extract phone number from route
+        const authenticatedUserId = requireRequestUserId(request);
+        const phone = route.split("/")[2]; // Extract phone number from route
 
         if (!phone) {
-          return handleCORS(NextResponse.json(
-            { error: "Phone number is required" },
-            { status: 400 }
-          ));
+          return handleCORS(
+            NextResponse.json(
+              { error: "Phone number is required" },
+              { status: 400 },
+            ),
+          );
         }
 
         // Fetch all messages for this phone number (both incoming from customer and outgoing to customer)
-        const messages = await getStoredMessagesByPhone(phone, authenticatedUserId);
-        console.log('[GET /chats/:phone/messages] user:', authenticatedUserId, 'phone:', phone, 'messageCount:', messages.length)
+        const messages = await getStoredMessagesByPhone(
+          phone,
+          authenticatedUserId,
+        );
+        console.log(
+          "[GET /chats/:phone/messages] user:",
+          authenticatedUserId,
+          "phone:",
+          phone,
+          "messageCount:",
+          messages.length,
+        );
         if (messages[0]) {
-          console.log('[GET /chats/:phone/messages] newest message snapshot:', JSON.stringify(messages[messages.length - 1]))
+          console.log(
+            "[GET /chats/:phone/messages] newest message snapshot:",
+            JSON.stringify(messages[messages.length - 1]),
+          );
         }
 
         // Transform messages to ensure consistent structure for the frontend
-        const transformedMessages = messages.map(msg => {
+        const transformedMessages = messages.map((msg) => {
           // Robustly determine if this is a customer message
-          const isCustomer = Boolean(msg.isCustomer === true || msg.isCustomer === 1 || msg.isCustomer === '1' || msg.isCustomer === 'true');
-          
+          const isCustomer = Boolean(
+            msg.isCustomer === true ||
+            msg.isCustomer === 1 ||
+            msg.isCustomer === "1" ||
+            msg.isCustomer === "true",
+          );
+
           if (isCustomer) {
             return {
               id: msg.id || msg._id?.toString() || uuidv4(),
-              text: msg.message || msg.text || '',
+              text: msg.message || msg.text || "",
               isCustomer: true,
               timestamp: msg.timestamp || new Date(),
-              phone: msg.phone || phone
+              phone: msg.phone || phone,
             };
           } else {
             return {
               id: msg.id || msg._id?.toString() || uuidv4(),
-              text: msg.message || msg.text || '',
+              text: msg.message || msg.text || "",
               isCustomer: false,
               timestamp: msg.timestamp || new Date(),
-              phone: msg.recipient || phone
+              phone: msg.recipient || phone,
             };
           }
         });
 
-        console.log('[GET /chats/:phone/messages] transformedCount:', transformedMessages.length)
+        console.log(
+          "[GET /chats/:phone/messages] transformedCount:",
+          transformedMessages.length,
+        );
         return handleCORS(NextResponse.json(transformedMessages));
       } catch (error) {
-        console.error('Failed to fetch messages:', error);
-        return handleCORS(NextResponse.json(
-          { error: 'Failed to fetch messages' },
-          { status: error.status || 500 }
-        ));
+        console.error("Failed to fetch messages:", error);
+        return handleCORS(
+          NextResponse.json(
+            { error: "Failed to fetch messages" },
+            { status: error.status || 500 },
+          ),
+        );
       }
     }
 
     // New endpoint to create a new chat
-    if (route === '/chats' && method === 'POST') {
+    if (route === "/chats" && method === "POST") {
       try {
-        const authenticatedUserId = requireRequestUserId(request)
+        const authenticatedUserId = requireRequestUserId(request);
         let body;
         try {
           body = await request.json();
         } catch (parseError) {
-          console.error('Failed to parse JSON body:', parseError);
-          return handleCORS(NextResponse.json(
-            { error: "Invalid JSON in request body" },
-            { status: 400 }
-          ));
+          console.error("Failed to parse JSON body:", parseError);
+          return handleCORS(
+            NextResponse.json(
+              { error: "Invalid JSON in request body" },
+              { status: 400 },
+            ),
+          );
         }
 
         const { phone, name } = body;
 
         if (!phone) {
-          return handleCORS(NextResponse.json(
-            { error: "Phone number is required" },
-            { status: 400 }
-          ));
+          return handleCORS(
+            NextResponse.json(
+              { error: "Phone number is required" },
+              { status: 400 },
+            ),
+          );
         }
 
         // Format the phone number
-        const formattedPhone = phone.replace(/\D/g, '');
+        const formattedPhone = phone.replace(/\D/g, "");
 
         // Check if chat already exists
-        const existingChat = await getStoredChatByPhone(formattedPhone, authenticatedUserId);
+        const existingChat = await getStoredChatByPhone(
+          formattedPhone,
+          authenticatedUserId,
+        );
 
         if (existingChat) {
           return handleCORS(NextResponse.json(existingChat));
         }
 
         // Create new chat
-        const newChat = await upsertStoredChat({
-          phone: formattedPhone,
-          name: name || `Customer ${formattedPhone}`,
-          lastMessage: 'Chat created',
-          timestamp: new Date(),
-          unread: 0
-        }, authenticatedUserId);
+        const newChat = await upsertStoredChat(
+          {
+            phone: formattedPhone,
+            name: name || `Customer ${formattedPhone}`,
+            lastMessage: "Chat created",
+            timestamp: new Date(),
+            unread: 0,
+          },
+          authenticatedUserId,
+        );
 
         const { _id, ...cleanedChat } = newChat;
         return handleCORS(NextResponse.json(cleanedChat));
       } catch (error) {
-        console.error('Failed to create chat:', error);
-        return handleCORS(NextResponse.json(
-          { error: 'Failed to create chat' },
-          { status: error.status || 500 }
-        ));
+        console.error("Failed to create chat:", error);
+        return handleCORS(
+          NextResponse.json(
+            { error: "Failed to create chat" },
+            { status: error.status || 500 },
+          ),
+        );
       }
     }
 
     // Route not found
-    console.log(`Route not found: ${route}, method: ${method}`)
-    return handleCORS(NextResponse.json(
-      { error: `Route ${route} not found` },
-      { status: 404 }
-    ))
-
+    console.log(`Route not found: ${route}, method: ${method}`);
+    return handleCORS(
+      NextResponse.json({ error: `Route ${route} not found` }, { status: 404 }),
+    );
   } catch (error) {
-    console.error('API Error:', error)
-    const status = error.status || 500
-    const message = status === 500 ? "Internal server error" : error.message
-    return handleCORS(NextResponse.json(
-      { error: message },
-      { status }
-    ))
+    console.error("API Error:", error);
+    const status = error.status || 500;
+    const message = status === 500 ? "Internal server error" : error.message;
+    return handleCORS(NextResponse.json({ error: message }, { status }));
   }
 }
 
 // Export all HTTP methods
-export const GET = handleRoute
-export const POST = handleRoute
-export const PUT = handleRoute
-export const DELETE = handleRoute
-export const PATCH = handleRoute
+export const GET = handleRoute;
+export const POST = handleRoute;
+export const PUT = handleRoute;
+export const DELETE = handleRoute;
+export const PATCH = handleRoute;
