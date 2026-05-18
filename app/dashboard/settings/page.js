@@ -69,6 +69,16 @@ export default function SettingsPage() {
   const [zohoDc, setZohoDc] = useState('zoho.com')
   const [user, setUser] = useState(null)
   
+  // Google Sheets integration states
+  const [googleSheetsDialogOpen, setGoogleSheetsDialogOpen] = useState(false)
+  const [spreadsheets, setSpreadsheets] = useState([])
+  const [sheets, setSheets] = useState([])
+  const [selectedSpreadsheetId, setSelectedSpreadsheetId] = useState('')
+  const [selectedSheetName, setSelectedSheetName] = useState('Sheet1')
+  const [loadingSpreadsheets, setLoadingSpreadsheets] = useState(false)
+  const [loadingSheets, setLoadingSheets] = useState(false)
+  const [savingGoogleSheetsSettings, setSavingGoogleSheetsSettings] = useState(false)
+  
   // Instagram connection states
   const [igAccountName, setIgAccountName] = useState('')
   const [igPageId, setIgPageId] = useState('')
@@ -501,7 +511,8 @@ useEffect(() => {
     whatsapp: { connected: false, data: {} },
     shopify: { connected: false, data: {} },
     stripe: { connected: false, data: {} },
-    zoho: { connected: false, data: {} }
+    zoho: { connected: false, data: {} },
+    googleSheets: { connected: false, data: {} }
   })
 
   // Load integrations status on mount
@@ -517,10 +528,18 @@ useEffect(() => {
         window.history.replaceState({}, document.title, window.location.pathname)
         loadIntegrations()
         checkWebhookStatus()
+      } else if (urlParams.get('googleSheets') === 'connected') {
+        toast.success('Google Sheets connected successfully!')
+        window.history.replaceState({}, document.title, window.location.pathname)
+        loadIntegrations()
       } else if (urlParams.get('error')) {
         const error = urlParams.get('error')
         const detail = urlParams.get('detail')
-        toast.error(`Failed to connect Zoho: ${detail ? `${error} - ${detail}` : error}`)
+        if (error.startsWith('google_sheets_')) {
+          toast.error(`Failed to connect Google Sheets: ${detail ? `${error} - ${detail}` : error}`)
+        } else {
+          toast.error(`Failed to connect Zoho: ${detail ? `${error} - ${detail}` : error}`)
+        }
         window.history.replaceState({}, document.title, window.location.pathname)
       }
     }
@@ -532,9 +551,103 @@ useEffect(() => {
       if (response.ok) {
         const data = await response.json()
         setIntegrations(data)
+        if (data.googleSheets?.connected && data.googleSheets?.data?.defaultSettings) {
+          const settings = data.googleSheets.data.defaultSettings
+          if (settings.spreadsheetId) setSelectedSpreadsheetId(settings.spreadsheetId)
+          if (settings.sheetName) setSelectedSheetName(settings.sheetName)
+        }
       }
     } catch (error) {
       console.error('Failed to load integrations:', error)
+    }
+  }
+
+  const fetchSpreadsheets = async () => {
+    setLoadingSpreadsheets(true)
+    try {
+      const res = await fetch('/api/integrations/google/spreadsheets')
+      const data = await res.json()
+      if (res.ok && data.spreadsheets) {
+        setSpreadsheets(data.spreadsheets)
+      } else {
+        toast.error(data.error || 'Failed to load Google Spreadsheets')
+      }
+    } catch (err) {
+      console.error(err)
+      toast.error('Failed to load Google Spreadsheets')
+    } finally {
+      setLoadingSpreadsheets(false)
+    }
+  }
+
+  const fetchSheets = async (spreadsheetId) => {
+    if (!spreadsheetId) return
+    setLoadingSheets(true)
+    try {
+      const res = await fetch(`/api/integrations/google/sheets?spreadsheetId=${spreadsheetId}`)
+      const data = await res.json()
+      if (res.ok && data.sheets) {
+        setSheets(data.sheets)
+      } else {
+        toast.error(data.error || 'Failed to load Worksheet Tabs')
+      }
+    } catch (err) {
+      console.error(err)
+      toast.error('Failed to load Worksheet Tabs')
+    } finally {
+      setLoadingSheets(false)
+    }
+  }
+
+  const saveGoogleSheetsSettings = async () => {
+    setSavingGoogleSheetsSettings(true)
+    try {
+      const res = await fetch('/api/integrations/google/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          spreadsheetId: selectedSpreadsheetId,
+          sheetName: selectedSheetName,
+          columnMapping: {}
+        })
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        toast.success('Google Sheets defaults saved successfully!')
+        setGoogleSheetsDialogOpen(false)
+        await loadIntegrations()
+      } else {
+        toast.error(data.error || 'Failed to save Google Sheets settings')
+      }
+    } catch (err) {
+      console.error(err)
+      toast.error('Failed to save Google Sheets settings')
+    } finally {
+      setSavingGoogleSheetsSettings(false)
+    }
+  }
+
+  const handleDisconnectGoogleSheets = async () => {
+    if (!confirm('Are you sure you want to disconnect Google Sheets? This will pause all Google Sheets triggers in automations.')) {
+      return
+    }
+    setLoading(true)
+    try {
+      const res = await fetch('/api/integrations/google/disconnect', {
+        method: 'POST'
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        toast.success('Google Sheets disconnected successfully!')
+        await loadIntegrations()
+      } else {
+        toast.error(data.error || 'Failed to disconnect Google Sheets')
+      }
+    } catch (err) {
+      console.error(err)
+      toast.error('Failed to disconnect Google Sheets')
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -1267,6 +1380,166 @@ useEffect(() => {
                           </div>
                         </div>
                       )}
+                    </div>
+                  )}
+                </DialogContent>
+              </Dialog>
+
+              {/* Google Sheets */}
+              <Dialog open={googleSheetsDialogOpen} onOpenChange={(open) => {
+                setGoogleSheetsDialogOpen(open)
+                if (open && integrations.googleSheets?.connected) {
+                  fetchSpreadsheets()
+                  if (integrations.googleSheets?.data?.defaultSettings?.spreadsheetId) {
+                    setSelectedSpreadsheetId(integrations.googleSheets.data.defaultSettings.spreadsheetId)
+                    fetchSheets(integrations.googleSheets.data.defaultSettings.spreadsheetId)
+                    if (integrations.googleSheets.data.defaultSettings.sheetName) {
+                      setSelectedSheetName(integrations.googleSheets.data.defaultSettings.sheetName)
+                    }
+                  }
+                }
+              }}>
+                <DialogTrigger asChild>
+                  <div className="flex flex-col gap-4 cursor-pointer">
+                    <div className={`p-5 rounded-xl transition-colors group bg-[#f8f9ff] hover:bg-[#eff4ff] ${integrations.googleSheets?.connected ? 'border border-solid border-green-500/20 bg-green-50/10' : ''}`}>
+                      <div className="flex justify-between items-start mb-4">
+                        <div className="w-10 h-10 rounded-lg bg-green-50 flex items-center justify-center">
+                          <Database className="text-green-700 w-5 h-5" />
+                        </div>
+                        {integrations.googleSheets?.connected ? (
+                          <span className="px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-[10px] font-black uppercase flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+                            Connected
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[10px] font-black uppercase">Inactive</span>
+                        )}
+                      </div>
+                      <h4 className="font-bold mb-1">Google Sheets</h4>
+                      <p className="text-[11px] text-[#3d618c] mb-4">Sync leads & metrics to spreadsheet rows</p>
+                      <div className={`w-full py-2 rounded-lg ${integrations.googleSheets?.connected ? 'bg-green-100 text-green-700' : 'bg-[#e5eeff] text-[#005cc0]'} font-bold text-xs hover:bg-green-600 hover:text-white transition-all text-center`}>
+                        {integrations.googleSheets?.connected ? 'Manage' : 'Connect'}
+                      </div>
+                    </div>
+                  </div>
+                </DialogTrigger>
+                <DialogContent className="sm:max-w-[500px]">
+                  <DialogHeader>
+                    <DialogTitle>Google Sheets Configuration</DialogTitle>
+                    <DialogDescription>
+                      Export conversation leads and customer events automatically to your spreadsheets.
+                    </DialogDescription>
+                  </DialogHeader>
+                  
+                  {integrations.googleSheets?.connected ? (
+                    <div className="space-y-4">
+                      <div className="p-4 bg-green-50/50 border border-green-100 rounded-xl space-y-2">
+                        <div className="flex items-center gap-2 text-green-800 text-xs font-bold uppercase tracking-wider">
+                          <CheckCircle className="w-4 h-4 text-green-600" />
+                          <span>Google Account Linked</span>
+                        </div>
+                        <p className="text-xs text-green-700 leading-relaxed">
+                          Your platform account is successfully linked with Google OAuth. Choose the default target spreadsheet and tab below to log events.
+                        </p>
+                      </div>
+
+                      <div className="space-y-4">
+                        <div className="grid gap-2">
+                          <Label className="text-xs font-bold text-gray-700">Target Spreadsheet</Label>
+                          {loadingSpreadsheets ? (
+                            <div className="flex items-center gap-2 text-xs text-gray-500 py-2">
+                              <Loader2 className="h-4 w-4 animate-spin text-[#005cc0]" />
+                              <span>Loading spreadsheets from Google Drive...</span>
+                            </div>
+                          ) : (
+                            <select
+                              value={selectedSpreadsheetId}
+                              onChange={(e) => {
+                                const id = e.target.value
+                                setSelectedSpreadsheetId(id)
+                                fetchSheets(id)
+                              }}
+                              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                            >
+                              <option value="">-- Select Spreadsheet --</option>
+                              {spreadsheets.map((s) => (
+                                <option key={s.id} value={s.id}>{s.name}</option>
+                              ))}
+                            </select>
+                          )}
+                        </div>
+
+                        {selectedSpreadsheetId && (
+                          <div className="grid gap-2">
+                            <Label className="text-xs font-bold text-gray-700">Worksheet Tab</Label>
+                            {loadingSheets ? (
+                              <div className="flex items-center gap-2 text-xs text-gray-500 py-2">
+                                <Loader2 className="h-4 w-4 animate-spin text-[#005cc0]" />
+                                <span>Loading sheet tabs...</span>
+                              </div>
+                            ) : (
+                              <select
+                                value={selectedSheetName}
+                                onChange={(e) => setSelectedSheetName(e.target.value)}
+                                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                              >
+                                <option value="">-- Select Sheet Tab --</option>
+                                {sheets.map((sh) => (
+                                  <option key={sh} value={sh}>{sh}</option>
+                                ))}
+                              </select>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="pt-6 flex justify-between gap-3 border-t border-gray-100">
+                        <Button 
+                          variant="destructive"
+                          onClick={() => {
+                            setGoogleSheetsDialogOpen(false)
+                            handleDisconnectGoogleSheets()
+                          }}
+                        >
+                          Disconnect
+                        </Button>
+                        <div className="flex gap-2">
+                          <Button variant="outline" onClick={() => setGoogleSheetsDialogOpen(false)}>
+                            Cancel
+                          </Button>
+                          <Button 
+                            onClick={saveGoogleSheetsSettings}
+                            disabled={savingGoogleSheetsSettings}
+                            className="bg-green-700 hover:bg-green-800 text-white font-bold"
+                          >
+                            {savingGoogleSheetsSettings ? 'Saving...' : 'Save Settings'}
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-4 pt-2">
+                      <div className="p-4 bg-gradient-to-br from-green-50 to-emerald-50/50 border border-green-100 rounded-xl space-y-3">
+                        <div className="flex items-center gap-2 text-green-800 text-xs font-bold uppercase tracking-wider">
+                          <Zap className="w-4 h-4 text-green-600 animate-pulse" />
+                          <span>Instantly Send Leads to Sheets</span>
+                        </div>
+                        <p className="text-xs text-green-700 leading-relaxed">
+                          Link your Google account and send incoming customer profiles, contact numbers, order info, and conversation histories directly to your spreadsheets in real-time.
+                        </p>
+                        <Button 
+                          className="w-full bg-[#0F9D58] hover:bg-[#0B8043] text-white font-bold flex items-center justify-center gap-2.5 py-6 shadow-sm rounded-xl transition-all"
+                          onClick={() => window.location.href = '/api/integrations/google/auth'}
+                        >
+                          <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24" style={{ width: '16px', height: '16px' }}>
+                            <path d="M21.356 11.1H12v2.7h5.385c-.233 1.222-1.002 2.257-2.185 3.003V18.6h3.535c2.068-1.9 3.265-4.7 3.265-8 0-.54-.045-1.07-.129-1.5z" fill="#4285F4"/>
+                            <path d="M12 20.6c2.7 0 4.96-.9 6.615-2.457l-3.535-2.733c-.98.656-2.233 1.05-3.08 1.05-2.915 0-5.385-1.97-6.265-4.6H1.547v2.8C3.256 17.8 7.356 20.6 12 20.6z" fill="#34A853"/>
+                            <path d="M5.735 11.86c-.223-.666-.35-1.378-.35-2.11s.127-1.444.35-2.11V4.84H1.547A11.96 11.96 0 0 0 0 9.75c0 1.777.389 3.466 1.082 4.978l4.653-2.868z" fill="#FBBC05"/>
+                            <path d="M12 4.45c1.478 0 2.805.51 3.85 1.503l2.892-2.892C17 1.344 14.7 0 12 0 7.356 0 3.256 2.8 1.547 5.95l4.188 2.8C6.615 6.13 9.085 4.45 12 4.45z" fill="#EA4335"/>
+                          </svg>
+                          Connect Google Sheets
+                        </Button>
+                      </div>
                     </div>
                   )}
                 </DialogContent>

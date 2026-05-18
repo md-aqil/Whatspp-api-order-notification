@@ -58,6 +58,7 @@ import {
 import { getStoredProducts, saveStoredProducts } from '@/lib/db/product-repository'
 import { enqueueAutomationEvent } from '@/lib/queue'
 import { triggerAutomationEvent } from '@/lib/automation-engine'
+import { getGoogleSheetsClient } from '@/lib/google-sheets-api'
 
 
 // Automation State Helpers (To be moved to lib/automation-engine.js if needed)
@@ -1370,6 +1371,185 @@ async function handleRoute(request, { params }) {
       }
     }
 
+    // Google Sheets OAuth Initiation
+    if (route === '/integrations/google/auth' && method === 'GET') {
+      const authenticatedUserId = requireRequestUserId(request)
+      const clientId = process.env.GOOGLE_CLIENT_ID
+      const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${process.env.NEXT_PUBLIC_BASE_URL || 'https://chatflow.vibeship.in'}/api/integrations/google/callback`
+      
+      const authParams = new URLSearchParams()
+      authParams.set('client_id', clientId)
+      authParams.set('redirect_uri', redirectUri)
+      authParams.set('response_type', 'code')
+      authParams.set('access_type', 'offline')
+      authParams.set('prompt', 'consent')
+      authParams.set('scope', 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.readonly')
+      authParams.set('state', authenticatedUserId)
+      
+      const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${authParams.toString()}`
+      return NextResponse.redirect(authUrl)
+    }
+
+    // Google Sheets OAuth Callback
+    if (route === '/integrations/google/callback' && method === 'GET') {
+      const code = request.nextUrl.searchParams.get('code')
+      const error = request.nextUrl.searchParams.get('error')
+      const state = request.nextUrl.searchParams.get('state') // userId
+      
+      const redirectBase = process.env.NEXT_PUBLIC_BASE_URL || 'https://chatflow.vibeship.in'
+      
+      if (error) {
+        console.error('Google Sheets OAuth Failed:', error)
+        return NextResponse.redirect(`${redirectBase}/dashboard/settings?error=google_sheets_oauth_failed&detail=${encodeURIComponent(error)}`)
+      }
+      
+      if (!code) {
+        return NextResponse.redirect(`${redirectBase}/dashboard/settings?error=google_sheets_no_code`)
+      }
+      
+      const userId = state || 'default'
+      
+      try {
+        const clientId = process.env.GOOGLE_CLIENT_ID
+        const clientSecret = process.env.GOOGLE_CLIENT_SECRET
+        const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${redirectBase}/api/integrations/google/callback`
+        
+        const tokenUrl = 'https://oauth2.googleapis.com/token'
+        const params = new URLSearchParams()
+        params.append('code', code)
+        params.append('client_id', clientId)
+        params.append('client_secret', clientSecret)
+        params.append('redirect_uri', redirectUri)
+        params.append('grant_type', 'authorization_code')
+        
+        const response = await fetch(tokenUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded'
+          },
+          body: params.toString()
+        })
+        
+        const tokens = await response.json()
+        
+        if (!response.ok || tokens.error) {
+          const errMsg = tokens.error_description || tokens.error || 'Token exchange failed'
+          console.error('Google Sheets OAuth token exchange failed:', tokens)
+          return NextResponse.redirect(`${redirectBase}/dashboard/settings?error=google_sheets_token_failed&detail=${encodeURIComponent(errMsg)}`)
+        }
+        
+        // Save tokens to database
+        const integrations = (await getStoredIntegrations(userId)) || {}
+        await saveStoredIntegration('googleSheets', {
+          connected: true,
+          tokens: {
+            accessToken: tokens.access_token,
+            refreshToken: tokens.refresh_token,
+            expiry: Date.now() + (tokens.expires_in * 1000)
+          },
+          defaultSettings: {
+            spreadsheetId: '',
+            sheetName: 'Sheet1',
+            columnMapping: {}
+          },
+          updatedAt: new Date().toISOString()
+        }, userId)
+
+        await insertWebhookLog('google_sheets', 'oauth_connected', {
+          stage: 'connected',
+          userId
+        }, userId)
+        
+        return NextResponse.redirect(`${redirectBase}/dashboard/settings?googleSheets=connected`)
+      } catch (err) {
+        console.error('Google Sheets Callback Exception:', err)
+        return NextResponse.redirect(`${redirectBase}/dashboard/settings?error=google_sheets_exception&detail=${encodeURIComponent(err.message)}`)
+      }
+    }
+
+    // Google Sheets: List Spreadsheets
+    if (route === '/integrations/google/spreadsheets' && method === 'GET') {
+      const authenticatedUserId = requireRequestUserId(request)
+      const sheetClient = await getGoogleSheetsClient(authenticatedUserId)
+      
+      if (!sheetClient) {
+        return handleCORS(NextResponse.json({ error: 'Google Sheets integration not connected' }, { status: 400 }))
+      }
+      
+      try {
+        const spreadsheets = await sheetClient.listSpreadsheets()
+        return handleCORS(NextResponse.json({ spreadsheets }))
+      } catch (err) {
+        return handleCORS(NextResponse.json({ error: err.message }, { status: 500 }))
+      }
+    }
+
+    // Google Sheets: List Tabs inside a Spreadsheet
+    if (route === '/integrations/google/sheets' && method === 'GET') {
+      const authenticatedUserId = requireRequestUserId(request)
+      const spreadsheetId = request.nextUrl.searchParams.get('spreadsheetId')
+      const sheetClient = await getGoogleSheetsClient(authenticatedUserId)
+      
+      if (!sheetClient) {
+        return handleCORS(NextResponse.json({ error: 'Google Sheets integration not connected' }, { status: 400 }))
+      }
+      
+      if (!spreadsheetId) {
+        return handleCORS(NextResponse.json({ error: 'Missing spreadsheetId parameter' }, { status: 400 }))
+      }
+      
+      try {
+        const sheets = await sheetClient.listSheets(spreadsheetId)
+        return handleCORS(NextResponse.json({ sheets }))
+      } catch (err) {
+        return handleCORS(NextResponse.json({ error: err.message }, { status: 500 }))
+      }
+    }
+
+    // Google Sheets: Save Default Settings
+    if (route === '/integrations/google/settings' && method === 'POST') {
+      const authenticatedUserId = requireRequestUserId(request)
+      const { spreadsheetId, sheetName, columnMapping } = await request.json()
+      
+      try {
+        const integrations = (await getStoredIntegrations(authenticatedUserId)) || {}
+        if (!integrations.googleSheets) {
+          return handleCORS(NextResponse.json({ error: 'Google Sheets not connected' }, { status: 400 }))
+        }
+        
+        await saveStoredIntegration('googleSheets', {
+          ...integrations.googleSheets,
+          defaultSettings: {
+            spreadsheetId: spreadsheetId || '',
+            sheetName: sheetName || 'Sheet1',
+            columnMapping: columnMapping || {}
+          }
+        }, authenticatedUserId)
+        
+        return handleCORS(NextResponse.json({ success: true }))
+      } catch (err) {
+        return handleCORS(NextResponse.json({ error: err.message }, { status: 500 }))
+      }
+    }
+
+    // Google Sheets: Disconnect
+    if (route === '/integrations/google/disconnect' && method === 'POST') {
+      const authenticatedUserId = requireRequestUserId(request)
+      try {
+        const integrations = (await getStoredIntegrations(authenticatedUserId)) || {}
+        if (integrations.googleSheets) {
+          const pool = getPool()
+          await pool.execute(
+            'UPDATE integrations SET googleSheets = NULL, updatedAt = NOW() WHERE userId = ?',
+            [authenticatedUserId]
+          )
+        }
+        return handleCORS(NextResponse.json({ success: true }))
+      } catch (err) {
+        return handleCORS(NextResponse.json({ error: err.message }, { status: 500 }))
+      }
+    }
+
     // Root endpoint
     if (route === '/' && method === 'GET') {
       return handleCORS(NextResponse.json({ message: "WhatsApp Commerce Hub API" }))
@@ -1398,7 +1578,8 @@ async function handleRoute(request, { params }) {
         shopify: { connected: false, data: {} },
         stripe: { connected: false, data: {} },
         zoho: { connected: false, data: {} },
-        instagram: { connected: false, data: {} }
+        instagram: { connected: false, data: {} },
+        googleSheets: { connected: false, data: {} }
       }
 
       try {
@@ -1434,6 +1615,7 @@ async function handleRoute(request, { params }) {
         )
         defaultIntegrations.stripe.connected = !!(integrations.stripe?.secretKey)
         defaultIntegrations.zoho.connected = !!(integrations.zoho?.refreshToken)
+        defaultIntegrations.googleSheets.connected = !!(integrations.googleSheets?.connected && integrations.googleSheets?.tokens?.refreshToken)
 
         // Return data without sensitive fields
         const normalizedWhatsApp = normalizeWhatsAppIntegrationData(integrations.whatsapp || {})
@@ -1453,6 +1635,13 @@ async function handleRoute(request, { params }) {
         defaultIntegrations.zoho.data = {
           clientId: integrations.zoho?.clientId || '',
           dc: integrations.zoho?.dc || 'zoho.in'
+        }
+        defaultIntegrations.googleSheets.data = {
+          defaultSettings: integrations.googleSheets?.defaultSettings || {
+            spreadsheetId: '',
+            sheetName: 'Sheet1',
+            columnMapping: {}
+          }
         }
       }
 

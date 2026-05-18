@@ -75,11 +75,23 @@ async function setupDatabase() {
         shopify JSON,
         stripe JSON,
         zoho JSON,
+        googleSheets JSON,
         createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         UNIQUE (userId)
       )
     `);
+
+        // Migrate integrations table: add googleSheets column if not exists
+        try {
+            const [columns] = await query("SHOW COLUMNS FROM integrations LIKE 'googleSheets'");
+            if (!columns || columns.length === 0) {
+                console.log("Migrating integrations table: adding googleSheets column");
+                await query("ALTER TABLE integrations ADD COLUMN googleSheets JSON AFTER zoho");
+            }
+        } catch (err) {
+            console.warn("Migration warning for integrations googleSheets column:", err.message);
+        }
 
         await query(`
         CREATE TABLE IF NOT EXISTS whatsapp_accounts (

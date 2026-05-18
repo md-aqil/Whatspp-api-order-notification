@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import Link from 'next/link'
-import { BellRing, CheckCircle2, Clock3, CopyPlus, Copy, Database, HelpCircle, History, MessageSquareText, PackageCheck, PlayCircle, Plus, Settings, Sparkles, Square, Trash2, Truck, Workflow, X, Zap, ZoomIn, ZoomOut, Maximize2, ArrowLeft, Download, Upload, LayoutGrid, MousePointer2, Search, Rocket, Activity, ChevronRight, ArrowRight, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, ToggleLeft } from 'lucide-react'
+import { BellRing, CheckCircle2, Clock3, CopyPlus, Copy, Database, HelpCircle, History, MessageSquareText, PackageCheck, PlayCircle, Plus, Settings, Sparkles, Square, Trash2, Truck, Workflow, X, Zap, ZoomIn, ZoomOut, Maximize2, ArrowLeft, Download, Upload, LayoutGrid, MousePointer2, Search, Rocket, Activity, ChevronRight, ArrowRight, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, ToggleLeft, Loader2 } from 'lucide-react'
 import { toast, Toaster } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -43,6 +43,7 @@ const BLOCKS = [
   { type: 'interactive', tab: 'Actions', label: 'Interactive Menu', icon: HelpCircle, color: 'fuchsia', description: 'Send a menu with reply options', defaults: { title: 'Auto Reply Menu', message: 'Hello {{customer_name}}, welcome! 👋 We\'re here to provide you with a premium experience. How can we assist you today? Please select an option below:', options: [{ id: 'opt0', label: '📦 Order Status' }, { id: 'opt1', label: '💬 Talk to Specialist' }], description: 'Professional interactive menu' } },
   { type: 'ai_reply', tab: 'Actions', label: 'AI Assistant', icon: Sparkles, color: 'indigo', description: 'Natural AI response using knowledge base', defaults: { title: 'AI Assistant', description: 'AI-powered reply', recipientMode: 'customer' } },
   { type: 'zoho_action', tab: 'Actions', label: 'Zoho CRM', icon: Database, color: 'orange', description: 'Update CRM records or log notes', defaults: { title: 'Update Zoho CRM', action: 'add_note', content: 'Customer interacted with WhatsApp', status: 'Contacted', description: 'Real-time CRM writeback' } },
+  { type: 'google_sheets_action', tab: 'Actions', label: 'Google Sheets', icon: Database, color: 'green', description: 'Append lead & order data to spreadsheet', defaults: { title: 'Write to Google Sheet', spreadsheetId: '', sheetName: 'Sheet1', description: 'Log profile & checkout info dynamically' } },
   { type: 'http_request', tab: 'Actions', label: 'External API', icon: Workflow, color: 'sky', description: 'Connect to CRMs like Zoho, Salesforce, or custom APIs', defaults: { title: 'Zoho CRM Sync', method: 'POST', url: 'https://www.zohoapis.com/crm/v2/Leads', headers: '{\n  "Authorization": "Zoho-oauthtoken {{zoho_token}}",\n  "Content-Type": "application/json"\n}', body: '{\n  "data": [\n    {\n      "Last_Name": "{{customer_name}}",\n      "Phone": "{{customer_phone}}",\n      "Description": "Lead from WhatsApp Automation"\n    }\n  ]\n}', description: 'Send data to external CRM' } },
 ]
 const COLORS = {
@@ -54,6 +55,7 @@ const COLORS = {
   interactive: { border: 'border-fuchsia-500/40', bg: 'bg-[#1a0f18]', hdr: 'bg-fuchsia-600/15', icon: 'bg-fuchsia-600/25 text-fuchsia-300', lbl: 'text-fuchsia-300', dot: 'bg-fuchsia-500' },
   ai_reply: { border: 'border-indigo-500/40', bg: 'bg-[#0f1125]', hdr: 'bg-indigo-600/15', icon: 'bg-indigo-600/25 text-indigo-300', lbl: 'text-indigo-300', dot: 'bg-indigo-500' },
   zoho_action: { border: 'border-orange-500/40', bg: 'bg-[#1d130f]', hdr: 'bg-orange-600/15', icon: 'bg-orange-600/25 text-orange-300', lbl: 'text-orange-300', dot: 'bg-orange-500' },
+  google_sheets_action: { border: 'border-green-500/40', bg: 'bg-[#0f1d13]', hdr: 'bg-green-600/15', icon: 'bg-green-600/25 text-green-300', lbl: 'text-green-300', dot: 'bg-green-500' },
   http_request: { border: 'border-sky-500/40', bg: 'bg-[#0f1a25]', hdr: 'bg-sky-600/15', icon: 'bg-sky-600/25 text-sky-300', lbl: 'text-sky-300', dot: 'bg-sky-500' },
 }
 const uid = p => `${p}-${Math.random().toString(36).slice(2, 9)}`
@@ -469,6 +471,42 @@ export function AutomationStudio() {
   const [triggerCategory, setTriggerCategory] = useState('')
   const [saveState, setSaveState] = useState('saved')
   const [lastSavedAt, setLastSavedAt] = useState(null)
+
+  // Google Sheets studio state hooks
+  const [spreadsheets, setSpreadsheets] = useState([])
+  const [sheets, setSheets] = useState([])
+  const [loadingSpreadsheets, setLoadingSpreadsheets] = useState(false)
+  const [loadingSheets, setLoadingSheets] = useState(false)
+
+  useEffect(() => {
+    if (sel?.type === 'google_sheets_action') {
+      setLoadingSpreadsheets(true)
+      fetch('/api/integrations/google/spreadsheets')
+        .then(res => res.json())
+        .then(data => {
+          if (data.spreadsheets) {
+            setSpreadsheets(data.spreadsheets)
+          }
+        })
+        .catch(console.error)
+        .finally(() => setLoadingSpreadsheets(false))
+    }
+  }, [sel?.type, sel?.id])
+
+  useEffect(() => {
+    if (sel?.type === 'google_sheets_action' && sel?.spreadsheetId) {
+      setLoadingSheets(true)
+      fetch(`/api/integrations/google/sheets?spreadsheetId=${sel.spreadsheetId}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.sheets) {
+            setSheets(data.sheets)
+          }
+        })
+        .catch(console.error)
+        .finally(() => setLoadingSheets(false))
+    }
+  }, [sel?.type, sel?.id, sel?.spreadsheetId])
 
   const [chats, setChats] = useState([])
   const [selectedChatPhone, setSelectedChatPhone] = useState('')
@@ -2482,6 +2520,67 @@ export function AutomationStudio() {
                           <p className="text-[9px] text-white/30">Use {"{{variable}}"} to include dynamic data.</p>
                         </div>
                       )}
+                    </>
+                  )}
+
+                  {sel.type === 'google_sheets_action' && (
+                    <>
+                      <div className="space-y-1.5">
+                        <Label className="text-[10px] font-bold uppercase tracking-widest text-white/25">Target Spreadsheet</Label>
+                        {loadingSpreadsheets ? (
+                          <div className="flex items-center gap-2 text-xs text-white/50 py-2">
+                            <Loader2 className="h-4 w-4 animate-spin text-[#005cc0]" />
+                            <span>Loading Spreadsheets...</span>
+                          </div>
+                        ) : (
+                          <select
+                            value={sel.spreadsheetId || ''}
+                            onChange={(e) => {
+                              const sId = e.target.value
+                              updStep({ spreadsheetId: sId, sheetName: '' })
+                            }}
+                            className={`${inputCls} w-full bg-[#13151f] border-white/10`}
+                          >
+                            <option value="" className="bg-[#13151f] text-white">-- Select Spreadsheet --</option>
+                            {spreadsheets.map((s) => (
+                              <option key={s.id} value={s.id} className="bg-[#13151f] text-white">{s.name}</option>
+                            ))}
+                          </select>
+                        )}
+                      </div>
+
+                      {sel.spreadsheetId && (
+                        <div className="space-y-1.5">
+                          <Label className="text-[10px] font-bold uppercase tracking-widest text-white/25">Worksheet Tab</Label>
+                          {loadingSheets ? (
+                            <div className="flex items-center gap-2 text-xs text-white/50 py-2">
+                              <Loader2 className="h-4 w-4 animate-spin text-[#005cc0]" />
+                              <span>Loading Sheets...</span>
+                            </div>
+                          ) : (
+                            <select
+                              value={sel.sheetName || 'Sheet1'}
+                              onChange={(e) => updStep({ sheetName: e.target.value })}
+                              className={`${inputCls} w-full bg-[#13151f] border-white/10`}
+                            >
+                              <option value="" className="bg-[#13151f] text-white">-- Select Worksheet Tab --</option>
+                              {sheets.map((sh) => (
+                                <option key={sh} value={sh} className="bg-[#13151f] text-white">{sh}</option>
+                              ))}
+                            </select>
+                          )}
+                        </div>
+                      )}
+
+                      <div className="mt-4 rounded-xl border border-green-500/20 bg-green-500/5 p-4 text-[11px] leading-relaxed text-white/60 space-y-2">
+                        <div className="font-bold text-green-400 flex items-center gap-1.5 uppercase tracking-wider text-[10px]">
+                          <Database className="w-3.5 h-3.5" />
+                          <span>Auto-Mapping Active</span>
+                        </div>
+                        <p>
+                          Our system will automatically construct standard header columns (<strong>Timestamp</strong>, <strong>Event Type</strong>, <strong>Customer Name</strong>, <strong>Phone</strong>, <strong>Email</strong>, and <strong>Order Total</strong>) and insert rows dynamically in real-time. No manual mapping required!
+                        </p>
+                      </div>
                     </>
                   )}
 
