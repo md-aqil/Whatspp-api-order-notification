@@ -1059,7 +1059,7 @@ async function handleRoute(request, { params }) {
                   const context = {
                     senderId,
                     recipientId,
-                    instagramAccountId: recipientId,
+                    instagramAccountId: igAccountId,
                     messageText,
                     username: messagingEvent.sender?.username || 'customer',
                     timestamp: messagingEvent.timestamp || Date.now(),
