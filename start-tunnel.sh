@@ -15,7 +15,7 @@ NEXT_PID=$!
 
 # Start the Automation Queue Worker in the background
 echo "Starting background Automation Queue Worker..."
-npx tsx scripts/worker.js &
+npx tsx --watch scripts/worker.js &
 WORKER_PID=$!
 
 # Give the server a few seconds to initialize

@@ -45,6 +45,7 @@ import {
   ensureAutomationsTable,
   seedDefaultAutomationsForUser,
 } from "@/lib/db/automation-repository";
+import { isKnownInstagramOutboundMessage } from "@/lib/db/instagram-message-repository";
 import {
   getStoredChats,
   getStoredMessagesByPhone,
@@ -78,6 +79,114 @@ import { triggerAutomationEvent } from "@/lib/automation-engine";
 import { getGoogleSheetsClient } from "@/lib/google-sheets-api";
 
 // Automation State Helpers (To be moved to lib/automation-engine.js if needed)
+
+function collectInstagramMessageEditMids(body = {}) {
+  const mids = [];
+  for (const entry of Array.isArray(body.entry) ? body.entry : []) {
+    for (const messagingEvent of Array.isArray(entry.messaging)
+      ? entry.messaging
+      : []) {
+      const mid = messagingEvent.message_edit?.mid;
+      if (mid) mids.push(mid);
+    }
+  }
+  return mids;
+}
+
+async function loadInstagramConversationMessages(userId, instagramAccountId) {
+  const account = await queryOne(
+    "SELECT accessToken, pageId FROM instagram_accounts WHERE userId = ? AND instagramAccountId = ? ORDER BY updatedAt DESC LIMIT 1",
+    [String(userId || "default"), instagramAccountId],
+  );
+  if (!account?.accessToken || !account?.pageId) return [];
+
+  const url = new URL(
+    `https://graph.facebook.com/v22.0/${account.pageId}/conversations`,
+  );
+  url.searchParams.set("platform", "instagram");
+  url.searchParams.set(
+    "fields",
+    "id,participants,messages.limit(20){id,message,from,to,created_time}",
+  );
+  url.searchParams.set("access_token", account.accessToken);
+
+  try {
+    const res = await fetch(url.toString());
+    const result = await res.json();
+    if (!res.ok || result.error) {
+      console.warn(
+        "[Instagram Webhook] Failed to load conversation messages for hydration:",
+        JSON.stringify(result.error || result),
+      );
+      return [];
+    }
+
+    return (result.data || []).flatMap(
+      (conversation) => conversation.messages?.data || [],
+    );
+  } catch (error) {
+    console.warn(
+      "[Instagram Webhook] Failed to fetch conversation messages for hydration:",
+      error.message,
+    );
+    return [];
+  }
+}
+
+async function loadInstagramHydratedMessageContext(
+  mids = [],
+  userId = "default",
+  instagramAccountId = null,
+) {
+  const messageTextByMid = {};
+  const senderIdByMid = {};
+  const usernameByMid = {};
+  const outboundMessageIds = new Set();
+  let conversationMessages = null;
+
+  for (const mid of mids) {
+    if (await isKnownInstagramOutboundMessage(mid)) {
+      outboundMessageIds.add(mid);
+      continue;
+    }
+
+    const row = await queryOne(
+      `SELECT JSON_UNQUOTE(JSON_EXTRACT(payload, '$.entry[0].messaging[0].message.text')) AS text
+       FROM webhook_logs
+       WHERE type = 'instagram'
+         AND userId = ?
+         AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.entry[0].messaging[0].message.mid')) = ?
+         AND JSON_EXTRACT(payload, '$.entry[0].messaging[0].message.is_echo') = true
+       ORDER BY receivedAt DESC
+       LIMIT 1`,
+      [String(userId || "default"), mid],
+    );
+
+    if (row?.text) {
+      messageTextByMid[mid] = row.text;
+    }
+
+    if (instagramAccountId) {
+      conversationMessages =
+        conversationMessages ||
+        (await loadInstagramConversationMessages(userId, instagramAccountId));
+      const matchingMessage = conversationMessages.find(
+        (message) =>
+          message.id === mid ||
+          (messageTextByMid[mid] && message.message === messageTextByMid[mid]),
+      );
+      if (matchingMessage?.from?.id) {
+        senderIdByMid[mid] = matchingMessage.from.id;
+        usernameByMid[mid] = matchingMessage.from.username || "customer";
+      }
+      if (!messageTextByMid[mid] && matchingMessage?.message) {
+        messageTextByMid[mid] = matchingMessage.message;
+      }
+    }
+  }
+
+  return { messageTextByMid, senderIdByMid, usernameByMid, outboundMessageIds };
+}
 
 function normalizeWhatsAppIntegrationData(data = {}) {
   return {
@@ -1247,7 +1356,12 @@ async function handleRoute(request, { params }) {
 
         if (body.entry && Array.isArray(body.entry)) {
           const integrations = await getStoredIntegrations(resolvedUserId);
-          const events = buildInstagramAutomationEvents(body);
+          const hydration = await loadInstagramHydratedMessageContext(
+            collectInstagramMessageEditMids(body),
+            resolvedUserId,
+            igAccountId,
+          );
+          const events = buildInstagramAutomationEvents(body, hydration);
 
           for (const { event, context } of events) {
             await triggerAutomationEvent(
