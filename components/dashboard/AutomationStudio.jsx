@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import Link from 'next/link'
-import { BellRing, CheckCircle2, Clock3, CopyPlus, Copy, Database, HelpCircle, History, MessageSquareText, PackageCheck, PlayCircle, Plus, Settings, Sparkles, Square, Trash2, Truck, Workflow, X, Zap, ZoomIn, ZoomOut, Maximize2, ArrowLeft, Download, Upload, LayoutGrid, MousePointer2, Search, Rocket, Activity, ChevronRight, ArrowRight, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, ToggleLeft, Loader2, Instagram } from 'lucide-react'
+import { BellRing, CheckCircle2, Clock3, CopyPlus, Copy, Database, HelpCircle, History, MessageSquareText, PackageCheck, PlayCircle, Plus, Settings, Sparkles, Square, Trash2, Truck, Workflow, X, Zap, ZoomIn, ZoomOut, Maximize2, ArrowLeft, Download, Upload, LayoutGrid, MousePointer2, Search, Rocket, Activity, ChevronRight, ArrowRight, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, ToggleLeft, Loader2, Instagram, Users } from 'lucide-react'
 import { toast, Toaster } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -457,6 +457,7 @@ export function AutomationStudio() {
   const [templates, setTemplates] = useState([])
   const [tplErr, setTplErr] = useState('')
   const [libTab, setLibTab] = useState('Triggers')
+  const [galleryTab, setGalleryTab] = useState('templates')
   const [selectedLibraryBlockType, setSelectedLibraryBlockType] = useState(BLOCKS[0].type)
   const [propTab, setPropTab] = useState('settings')
   const [drag, setDrag] = useState(null)
@@ -1360,109 +1361,168 @@ export function AutomationStudio() {
                 </div>
               </div>
 
-              {/* Templates Section */}
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                    <Sparkles className="w-5 h-5 text-violet-400" />
-                    Recommended Templates
-                  </h2>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {defaultAutomations.slice(0, 3).map(template => (
-                    <div 
-                      key={template.id}
-                      className="group p-6 rounded-3xl bg-gradient-to-br from-violet-600/10 to-transparent border border-violet-500/20 hover:border-violet-500/40 transition-all cursor-pointer relative overflow-hidden"
-                      onClick={() => {
-                        setCloneSourceId(template.id)
-                        setMode('template')
-                        setDraftName(`My ${template.name}`)
-                        setDlgOpen(true)
-                      }}
-                    >
-                      <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
-                        <Workflow className="w-24 h-24" />
+              {/* TABS SELECTOR */}
+              <div className="flex border-b border-white/10 mt-8 mb-6">
+                <button
+                  onClick={() => setGalleryTab('templates')}
+                  className={`px-6 py-3 text-sm font-bold tracking-wide transition-all border-b-2 ${galleryTab === 'templates' ? 'border-violet-500 text-violet-400' : 'border-transparent text-white/50 hover:text-white hover:border-white/20'}`}
+                >
+                  <div className="flex items-center gap-2"><Sparkles className="w-4 h-4" /> Pre-built Templates</div>
+                </button>
+                <button
+                  onClick={() => setGalleryTab('custom')}
+                  className={`px-6 py-3 text-sm font-bold tracking-wide transition-all border-b-2 ${galleryTab === 'custom' ? 'border-emerald-500 text-emerald-400' : 'border-transparent text-white/50 hover:text-white hover:border-white/20'}`}
+                >
+                  <div className="flex items-center gap-2"><Workflow className="w-4 h-4" /> My Custom Flows</div>
+                </button>
+              </div>
+
+              {/* TEMPLATES VIEW */}
+              {galleryTab === 'templates' && (
+                <div className="space-y-12">
+                  {Object.entries(
+                    defaultAutomations.reduce((acc, template) => {
+                      const src = template.source || 'General';
+                      if (!acc[src]) acc[src] = [];
+                      acc[src].push(template);
+                      return acc;
+                    }, {})
+                  ).map(([category, categoryTemplates]) => (
+                    <div key={category} className="space-y-4">
+                      <div className="flex items-center gap-3 border-b border-white/[0.04] pb-2">
+                        <div className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest bg-white/5 border border-white/10 ${
+                          category === 'Shopify' ? 'text-emerald-400 border-emerald-500/20 bg-emerald-500/10' :
+                          category === 'Google Sheets' ? 'text-green-400 border-green-500/20 bg-green-500/10' :
+                          category === 'Zoho' ? 'text-orange-400 border-orange-500/20 bg-orange-500/10' :
+                          category === 'WhatsApp' ? 'text-teal-400 border-teal-500/20 bg-teal-500/10' :
+                          'text-violet-400 border-violet-500/20 bg-violet-500/10'
+                        }`}>
+                          {category} Integrations
+                        </div>
                       </div>
-                      <div className="relative z-10">
-                        <div className="h-10 w-10 rounded-xl bg-violet-600 flex items-center justify-center mb-4 shadow-lg shadow-violet-500/20">
-                          <Zap className="w-5 h-5 text-white" />
-                        </div>
-                        <h3 className="font-black text-white text-lg">{template.name}</h3>
-                        <p className="text-white/50 text-xs mt-2 leading-relaxed">{template.summary}</p>
-                        <div className="mt-6 flex items-center gap-2 text-violet-400 text-xs font-bold uppercase tracking-widest group-hover:gap-3 transition-all">
-                          Use Template <ArrowRight className="w-4 h-4" />
-                        </div>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {categoryTemplates.map(template => (
+                          <div 
+                            key={template.id}
+                            className={`group p-6 rounded-3xl bg-gradient-to-br from-white/[0.03] to-transparent border border-white/[0.08] hover:border-white/20 transition-all cursor-pointer relative overflow-hidden`}
+                            onClick={() => {
+                              setCloneSourceId(template.id)
+                              setMode('template')
+                              setDraftName(`My ${template.name}`)
+                              setDlgOpen(true)
+                            }}
+                          >
+                            <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
+                              {category === 'Shopify' ? <PackageCheck className="w-24 h-24" /> :
+                               category === 'Google Sheets' ? <Database className="w-24 h-24" /> :
+                               category === 'Zoho' ? <Users className="w-24 h-24" /> :
+                               <Workflow className="w-24 h-24" />}
+                            </div>
+                            <div className="relative z-10">
+                              <div className={`h-10 w-10 rounded-xl flex items-center justify-center mb-4 shadow-lg ${
+                                category === 'Shopify' ? 'bg-emerald-600 shadow-emerald-500/20' :
+                                category === 'Google Sheets' ? 'bg-green-600 shadow-green-500/20' :
+                                category === 'Zoho' ? 'bg-orange-600 shadow-orange-500/20' :
+                                category === 'WhatsApp' ? 'bg-teal-600 shadow-teal-500/20' :
+                                'bg-violet-600 shadow-violet-500/20'
+                              }`}>
+                                <Zap className="w-5 h-5 text-white" />
+                              </div>
+                              <h3 className="font-black text-white text-lg">{template.name}</h3>
+                              <p className="text-white/50 text-xs mt-2 leading-relaxed">{template.summary}</p>
+                              <div className="mt-6 flex items-center gap-2 text-white/40 text-xs font-bold uppercase tracking-widest group-hover:text-white group-hover:gap-3 transition-all">
+                                Use Template <ArrowRight className="w-4 h-4" />
+                              </div>
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   ))}
                 </div>
-              </div>
+              )}
 
-              {/* Your Flows Grid */}
-              <div className="space-y-6 pt-6">
-                <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                  <Activity className="w-5 h-5 text-emerald-400" />
-                  Your Active Journeys
-                </h2>
-                {filteredAutomations.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-20 border-2 border-dashed border-white/5 rounded-3xl">
-                    <div className="h-16 w-16 rounded-2xl bg-white/5 flex items-center justify-center mb-4">
-                      <Search className="w-8 h-8 text-white/20" />
-                    </div>
-                    <p className="text-white/40 font-medium">No flows found matching your search.</p>
-                    <Button variant="ghost" onClick={() => setSearchQuery('')} className="mt-2 text-violet-400">Clear search</Button>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {filteredAutomations.map(flow => (
-                      <div 
-                        key={flow.id}
-                        onClick={() => {
-                          setActiveId(flow.id)
-                          setSelId(flow.steps[0]?.id || null)
-                          setViewMode('editor')
-                        }}
-                        className="group p-5 rounded-3xl bg-white/[0.02] border border-white/[0.06] hover:bg-white/[0.04] hover:border-white/10 transition-all cursor-pointer"
-                      >
-                        <div className="flex items-start justify-between mb-4">
-                          <div className={`h-10 w-10 rounded-2xl flex items-center justify-center ${flow.status ? 'bg-emerald-500/10 text-emerald-400' : 'bg-white/5 text-white/30'}`}>
-                            {flow.source === 'Shopify' ? <PackageCheck className="w-5 h-5" /> : (flow.source === 'Zoho' ? <Workflow className="w-5 h-5" /> : <Zap className="w-5 h-5" />)}
+              {/* CUSTOM FLOWS VIEW */}
+              {galleryTab === 'custom' && (
+                <div className="space-y-6 pt-2">
+                  {(() => {
+                    const customFlows = filteredAutomations.filter(f => !isDefault(f.id));
+                    
+                    if (customFlows.length === 0) {
+                      return (
+                        <div className="flex flex-col items-center justify-center py-20 border-2 border-dashed border-white/5 rounded-3xl mt-4">
+                          <div className="h-16 w-16 rounded-2xl bg-white/5 flex items-center justify-center mb-4">
+                            <Workflow className="w-8 h-8 text-white/20" />
                           </div>
-                          <div className="flex items-center gap-2">
-                            <span className={`px-2 py-1 rounded-lg text-[10px] font-bold uppercase tracking-widest ${flow.status ? 'bg-emerald-500/10 text-emerald-400' : 'bg-white/5 text-white/30'}`}>
-                              {flow.status ? 'Live' : 'Draft'}
-                            </span>
-                          </div>
-                        </div>
-                        <h3 className="font-bold text-white group-hover:text-violet-300 transition-colors">{flow.name}</h3>
-                        <p className="text-white/40 text-[11px] mt-1.5 line-clamp-2 leading-relaxed">{flow.summary || 'Custom automated journey'}</p>
-                        {flow.zohoFieldSummary && (
-                          <div className="mt-3 rounded-2xl border border-orange-400/10 bg-orange-500/[0.04] p-3">
-                            <div className="text-[9px] font-bold uppercase tracking-widest text-orange-300/70">Fields sent to Zoho</div>
-                            <p className="mt-1 text-[10px] leading-relaxed text-white/35 line-clamp-4">{flow.zohoFieldSummary}</p>
-                          </div>
-                        )}
-                        
-                        <div className="mt-6 pt-5 border-t border-white/[0.04] flex items-center justify-between">
+                          <h3 className="text-xl font-bold text-white mb-2">No custom flows yet</h3>
+                          <p className="text-white/40 font-medium max-w-sm text-center mb-6">Build a custom automation from scratch or start with one of our pre-built templates.</p>
                           <div className="flex gap-4">
-                             <div className="text-center">
-                               <div className="text-xs font-bold text-white/70">{flow.metrics?.sent || 0}</div>
-                               <div className="text-[9px] text-white/25 uppercase tracking-widest font-bold">Sent</div>
-                             </div>
-                             <div className="text-center">
-                               <div className="text-xs font-bold text-white/70">{flow.metrics?.openRate || 0}%</div>
-                               <div className="text-[9px] text-white/25 uppercase tracking-widest font-bold">Opens</div>
-                             </div>
-                          </div>
-                          <div className="h-8 w-8 rounded-full bg-white/5 flex items-center justify-center group-hover:bg-violet-600 transition-colors">
-                             <ChevronRight className="w-4 h-4 text-white/40 group-hover:text-white" />
+                            <Button onClick={() => setDlgOpen(true)} className="bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg shadow-emerald-900/20">
+                              <Plus className="mr-2 w-4 h-4" /> Create New Flow
+                            </Button>
+                            <Button variant="outline" onClick={() => setGalleryTab('templates')} className="border-white/10 text-white/70 hover:text-white hover:bg-white/5 border border-white/10">
+                              <Sparkles className="mr-2 w-4 h-4" /> Browse Templates
+                            </Button>
                           </div>
                         </div>
+                      );
+                    }
+                    
+                    return (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {customFlows.map(flow => (
+                          <div 
+                            key={flow.id}
+                            onClick={() => {
+                              setActiveId(flow.id)
+                              setSelId(flow.steps[0]?.id || null)
+                              setViewMode('editor')
+                            }}
+                            className="group p-5 rounded-3xl bg-white/[0.02] border border-white/[0.06] hover:bg-white/[0.04] hover:border-white/10 transition-all cursor-pointer flex flex-col h-full relative overflow-hidden"
+                          >
+                            <div className="flex items-start justify-between mb-4 relative z-10">
+                              <div className={`h-10 w-10 rounded-2xl flex items-center justify-center ${flow.status ? 'bg-emerald-500/10 text-emerald-400' : 'bg-white/5 text-white/30'}`}>
+                                {flow.source === 'Shopify' ? <PackageCheck className="w-5 h-5" /> : (flow.source === 'Zoho' ? <Users className="w-5 h-5" /> : (flow.source === 'Google Sheets' ? <Database className="w-5 h-5" /> : <Activity className="w-5 h-5" />))}
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className={`px-2 py-1 rounded-lg text-[10px] font-bold uppercase tracking-widest ${flow.status ? 'bg-emerald-500/10 text-emerald-400' : 'bg-white/5 text-white/30'}`}>
+                                  {flow.status ? 'Live' : 'Draft'}
+                                </span>
+                              </div>
+                            </div>
+                            <h3 className="font-bold text-white group-hover:text-emerald-300 transition-colors relative z-10">{flow.name}</h3>
+                            <p className="text-white/40 text-[11px] mt-1.5 line-clamp-2 leading-relaxed flex-1 relative z-10">{flow.summary || 'Custom automated journey'}</p>
+                            
+                            {flow.zohoFieldSummary && (
+                              <div className="mt-3 rounded-2xl border border-orange-400/10 bg-orange-500/[0.04] p-3 relative z-10">
+                                <div className="text-[9px] font-bold uppercase tracking-widest text-orange-300/70">Fields sent to Zoho</div>
+                                <p className="mt-1 text-[10px] leading-relaxed text-white/35 line-clamp-4">{flow.zohoFieldSummary}</p>
+                              </div>
+                            )}
+
+                            <div className="mt-6 pt-5 border-t border-white/[0.04] flex items-center justify-between relative z-10">
+                              <div className="flex gap-4">
+                                 <div className="text-center">
+                                   <div className="text-xs font-bold text-white/70">{flow.metrics?.sent || 0}</div>
+                                   <div className="text-[9px] text-white/25 uppercase tracking-widest font-bold">Sent</div>
+                                 </div>
+                                 <div className="text-center">
+                                   <div className="text-xs font-bold text-white/70">{flow.metrics?.openRate || 0}%</div>
+                                   <div className="text-[9px] text-white/25 uppercase tracking-widest font-bold">Opens</div>
+                                 </div>
+                              </div>
+                              <div className="h-8 w-8 rounded-full bg-white/5 flex items-center justify-center group-hover:bg-emerald-600 transition-colors">
+                                 <ChevronRight className="w-4 h-4 text-white/40 group-hover:text-white" />
+                              </div>
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+                    )
+                  })()}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -2496,7 +2556,16 @@ export function AutomationStudio() {
                     <>
                       <div className="space-y-1.5">
                         <Label className="text-[10px] font-bold uppercase tracking-widest text-white/25">Action</Label>
-                        <Select value={sel.action || 'add_note'} onValueChange={v => updStep({ action: v })}>
+                        <Select value={sel.action || 'add_note'} onValueChange={v => {
+                          const patch = { action: v }
+                          if (v === 'upsert_lead' && !sel.createFields) {
+                            patch.createFields = {
+                              Company: '{{company}}',
+                              Last_Name: '{{customer_name}}'
+                            }
+                          }
+                          updStep(patch)
+                        }}>
                           <SelectTrigger className={inputCls}><SelectValue /></SelectTrigger>
                           <SelectContent className="z-[260] bg-[#13151f] border-white/10">
                             <SelectItem value="upsert_lead" className="text-white/70 text-xs focus:bg-white/8 focus:text-white">Create or Update Lead</SelectItem>
@@ -2519,6 +2588,17 @@ export function AutomationStudio() {
                               <SelectItem value="Pre-Qualified" className="text-white/70 text-xs focus:bg-white/8 focus:text-white">Pre-Qualified</SelectItem>
                             </SelectContent>
                           </Select>
+                        </div>
+                      )}
+
+                      {sel.action === 'upsert_lead' && (
+                        <div className="rounded-xl border border-orange-500/10 bg-orange-500/5 p-3 space-y-1.5 mt-2">
+                          <div className="text-xs font-semibold text-orange-400 flex items-center gap-1">
+                            <Database className="w-3.5 h-3.5" /> Field Mapping Active
+                          </div>
+                          <p className="text-[10.5px] text-white/50 leading-relaxed">
+                            To configure Zoho CRM standard & custom field mappings, switch to the <strong className="text-violet-400">Mapping</strong> tab at the top of this panel.
+                          </p>
                         </div>
                       )}
 
@@ -2857,7 +2937,170 @@ export function AutomationStudio() {
                   )}
                 </div>
               )}
-	              {propTab === 'logs' && (
+              {propTab === 'mapping' && sel?.type === 'zoho_action' && (
+                <div className="space-y-2.5">
+                  {sel.action !== 'upsert_lead' ? (
+                    <div className="rounded-xl border border-white/[0.05] bg-white/[0.02] px-3 py-2.5 text-[11px] text-white/35">
+                      This action does not require field mappings. Choose "Create or Update Lead" action under Settings tab to define mappings.
+                    </div>
+                  ) : (
+                    <>
+                      <div className="rounded-xl border border-white/[0.05] bg-[#0c0d12] px-3 py-2.5 text-[11px] text-white/35">
+                        Define how customer details and custom variables are written to Zoho CRM.
+                      </div>
+                      
+                      <div className="rounded-xl border border-white/[0.05] bg-white/[0.01] p-3 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-[10px] font-bold uppercase tracking-widest text-orange-400">Standard Lead Mapping</Label>
+                          <span className="text-[9px] text-white/30 italic">Required fields</span>
+                        </div>
+
+                        {/* Company Field */}
+                        <div className="space-y-1.5">
+                          <span className="text-[11px] text-white/70 font-medium">Company *</span>
+                          <Input 
+                            className={inputCls}
+                            value={sel.createFields?.Company ?? ''} 
+                            onChange={e => {
+                              const createFields = { ...sel.createFields, Company: e.target.value }
+                              updStep({ createFields })
+                            }}
+                            placeholder="e.g. {{company}} or ourname"
+                          />
+                        </div>
+
+                        {/* Last Name Field */}
+                        <div className="space-y-1.5">
+                          <span className="text-[11px] text-white/70 font-medium">Last Name *</span>
+                          <Input 
+                            className={inputCls}
+                            value={sel.createFields?.Last_Name ?? ''} 
+                            onChange={e => {
+                              const createFields = { ...sel.createFields, Last_Name: e.target.value }
+                              updStep({ createFields })
+                            }}
+                            placeholder="e.g. {{customer_name}}"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Custom Fields Map */}
+                      <div className="rounded-xl border border-white/[0.05] bg-white/[0.01] p-3 space-y-3">
+                        <Label className="text-[10px] font-bold uppercase tracking-widest text-white/40">Custom Field Mappings</Label>
+                        
+                        <div className="space-y-2 max-h-[160px] overflow-y-auto pr-1">
+                          {Object.entries(sel.createFields || {})
+                            .filter(([key]) => key !== 'Company' && key !== 'Last_Name')
+                            .map(([key, val]) => (
+                              <div key={key} className="flex items-center gap-1.5">
+                                <Input 
+                                  className="flex-1 bg-white/5 border-white/10 text-xs h-8 text-white/80" 
+                                  value={key} 
+                                  disabled 
+                                />
+                                <Input 
+                                  className="flex-1 bg-white/5 border-white/10 text-xs h-8" 
+                                  value={val || ''} 
+                                  onChange={e => {
+                                    const createFields = { ...sel.createFields, [key]: e.target.value }
+                                    updStep({ createFields })
+                                  }}
+                                />
+                                <Button 
+                                  variant="ghost" 
+                                  className="h-8 w-8 p-0 text-red-400/70 hover:text-red-400 hover:bg-red-500/10 shrink-0"
+                                  onClick={() => {
+                                    const createFields = { ...sel.createFields }
+                                    delete createFields[key]
+                                    updStep({ createFields })
+                                  }}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              </div>
+                            ))}
+                        </div>
+
+                        {/* Add Field Inline Form */}
+                        <div className="flex gap-1.5 items-center">
+                          <Input 
+                            id="new-zoho-key" 
+                            placeholder="Field API Name" 
+                            className="flex-1 bg-white/5 border-white/10 text-xs h-8" 
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault()
+                                const btn = document.getElementById('add-zoho-field-btn')
+                                if (btn) btn.click()
+                              }
+                            }}
+                          />
+                          <Input 
+                            id="new-zoho-val" 
+                            placeholder="Value or {{var}}" 
+                            className="flex-1 bg-[#161a2b] border-white/10 text-xs h-8" 
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault()
+                                const btn = document.getElementById('add-zoho-field-btn')
+                                if (btn) btn.click()
+                              }
+                            }}
+                          />
+                          <Button 
+                            id="add-zoho-field-btn"
+                            onClick={() => {
+                              const keyInput = document.getElementById('new-zoho-key')
+                              const valInput = document.getElementById('new-zoho-val')
+                              const k = keyInput?.value?.trim()
+                              const v = valInput?.value?.trim()
+                              if (k) {
+                                const createFields = { ...sel.createFields, [k]: v }
+                                updStep({ createFields })
+                                if (keyInput) keyInput.value = ''
+                                if (valInput) valInput.value = ''
+                              }
+                            }}
+                            className="h-8 bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 border border-orange-500/20 px-3 text-xs shrink-0"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+
+                      {/* Clickable Variable Cheat Sheet */}
+                      {Array.isArray(activeVariableOptions) && activeVariableOptions.length > 0 && (
+                        <div className="rounded-xl border border-white/[0.05] bg-white/[0.01] p-3 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <Label className="text-[10px] font-bold uppercase tracking-widest text-white/40">Available Variables</Label>
+                            <span className="text-[9px] text-white/30 italic">Click to copy value</span>
+                          </div>
+                          <div className="flex flex-wrap gap-1 max-h-[120px] overflow-y-auto pr-1">
+                            {activeVariableOptions
+                              .filter(opt => opt.value !== 'text')
+                              .map(opt => (
+                                <button
+                                  key={opt.value}
+                                  type="button"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(opt.value)
+                                    toast.success(`Copied ${opt.value} to clipboard!`)
+                                  }}
+                                  className="text-[10px] bg-white/5 hover:bg-orange-500/10 hover:text-orange-400 border border-white/5 hover:border-orange-500/20 text-white/70 px-1.5 py-0.5 rounded transition-all font-mono flex items-center gap-1 select-none text-left cursor-pointer"
+                                  title={`Copy: ${opt.label}`}
+                                >
+                                  <span className="font-semibold text-[10px] text-orange-300">{opt.value}</span>
+                                  <span className="text-[8px] text-white/35 font-sans">({opt.label})</span>
+                                </button>
+                              ))}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+              {propTab === 'logs' && (
 	                <div className="space-y-2">
 	                  <div className={`rounded-xl border p-3 ${activeValidation.errors.length > 0
 	                    ? 'border-rose-500/20 bg-rose-500/6'
