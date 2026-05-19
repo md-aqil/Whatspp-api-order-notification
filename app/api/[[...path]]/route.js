@@ -141,6 +141,7 @@ async function loadInstagramHydratedMessageContext(
   const messageTextByMid = {};
   const senderIdByMid = {};
   const usernameByMid = {};
+  const quickReplyPayloadByMid = {};
   const outboundMessageIds = new Set();
   let conversationMessages = null;
 
@@ -151,7 +152,9 @@ async function loadInstagramHydratedMessageContext(
     }
 
     const row = await queryOne(
-      `SELECT JSON_UNQUOTE(JSON_EXTRACT(payload, '$.entry[0].messaging[0].message.text')) AS text
+      `SELECT 
+         JSON_UNQUOTE(JSON_EXTRACT(payload, '$.entry[0].messaging[0].message.text')) AS text,
+         JSON_UNQUOTE(JSON_EXTRACT(payload, '$.entry[0].messaging[0].message.quick_reply.payload')) AS quick_reply_payload
        FROM webhook_logs
        WHERE type = 'instagram'
          AND userId = ?
@@ -164,6 +167,9 @@ async function loadInstagramHydratedMessageContext(
 
     if (row?.text) {
       messageTextByMid[mid] = row.text;
+    }
+    if (row?.quick_reply_payload) {
+      quickReplyPayloadByMid[mid] = row.quick_reply_payload;
     }
 
     if (instagramAccountId) {
@@ -185,7 +191,7 @@ async function loadInstagramHydratedMessageContext(
     }
   }
 
-  return { messageTextByMid, senderIdByMid, usernameByMid, outboundMessageIds };
+  return { messageTextByMid, senderIdByMid, usernameByMid, outboundMessageIds, quickReplyPayloadByMid };
 }
 
 function normalizeWhatsAppIntegrationData(data = {}) {
