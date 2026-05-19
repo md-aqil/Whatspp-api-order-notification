@@ -43,7 +43,7 @@ const BLOCKS = [
   { type: 'condition', tab: 'Actions', label: 'Condition', icon: Workflow, color: 'amber', description: 'Branch logic on a rule', defaults: { title: 'Order > $100', rule: 'total_price > 100', description: 'Conditional branch' } },
   { type: 'interactive', tab: 'Actions', label: 'Interactive Menu', icon: HelpCircle, color: 'fuchsia', description: 'Send a menu with reply options', defaults: { title: 'Auto Reply Menu', message: 'Hello {{customer_name}}, welcome! 👋 We\'re here to provide you with a premium experience. How can we assist you today? Please select an option below:', options: [{ id: 'opt0', label: '📦 Order Status' }, { id: 'opt1', label: '💬 Talk to Specialist' }], description: 'Professional interactive menu' } },
   { type: 'ai_reply', tab: 'Actions', label: 'AI Assistant', icon: Sparkles, color: 'indigo', description: 'Natural AI response using knowledge base', defaults: { title: 'AI Assistant', description: 'AI-powered reply', recipientMode: 'customer' } },
-  { type: 'zoho_action', tab: 'Actions', label: 'Zoho CRM', icon: Database, color: 'orange', description: 'Update CRM records or log notes', defaults: { title: 'Update Zoho CRM', action: 'add_note', content: 'Customer interacted with WhatsApp', status: 'Contacted', description: 'Real-time CRM writeback' } },
+  { type: 'zoho_action', tab: 'Actions', label: 'Zoho CRM', icon: Database, color: 'orange', description: 'Update CRM records or log notes', defaults: { title: 'Update Zoho CRM', action: 'add_note', content: 'Customer interacted with WhatsApp', status: 'Contacted', description: 'Real-time CRM writeback', createFields: { Company: '{{company}}', Last_Name: '{{customer_name}}' } } },
   { type: 'google_sheets_action', tab: 'Actions', label: 'Google Sheets', icon: Database, color: 'green', description: 'Append lead & order data to spreadsheet', defaults: { title: 'Write to Google Sheet', spreadsheetId: '', sheetName: 'Sheet1', description: 'Log profile & checkout info dynamically' } },
   { type: 'http_request', tab: 'Actions', label: 'External API', icon: Workflow, color: 'sky', description: 'Connect to CRMs like Zoho, Salesforce, or custom APIs', defaults: { title: 'Zoho CRM Sync', method: 'POST', url: 'https://www.zohoapis.com/crm/v2/Leads', headers: '{\n  "Authorization": "Zoho-oauthtoken {{zoho_token}}",\n  "Content-Type": "application/json"\n}', body: '{\n  "data": [\n    {\n      "Last_Name": "{{customer_name}}",\n      "Phone": "{{customer_phone}}",\n      "Description": "Lead from WhatsApp Automation"\n    }\n  ]\n}', description: 'Send data to external CRM' } },
 ]
@@ -3023,10 +3023,26 @@ export function AutomationStudio() {
 
                         {/* Add Field Inline Form */}
                         <div className="flex gap-1.5 items-center">
+                          <datalist id="zoho-fields-list">
+                            <option value="First_Name" />
+                            <option value="Email" />
+                            <option value="Phone" />
+                            <option value="Mobile" />
+                            <option value="Lead_Source" />
+                            <option value="Lead_Status" />
+                            <option value="Industry" />
+                            <option value="Website" />
+                            <option value="City" />
+                            <option value="State" />
+                            <option value="Zip_Code" />
+                            <option value="Country" />
+                            <option value="Description" />
+                          </datalist>
                           <Input 
                             id="new-zoho-key" 
                             placeholder="Field API Name" 
                             className="flex-1 bg-white/5 border-white/10 text-xs h-8" 
+                            list="zoho-fields-list"
                             onKeyDown={e => {
                               if (e.key === 'Enter') {
                                 e.preventDefault()
