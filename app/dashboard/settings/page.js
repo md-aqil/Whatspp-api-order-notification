@@ -972,7 +972,7 @@ export default function SettingsPage() {
 
   return (
     <div className="settings-scene p-8 mx-auto space-y-12 bg-[#f8f9ff] text-[#05345c] min-h-screen">
-      <ZohoWebhookGuide open={zohoWebhookGuideOpen} onOpenChange={setZohoWebhookGuideOpen} />
+      <ZohoWebhookGuide open={zohoWebhookGuideOpen} onOpenChange={setZohoWebhookGuideOpen} userId={user?.id} />
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-2">
         <div>

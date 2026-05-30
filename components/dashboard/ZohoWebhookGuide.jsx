@@ -2,7 +2,7 @@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 
-export default function ZohoWebhookGuide({ open, onOpenChange }) {
+export default function ZohoWebhookGuide({ open, onOpenChange, userId }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[600px]">
@@ -25,7 +25,7 @@ export default function ZohoWebhookGuide({ open, onOpenChange }) {
             <h3 className="font-bold">Step 3: Configure the Webhook</h3>
             <ul className="list-disc pl-5 space-y-1">
               <li><b>Name:</b> Give your webhook a name (e.g., "Chatflow Integration").</li>
-              <li><b>URL to Notify:</b> Paste the following URL: <code className="bg-gray-100 p-1 rounded">{`${process.env.NEXT_PUBLIC_BASE_URL || 'https://chatflow.vibeship.in'}/api/webhook/zoho`}</code></li>
+              <li><b>URL to Notify:</b> Paste the following URL: <code className="bg-gray-100 p-1 rounded">{`${process.env.NEXT_PUBLIC_BASE_URL || 'https://chatflow.vibeship.in'}/api/webhook/zoho${userId ? `?userId=${userId}` : ''}`}</code></li>
               <li><b>Method:</b> Select <b>POST</b>.</li>
               <li><b>Module:</b> Select the module you want to trigger the webhook from (e.g., Leads).</li>
             </ul>
