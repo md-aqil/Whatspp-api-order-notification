@@ -1,14 +1,20 @@
 
 import { NextResponse } from 'next/server';
 import { getZohoClient } from '@/lib/zoho-api';
-import { getIronSession } from 'iron-session';
-import { sessionOptions } from '@/lib/auth';
+import { verifyToken } from '@/lib/auth';
 
 export async function GET(request) {
-  const session = await getIronSession(request, new Response(), sessionOptions);
-  const user = session.user;
+  let user = null;
+  const accessToken = request.cookies.get('access_token')?.value;
+  if (accessToken) {
+    try {
+      user = verifyToken(accessToken);
+    } catch (e) {
+      // ignore
+    }
+  }
 
-  if (!user) {
+  if (!user || !user.id) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

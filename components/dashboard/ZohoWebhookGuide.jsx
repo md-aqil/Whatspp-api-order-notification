@@ -15,7 +15,7 @@ export default function ZohoWebhookGuide({ open, onOpenChange }) {
         <div className="space-y-4 text-sm">
           <div>
             <h3 className="font-bold">Step 1: Go to Zoho CRM Setup</h3>
-            <p>Navigate to <b>Setup > Automation > Actions > Webhooks</b> in your Zoho CRM account.</p>
+            <p>Navigate to <b>Setup &gt; Automation &gt; Actions &gt; Webhooks</b> in your Zoho CRM account.</p>
           </div>
           <div>
             <h3 className="font-bold">Step 2: Create a New Webhook</h3>
@@ -36,7 +36,7 @@ export default function ZohoWebhookGuide({ open, onOpenChange }) {
           </div>
           <div>
             <h3 className="font-bold">Step 5: Associate the Webhook with a Workflow Rule</h3>
-            <p>Go to <b>Setup > Automation > Workflow Rules</b> and create a new rule or edit an existing one. In the <b>Instant Actions</b> section, select <b>Webhook</b> and choose the webhook you just created.</p>
+            <p>Go to <b>Setup &gt; Automation &gt; Workflow Rules</b> and create a new rule or edit an existing one. In the <b>Instant Actions</b> section, select <b>Webhook</b> and choose the webhook you just created.</p>
           </div>
         </div>
         <div className="flex justify-end pt-4">
