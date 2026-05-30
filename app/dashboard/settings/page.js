@@ -1,3 +1,4 @@
+
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
@@ -44,8 +45,11 @@ import {
 } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { toast } from 'sonner'
+import ZohoWebhookGuide from '@/components/dashboard/ZohoWebhookGuide'
 
 export default function SettingsPage() {
+  const [zohoWebhookGuideOpen, setZohoWebhookGuideOpen] = useState(false)
+  const [zohoAccountInfo, setZohoAccountInfo] = useState(null)
   const { theme, setTheme } = useTheme()
   const [loading, setLoading] = useState(false)
   const [whatsappStatus, setWhatsappStatus] = useState('unknown')
@@ -563,6 +567,15 @@ export default function SettingsPage() {
           if (settings.spreadsheetId) setSelectedSpreadsheetId(settings.spreadsheetId)
           if (settings.sheetName) setSelectedSheetName(settings.sheetName)
         }
+        if (data.zoho?.connected) {
+          fetch('/api/integrations/zoho/account')
+            .then((res) => res.json())
+            .then((data) => {
+              if (data.accountInfo) {
+                setZohoAccountInfo(data.accountInfo);
+              }
+            });
+        }
       }
     } catch (error) {
       console.error('Failed to load integrations:', error)
@@ -959,6 +972,7 @@ export default function SettingsPage() {
 
   return (
     <div className="settings-scene p-8 mx-auto space-y-12 bg-[#f8f9ff] text-[#05345c] min-h-screen">
+      <ZohoWebhookGuide open={zohoWebhookGuideOpen} onOpenChange={setZohoWebhookGuideOpen} />
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-2">
         <div>
@@ -1149,14 +1163,40 @@ export default function SettingsPage() {
                       </div>
                       <h4 className="font-bold mb-1">Zoho CRM</h4>
                       <p className="text-[11px] text-[#3d618c] mb-4">Two-Way CRM Sync</p>
-                      {!integrations.zoho.connected && (
+                      {integrations.zoho.connected ? (
+                        <div>
+                          <div className="flex items-center gap-2 text-xs">
+                            <span className="font-semibold">Account:</span>
+                            <span>{zohoAccountInfo?.email}</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-xs mt-2">
+                            <span className="font-semibold">Webhook:</span>
+                            {lastZohoWebhook ? (
+                              <span className="flex items-center gap-1 text-green-600">
+                                <CheckCircle className="w-4 h-4" />
+                                Connected
+                              </span>
+                            ) : (
+                              <span className="flex items-center gap-1 text-amber-600">
+                                <AlertCircle className="w-4 h-4" />
+                                Not Connected
+                              </span>
+                            )}
+                          </div>
+                          <Button variant="outline" size="sm" className="mt-4" onClick={() => setZohoWebhookGuideOpen(true)}>View Setup Guide</Button>
+                        </div>
+                      ) : lastZohoWebhook ? (
+                        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] leading-4 text-amber-900">
+                          <p className="font-bold">Webhook detected, please connect your account.</p>
+                        </div>
+                      ) : (
                         <div className="mb-4 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-[10px] leading-4 text-orange-900">
                           <p className="font-bold">Supports all Zoho Regions.</p>
                           <p className="mt-1">Make sure you have created an app in Zoho API Console for your specific region.</p>
                         </div>
                       )}
-                      <div className={`w-full py-2 rounded-lg ${integrations.zoho.connected ? 'bg-orange-100 text-orange-700' : 'bg-[#e5eeff] text-[#005cc0]'} font-bold text-xs hover:bg-orange-600 hover:text-white transition-all text-center`}>
-                        {integrations.zoho.connected ? 'Connected' : 'Connect Zoho'}
+                      <div className={`w-full py-2 rounded-lg ${integrations.zoho.connected ? "bg-orange-100 text-orange-700" : "bg-[#e5eeff] text-[#005cc0]"} font-bold text-xs hover:bg-orange-600 hover:text-white transition-all text-center mt-4`}>
+                        {integrations.zoho.connected ? "Manage" : "Connect Zoho"}
                       </div>
                     </div>
                   </div>
