@@ -8,6 +8,7 @@ async function setupDatabase() {
         userId VARCHAR(255) NOT NULL,
         title VARCHAR(255),
         content TEXT NOT NULL,
+        embedding JSON,
         createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
         INDEX idx_kb_user (userId)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -31,6 +31,8 @@ export async function GET() {
   }
 }
 
+import { generateEmbedding } from '@/lib/ai';
+
 export async function POST(request) {
   const userId = await getUserIdFromRequest();
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -40,9 +42,12 @@ export async function POST(request) {
     if (!content) return NextResponse.json({ error: 'Content is required' }, { status: 400 });
 
     const id = uuidv4();
+    const embeddingArray = await generateEmbedding(content);
+    const embeddingJson = embeddingArray ? JSON.stringify(embeddingArray) : null;
+
     await query(
-      'INSERT INTO knowledge_base (id, userId, title, content) VALUES (?, ?, ?, ?)',
-      [id, userId, title || 'Default Knowledge', content]
+      'INSERT INTO knowledge_base (id, userId, title, content, embedding) VALUES (?, ?, ?, ?, ?)',
+      [id, userId, title || 'Default Knowledge', content, embeddingJson]
     );
 
     return NextResponse.json({ success: true, id });
