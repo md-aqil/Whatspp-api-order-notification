@@ -12,7 +12,7 @@ export const metadata = {
 
 export default function Home() {
   return (
-    <div className="min-h-screen flex flex-col font-sans bg-white text-slate-900 selection:bg-green-100 selection:text-green-900">
+    <div className="min-h-screen flex flex-col font-sans bg-[#0a0d14] text-slate-100 selection:bg-[#092276]/40 selection:text-white">
       <SiteHeader />
       
       <main className="flex-1">

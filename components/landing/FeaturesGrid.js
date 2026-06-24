@@ -38,9 +38,9 @@ const features = [
 
 export default function FeaturesGrid() {
   return (
-    <section id="features" className="py-32 bg-slate-50 relative overflow-hidden">
+    <section id="features" className="py-32 bg-[#0a0d14] relative overflow-hidden">
       {/* Background decoration */}
-      <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-slate-200 to-transparent"></div>
+      <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"></div>
       
       <div className="container mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
         <div className="text-center max-w-3xl mx-auto mb-20">
@@ -50,13 +50,13 @@ export default function FeaturesGrid() {
             viewport={{ once: true }}
             transition={{ duration: 0.6 }}
           >
-            <h2 className="text-sm font-semibold tracking-widest text-emerald-600 uppercase mb-3">
+            <h2 className="text-sm font-semibold tracking-widest text-[#5c8cff] uppercase mb-3">
               Platform Features
             </h2>
-            <h3 className="text-4xl font-bold tracking-tight text-slate-900 sm:text-5xl mb-6">
+            <h3 className="text-4xl font-bold tracking-tight text-white sm:text-5xl mb-6">
               Everything you need to <br/> scale your brand
             </h3>
-            <p className="text-lg text-slate-600 font-light leading-relaxed">
+            <p className="text-lg text-slate-400 font-light leading-relaxed">
               A complete, unified suite of tools meticulously designed to automate your e-commerce communications, support your customers, and significantly boost your bottom line.
             </p>
           </motion.div>
@@ -70,20 +70,18 @@ export default function FeaturesGrid() {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ duration: 0.5, delay: index * 0.1 }}
-              className="group relative p-8 bg-white rounded-3xl border border-slate-100 hover:border-emerald-100 transition-all duration-500 hover:shadow-[0_8px_30px_rgb(0,0,0,0.04)]"
+              className="group relative p-8 bg-white/5 backdrop-blur-sm rounded-3xl border border-white/10 hover:border-[#5c8cff]/40 transition-all duration-500 hover:bg-white/10"
             >
-              <div className="absolute top-0 right-0 p-8 opacity-0 group-hover:opacity-100 transition-opacity duration-500">
-                <div className="w-16 h-16 bg-emerald-50 rounded-full mix-blend-multiply filter blur-xl"></div>
-              </div>
+              <div className="absolute inset-0 bg-gradient-to-br from-[#092276]/0 to-[#092276]/0 group-hover:from-[#092276]/10 group-hover:to-transparent rounded-3xl transition-all duration-500 pointer-events-none"></div>
               
               <div className="relative z-10">
-                <span className="inline-flex items-center justify-center w-14 h-14 bg-slate-50 group-hover:bg-emerald-50 rounded-2xl mb-6 transition-colors duration-500 border border-slate-100 group-hover:border-emerald-100 shadow-sm">
-                  <feature.icon className="h-6 w-6 text-slate-700 group-hover:text-emerald-600 transition-colors duration-500" aria-hidden="true" />
+                <span className="inline-flex items-center justify-center w-14 h-14 bg-black/40 group-hover:bg-[#092276]/40 rounded-2xl mb-6 transition-colors duration-500 border border-white/10 group-hover:border-[#5c8cff]/30 shadow-sm">
+                  <feature.icon className="h-6 w-6 text-slate-300 group-hover:text-white transition-colors duration-500" aria-hidden="true" />
                 </span>
-                <h4 className="text-xl font-semibold text-slate-900 mb-3 tracking-tight">
+                <h4 className="text-xl font-semibold text-white mb-3 tracking-tight">
                   {feature.name}
                 </h4>
-                <p className="text-slate-600 leading-relaxed font-light">
+                <p className="text-slate-400 leading-relaxed font-light text-sm">
                   {feature.description}
                 </p>
               </div>

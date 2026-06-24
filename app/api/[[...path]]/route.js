@@ -1275,6 +1275,11 @@ async function handleRoute(request, { params }) {
                         incomingUserId,
                       );
 
+                      if (savedMessage.duplicate) {
+                        console.log(`[WhatsApp Webhook] Ignoring duplicate message: ${message.id}`);
+                        continue;
+                      }
+
                       const context = buildIncomingWhatsAppAutomationContext(
                         message,
                         savedMessage,
