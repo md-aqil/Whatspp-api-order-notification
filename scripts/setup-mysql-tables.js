@@ -94,6 +94,17 @@ async function setupDatabase() {
             console.warn("Migration warning for integrations googleSheets column:", err.message);
         }
 
+        // Migrate knowledge_base table: add embedding column if not exists
+        try {
+            const [columns] = await query("SHOW COLUMNS FROM knowledge_base LIKE 'embedding'");
+            if (!columns || columns.length === 0) {
+                console.log("Migrating knowledge_base table: adding embedding column");
+                await query("ALTER TABLE knowledge_base ADD COLUMN embedding JSON AFTER content");
+            }
+        } catch (err) {
+            console.warn("Migration warning for knowledge_base embedding column:", err.message);
+        }
+
         await query(`
         CREATE TABLE IF NOT EXISTS whatsapp_accounts (
         id VARCHAR(255) PRIMARY KEY,

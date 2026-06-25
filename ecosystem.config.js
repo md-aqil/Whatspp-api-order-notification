@@ -10,7 +10,8 @@ module.exports = {
     },
     {
       name: 'chatflow-worker',
-      script: 'scripts/worker.js',
+      script: 'npx',
+      args: 'tsx scripts/worker.js',
       instances: 2,
       exec_mode: 'fork',
       watch: false,
