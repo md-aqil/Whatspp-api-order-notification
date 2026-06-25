@@ -23,8 +23,29 @@ export function Header({ setSidebarOpen, user }) {
     }
   }
 
+  const handleReturnToAdmin = async () => {
+    try {
+      await fetch('/api/admin/unimpersonate', { method: 'POST', credentials: 'include' })
+      window.location.href = '/dashboard/admin'
+    } catch (e) {
+      console.error('Failed to unimpersonate:', e)
+    }
+  }
+
   return (
-    <header className="dashboard-header border-b border-slate-200/60 dark:border-white/[0.06]">
+    <>
+      {user?.isImpersonating && (
+        <div className="bg-amber-100 px-4 py-2 text-center text-sm font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-300 flex items-center justify-center gap-4 border-b border-amber-200 dark:border-amber-800/50">
+          <span>You are currently impersonating {user?.email}</span>
+          <button 
+            onClick={handleReturnToAdmin}
+            className="rounded-md bg-amber-200 px-3 py-1 text-xs font-semibold text-amber-900 transition hover:bg-amber-300 dark:bg-amber-800 dark:text-amber-100 dark:hover:bg-amber-700"
+          >
+            Return to Admin
+          </button>
+        </div>
+      )}
+      <header className="dashboard-header border-b border-slate-200/60 dark:border-white/[0.06]">
       <div className="flex items-center justify-between h-16 px-4 md:px-6">
         <div className="flex items-center">
           <button
@@ -84,5 +105,6 @@ export function Header({ setSidebarOpen, user }) {
         </div>
       </div>
     </header>
+    </>
   )
 }

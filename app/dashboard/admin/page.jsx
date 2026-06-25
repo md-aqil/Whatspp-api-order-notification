@@ -15,7 +15,8 @@ import {
   Database,
   RefreshCw,
   LayoutGrid,
-  List
+  List,
+  Plus
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'motion/react'
 import { format } from 'date-fns'
@@ -27,6 +28,10 @@ export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState('users')
   const [searchQuery, setSearchQuery] = useState('')
   const [refreshing, setRefreshing] = useState(false)
+  const [openDropdownId, setOpenDropdownId] = useState(null)
+  const [showCreateModal, setShowCreateModal] = useState(false)
+  const [createForm, setCreateForm] = useState({ name: '', email: '', password: '', role: 'owner', plan: 'pro' })
+  const [creating, setCreating] = useState(false)
 
   const fetchData = async () => {
     setRefreshing(true)
@@ -52,6 +57,65 @@ export default function AdminDashboard() {
   useEffect(() => {
     fetchData()
   }, [])
+
+  const handleImpersonate = async (userId) => {
+    try {
+      const res = await fetch('/api/admin/impersonate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId })
+      })
+      if (res.ok) {
+        window.location.href = '/dashboard'
+      } else {
+        alert('Failed to impersonate user')
+      }
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  const handleToggleStatus = async (userId, currentStatus) => {
+    try {
+      const res = await fetch('/api/admin/users/status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, isActive: !currentStatus })
+      })
+      if (res.ok) {
+        fetchData()
+      } else {
+        alert('Failed to update status')
+      }
+    } catch (e) {
+      console.error(e)
+    }
+    setOpenDropdownId(null)
+  }
+
+  const handleCreateUser = async (e) => {
+    e.preventDefault()
+    setCreating(true)
+    try {
+      const res = await fetch('/api/admin/users/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(createForm)
+      })
+      if (res.ok) {
+        setShowCreateModal(false)
+        setCreateForm({ name: '', email: '', password: '', role: 'owner', plan: 'pro' })
+        fetchData()
+      } else {
+        const data = await res.json()
+        alert(data.error || 'Failed to create user')
+      }
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setCreating(false)
+    }
+  }
 
   const filteredUsers = users.filter(user => 
     user.email.toLowerCase().includes(searchQuery.toLowerCase()) || 
@@ -81,14 +145,23 @@ export default function AdminDashboard() {
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Superadmin Control Center</h1>
           <p className="text-slate-500 dark:text-slate-400">Monitor all users, connections, and system health.</p>
         </div>
-        <button 
-          onClick={fetchData}
-          disabled={refreshing}
-          className="flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:opacity-50 dark:bg-white/[0.05] dark:text-white dark:ring-white/[0.1] dark:hover:bg-white/[0.1]"
-        >
-          <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-          Refresh Data
-        </button>
+        <div className="flex gap-2">
+          <button 
+            onClick={() => setShowCreateModal(true)}
+            className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-blue-700"
+          >
+            <Plus className="h-4 w-4" />
+            Create User
+          </button>
+          <button 
+            onClick={fetchData}
+            disabled={refreshing}
+            className="flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:opacity-50 dark:bg-white/[0.05] dark:text-white dark:ring-white/[0.1] dark:hover:bg-white/[0.1]"
+          >
+            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+            Refresh Data
+          </button>
+        </div>
       </div>
 
       {/* Stats Grid */}
@@ -221,9 +294,33 @@ export default function AdminDashboard() {
                       )}
                     </td>
                     <td className="px-6 py-4">
-                      <button className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-white/[0.05] dark:hover:text-white">
-                        <ExternalLink className="h-4 w-4" />
-                      </button>
+                      <div className="relative">
+                        <button 
+                          onClick={() => setOpenDropdownId(openDropdownId === user.id ? null : user.id)}
+                          className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-white/[0.05] dark:hover:text-white"
+                        >
+                          <MoreVertical className="h-4 w-4" />
+                        </button>
+                        {openDropdownId === user.id && (
+                          <>
+                            <div className="fixed inset-0 z-40" onClick={() => setOpenDropdownId(null)}></div>
+                            <div className="absolute right-0 mt-2 w-48 z-50 rounded-lg border bg-white py-1 shadow-lg dark:bg-[#1a1d29] dark:border-white/[0.08]">
+                              <button 
+                                onClick={() => handleImpersonate(user.id)}
+                                className="block w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-white/[0.05]"
+                              >
+                                Login as User
+                              </button>
+                              <button 
+                                onClick={() => handleToggleStatus(user.id, user.isActive)}
+                                className={`block w-full px-4 py-2 text-left text-sm hover:bg-slate-100 dark:hover:bg-white/[0.05] ${user.isActive ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}
+                              >
+                                {user.isActive ? 'Suspend User' : 'Activate User'}
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -298,6 +395,53 @@ export default function AdminDashboard() {
           )}
         </div>
       </div>
+
+      {/* Create User Modal */}
+      {showCreateModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl dark:bg-[#0b0d14] border border-slate-200 dark:border-white/[0.06]">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-bold text-slate-900 dark:text-white">Create New User</h2>
+              <button onClick={() => setShowCreateModal(false)} className="text-slate-400 hover:text-slate-500 dark:hover:text-white">
+                <XCircle className="h-6 w-6" />
+              </button>
+            </div>
+            <form onSubmit={handleCreateUser} className="space-y-4 text-left">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Name</label>
+                <input required type="text" value={createForm.name} onChange={e => setCreateForm({...createForm, name: e.target.value})} className="mt-1 w-full rounded-lg border p-2 text-sm dark:bg-white/[0.05] dark:border-white/[0.1] dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Email</label>
+                <input required type="email" value={createForm.email} onChange={e => setCreateForm({...createForm, email: e.target.value})} className="mt-1 w-full rounded-lg border p-2 text-sm dark:bg-white/[0.05] dark:border-white/[0.1] dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Password</label>
+                <input required type="text" value={createForm.password} onChange={e => setCreateForm({...createForm, password: e.target.value})} className="mt-1 w-full rounded-lg border p-2 text-sm dark:bg-white/[0.05] dark:border-white/[0.1] dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+              <div className="flex gap-4">
+                <div className="flex-1">
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Role</label>
+                  <select value={createForm.role} onChange={e => setCreateForm({...createForm, role: e.target.value})} className="mt-1 w-full rounded-lg border p-2 text-sm dark:bg-[#1a1d29] dark:border-white/[0.1] dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="owner">Owner</option>
+                    <option value="superadmin">Superadmin</option>
+                  </select>
+                </div>
+                <div className="flex-1">
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Plan</label>
+                  <select value={createForm.plan} onChange={e => setCreateForm({...createForm, plan: e.target.value})} className="mt-1 w-full rounded-lg border p-2 text-sm dark:bg-[#1a1d29] dark:border-white/[0.1] dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="pro">Pro</option>
+                    <option value="free">Free</option>
+                  </select>
+                </div>
+              </div>
+              <button disabled={creating} type="submit" className="w-full mt-6 rounded-lg bg-blue-600 px-4 py-2 text-white font-medium hover:bg-blue-700 disabled:opacity-50 transition">
+                {creating ? 'Creating...' : 'Create User'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

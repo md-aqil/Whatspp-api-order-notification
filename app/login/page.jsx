@@ -5,10 +5,8 @@ import { useRouter } from 'next/navigation'
 
 export default function LoginPage() {
   const router = useRouter()
-  const [isLogin, setIsLogin] = useState(true)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [name, setName] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -18,8 +16,8 @@ export default function LoginPage() {
     setLoading(true)
 
     try {
-      const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register'
-      const body = isLogin ? { email, password } : { email, password, name }
+      const endpoint = '/api/auth/login'
+      const body = { email, password }
 
       const res = await fetch(endpoint, {
         method: 'POST',
@@ -55,7 +53,7 @@ export default function LoginPage() {
           </div>
         </div>
         <h1 className="text-2xl font-bold text-center mb-6">
-          {isLogin ? 'Welcome Back' : 'Create Account'}
+          Welcome Back
         </h1>
 
         {error && (
@@ -65,18 +63,6 @@ export default function LoginPage() {
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {!isLogin && (
-            <div>
-              <label className="block text-sm font-medium mb-1">Name</label>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="w-full px-3 py-2 border rounded-md bg-[var(--background)]"
-                placeholder="Your name"
-              />
-            </div>
-          )}
 
           <div>
             <label className="block text-sm font-medium mb-1">Email</label>
@@ -108,19 +94,9 @@ export default function LoginPage() {
             disabled={loading}
             className="w-full bg-primary text-primary-foreground py-2 rounded-md hover:opacity-90 disabled:opacity-50"
           >
-            {loading ? 'Loading...' : (isLogin ? 'Sign In' : 'Sign Up')}
+            {loading ? 'Loading...' : 'Sign In'}
           </button>
         </form>
-
-        <p className="text-center mt-4 text-sm">
-          {isLogin ? "Don't have an account?" : 'Already have an account?'}{' '}
-          <button
-            onClick={() => setIsLogin(!isLogin)}
-            className="text-primary hover:underline"
-          >
-            {isLogin ? 'Sign Up' : 'Sign In'}
-          </button>
-        </p>
       </div>
     </div>
   )

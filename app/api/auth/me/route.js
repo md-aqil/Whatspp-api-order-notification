@@ -23,7 +23,14 @@ export async function GET(request) {
       return NextResponse.json({ error: 'User not found or disabled' }, { status: 401 })
     }
 
-    return NextResponse.json({ user })
+    const isImpersonating = !!request.cookies.get('admin_access_token')
+
+    return NextResponse.json({ 
+      user: {
+        ...user,
+        isImpersonating
+      } 
+    })
   } catch (error) {
     console.error('Get user error:', error)
     if (error?.name === 'TokenExpiredError' || error?.name === 'JsonWebTokenError') {
