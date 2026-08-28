@@ -41,10 +41,12 @@ import {
   Loader2,
   Save,
   Instagram,
-  Zap
+  Zap,
+  QrCode
 } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { toast } from 'sonner'
+import { QRCodeSVG } from 'qrcode.react'
 import ZohoWebhookGuide from '@/components/dashboard/ZohoWebhookGuide'
 
 export default function SettingsPage() {
@@ -72,6 +74,11 @@ export default function SettingsPage() {
   const [zohoDialogOpen, setZohoDialogOpen] = useState(false)
   const [instagramDialogOpen, setInstagramDialogOpen] = useState(false)
   const [zohoDc, setZohoDc] = useState('zoho.com')
+  const [connectOpen, setConnectOpen] = useState(false)
+  const [connectToken, setConnectToken] = useState('')
+  const [connectUrl, setConnectUrl] = useState('')
+  const [connectStatus, setConnectStatus] = useState(null)
+  const [connectLoading, setConnectLoading] = useState(false)
   const [user, setUser] = useState(null)
 
   // Google Sheets integration states
@@ -582,6 +589,45 @@ export default function SettingsPage() {
     }
   }
 
+  const openConnectDialog = async () => {
+    try {
+      setConnectLoading(true)
+      setConnectOpen(true)
+      setConnectStatus(null)
+      const res = await fetch('/api/connect/session', { method: 'POST' })
+      if (!res.ok) throw new Error('Failed to start QR connect')
+      const data = await res.json()
+      setConnectToken(data.token)
+      setConnectUrl(data.connectUrl)
+    } catch (e) {
+      toast.error('Could not start QR connect session')
+      setConnectOpen(false)
+    } finally {
+      setConnectLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!connectOpen || !connectToken) return
+    let active = true
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/connect/session?token=${encodeURIComponent(connectToken)}`, { cache: 'no-store' })
+        const data = await res.json()
+        if (!active) return
+        setConnectStatus(data)
+        if (data.valid && data.status === 'complete') {
+          toast.success('Shopify and WhatsApp connected!')
+          await loadIntegrations()
+          setTimeout(() => setConnectOpen(false), 1200)
+        }
+      } catch (e) {}
+    }
+    poll()
+    const id = setInterval(poll, 2500)
+    return () => { active = false; clearInterval(id) }
+  }, [connectOpen, connectToken])
+
   const fetchSpreadsheets = async () => {
     setLoadingSpreadsheets(true)
     try {
@@ -1009,9 +1055,18 @@ export default function SettingsPage() {
         {/* Integrations Tab */}
         <TabsContent value="integrations" className="space-y-8 mt-0 focus-visible:outline-none">
           <div className="bg-white p-8 rounded-2xl shadow-sm border-none ring-1 ring-black/[0.03]">
-            <div className="flex items-center justify-between mb-8">
+            <div className="flex items-center justify-between mb-8 gap-3 flex-wrap">
               <h3 className="text-xl font-bold font-headline">Service Connections</h3>
-              <div className="text-[#3d618c] text-sm font-semibold">{activeWebhookCount} active endpoints</div>
+              <div className="flex items-center gap-3">
+                <Button
+                  onClick={openConnectDialog}
+                  className="bg-[#005cc0] hover:bg-[#004a9e] text-white gap-2"
+                >
+                  <QrCode className="w-4 h-4" />
+                  Connect via QR
+                </Button>
+                <div className="text-[#3d618c] text-sm font-semibold">{activeWebhookCount} active endpoints</div>
+              </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {/* WhatsApp */}
@@ -1604,7 +1659,62 @@ export default function SettingsPage() {
               </Dialog>
             </div>
           </div>
-        </TabsContent>
+          </TabsContent>
+
+        {/* QR Connect Dialog */}
+        <Dialog open={connectOpen} onOpenChange={setConnectOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <QrCode className="w-5 h-5 text-[#005cc0]" />
+                Connect via QR code
+              </DialogTitle>
+              <DialogDescription>
+                Scan this code with your phone to link Shopify and WhatsApp. The phone opens a
+                secure page where you sign in to both &mdash; no tokens to copy.
+              </DialogDescription>
+            </DialogHeader>
+
+            {connectLoading ? (
+              <div className="flex items-center justify-center py-10">
+                <Loader2 className="animate-spin w-6 h-6 text-[#005cc0]" />
+              </div>
+            ) : (
+              <div className="space-y-5">
+                <div className="flex justify-center">
+                  <div className="p-4 bg-white rounded-2xl border border-slate-200">
+                    {connectUrl ? (
+                      <QRCodeSVG value={connectUrl} size={200} level="M" />
+                    ) : (
+                      <div className="w-[200px] h-[200px] bg-slate-100 rounded-xl" />
+                    )}
+                  </div>
+                </div>
+
+                <p className="text-center text-xs text-slate-500 break-all">{connectUrl}</p>
+
+                <div className="space-y-2">
+                  <ConnectRow
+                    label="Shopify"
+                    connected={connectStatus?.shopifyConnected}
+                    meta={connectStatus?.shopify?.shopDomain}
+                  />
+                  <ConnectRow
+                    label="WhatsApp"
+                    connected={connectStatus?.whatsappConnected}
+                    meta={connectStatus?.whatsapp?.accountName}
+                  />
+                </div>
+
+                {connectStatus?.status === 'complete' && (
+                  <p className="text-center text-sm font-semibold text-emerald-600">
+                    Both connected &mdash; you&rsquo;re all set!
+                  </p>
+                )}
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
 
         {/* WordPress Tab */}
         <TabsContent value="wordpress" className="space-y-8 mt-0 focus-visible:outline-none">
@@ -2411,4 +2521,18 @@ async function copyToClipboard(text) {
     console.error('Failed to copy to clipboard:', error)
     toast.error('Failed to copy to clipboard')
   }
+}
+
+function ConnectRow({ label, connected, meta }) {
+  return (
+    <div className={`flex items-center gap-3 rounded-xl border p-3 ${connected ? 'border-emerald-200 bg-emerald-50/50' : 'border-slate-200'}`}>
+      <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${connected ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-400'}`}>
+        {connected ? <CheckCircle className="w-4 h-4" /> : <Loader2 className="w-4 h-4" />}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold text-slate-800">{label}</p>
+        <p className="text-xs text-slate-500 truncate">{connected ? (meta || 'Connected') : 'Waiting for scan…'}</p>
+      </div>
+    </div>
+  )
 }

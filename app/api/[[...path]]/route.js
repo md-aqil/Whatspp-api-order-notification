@@ -2128,8 +2128,8 @@ async function handleRoute(request, { params }) {
         );
         defaultIntegrations.shopify.connected = !!(
           integrations.shopify?.shopDomain &&
-          integrations.shopify?.clientId &&
-          integrations.shopify?.clientSecret
+          (integrations.shopify?.accessToken ||
+            (integrations.shopify?.clientId && integrations.shopify?.clientSecret))
         );
         defaultIntegrations.stripe.connected = !!integrations.stripe?.secretKey;
         defaultIntegrations.zoho.connected = !!integrations.zoho?.refreshToken;
