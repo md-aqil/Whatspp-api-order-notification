@@ -6,7 +6,6 @@ import { Loader2, CheckCircle2, Store, MessageCircle, AlertCircle, Smartphone } 
 
 export default function ConnectTokenPage() {
   const params = useParams()
-  const searchParams = useSearchParams()
   const router = useRouter()
   const token = params?.token
 
