@@ -79,6 +79,7 @@ export default function SettingsPage() {
   const [connectUrl, setConnectUrl] = useState('')
   const [connectStatus, setConnectStatus] = useState(null)
   const [connectLoading, setConnectLoading] = useState(false)
+  const [connectTarget, setConnectTarget] = useState('all') // 'all' | 'whatsapp' | 'shopify'
   const [user, setUser] = useState(null)
 
   // Google Sheets integration states
@@ -589,8 +590,9 @@ export default function SettingsPage() {
     }
   }
 
-  const openConnectDialog = async () => {
+  const openConnectDialog = async (target = 'all') => {
     try {
+      setConnectTarget(target)
       setConnectLoading(true)
       setConnectOpen(true)
       setConnectStatus(null)
@@ -598,7 +600,8 @@ export default function SettingsPage() {
       if (!res.ok) throw new Error('Failed to start QR connect')
       const data = await res.json()
       setConnectToken(data.token)
-      setConnectUrl(data.connectUrl)
+      const targetQuery = target !== 'all' ? `?service=${target}` : ''
+      setConnectUrl(`${data.connectUrl}${targetQuery}`)
     } catch (e) {
       toast.error('Could not start QR connect session')
       setConnectOpen(false)
@@ -616,7 +619,15 @@ export default function SettingsPage() {
         const data = await res.json()
         if (!active) return
         setConnectStatus(data)
-        if (data.valid && data.status === 'complete') {
+        if (connectTarget === 'whatsapp' && data?.whatsappConnected) {
+          toast.success('WhatsApp connected successfully!')
+          await loadIntegrations()
+          setTimeout(() => setConnectOpen(false), 1200)
+        } else if (connectTarget === 'shopify' && data?.shopifyConnected) {
+          toast.success('Shopify connected successfully!')
+          await loadIntegrations()
+          setTimeout(() => setConnectOpen(false), 1200)
+        } else if (connectTarget === 'all' && data?.valid && data?.status === 'complete') {
           toast.success('Shopify and WhatsApp connected!')
           await loadIntegrations()
           setTimeout(() => setConnectOpen(false), 1200)
@@ -626,7 +637,7 @@ export default function SettingsPage() {
     poll()
     const id = setInterval(poll, 2500)
     return () => { active = false; clearInterval(id) }
-  }, [connectOpen, connectToken])
+  }, [connectOpen, connectToken, connectTarget])
 
   const fetchSpreadsheets = async () => {
     setLoadingSpreadsheets(true)
@@ -1071,13 +1082,13 @@ export default function SettingsPage() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {/* WhatsApp */}
               <Dialog open={whatsappDialogOpen} onOpenChange={setWhatsappDialogOpen}>
-                <DialogTrigger asChild>
-                  <div className="flex flex-col gap-4 cursor-pointer">
-                    <div className={`p-5 rounded-xl transition-colors group bg-[#f8f9ff] hover:bg-[#eff4ff]`}>
-                      <div className="flex justify-between items-start mb-4">
-                        <div className="w-10 h-10 rounded-lg bg-green-50 flex items-center justify-center">
-                          <MessageCircle className="text-green-600 w-5 h-5" />
-                        </div>
+                <div className="flex flex-col gap-4">
+                  <div className={`p-5 rounded-xl transition-colors group bg-[#f8f9ff] hover:bg-[#eff4ff]`}>
+                    <div className="flex justify-between items-start mb-4">
+                      <div className="w-10 h-10 rounded-lg bg-green-50 flex items-center justify-center">
+                        <MessageCircle className="text-green-600 w-5 h-5" />
+                      </div>
+                      <div className="flex items-center gap-2">
                         {integrations.whatsapp.connected ? (
                           lastWhatsappWebhook ? (
                             <span className="px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-[10px] font-black uppercase flex items-center gap-1">
@@ -1094,25 +1105,68 @@ export default function SettingsPage() {
                           <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[10px] font-black uppercase">Inactive</span>
                         )}
                       </div>
-                      <h4 className="font-bold mb-1">WhatsApp</h4>
-                      <p className="text-[11px] text-[#3d618c] mb-2">Business API</p>
-                      {integrations.whatsapp.connected && !lastWhatsappWebhook ? (
-                        <div className="flex items-center gap-1 text-[10px] text-amber-600 font-semibold mb-3">
-                          <AlertCircle className="w-3.5 h-3.5" />
-                          <span>Pending webhook setup</span>
-                        </div>
-                      ) : (
-                        <div className="h-6 mb-1"></div>
-                      )}
-                      <div className="w-full py-2 rounded-lg bg-[#e5eeff] text-[#005cc0] font-bold text-xs hover:bg-[#005cc0] hover:text-white transition-all text-center">Configure</div>
+                    </div>
+                    <h4 className="font-bold mb-1">WhatsApp</h4>
+                    <p className="text-[11px] text-[#3d618c] mb-2">Business API</p>
+                    {integrations.whatsapp.connected && !lastWhatsappWebhook ? (
+                      <div className="flex items-center gap-1 text-[10px] text-amber-600 font-semibold mb-3">
+                        <AlertCircle className="w-3.5 h-3.5" />
+                        <span>Pending webhook setup</span>
+                      </div>
+                    ) : (
+                      <div className="h-6 mb-1"></div>
+                    )}
+                    <div className="grid grid-cols-2 gap-2 mt-2">
+                      <button
+                        type="button"
+                        onClick={() => openConnectDialog('whatsapp')}
+                        className="py-2 px-3 rounded-lg bg-emerald-600 text-white font-bold text-xs hover:bg-emerald-700 transition-all flex items-center justify-center gap-1.5 shadow-sm"
+                      >
+                        <QrCode className="w-3.5 h-3.5" />
+                        <span>Scan QR</span>
+                      </button>
+                      <DialogTrigger asChild>
+                        <button
+                          type="button"
+                          className="py-2 px-3 rounded-lg bg-[#e5eeff] text-[#005cc0] font-bold text-xs hover:bg-[#005cc0] hover:text-white transition-all text-center"
+                        >
+                          Manual
+                        </button>
+                      </DialogTrigger>
                     </div>
                   </div>
-                </DialogTrigger>
+                </div>
                 <DialogContent className="sm:max-w-[500px]">
                   <DialogHeader>
                     <DialogTitle>WhatsApp Configuration</DialogTitle>
                     <DialogDescription>Configure your WhatsApp Business API integration</DialogDescription>
                   </DialogHeader>
+
+                  {/* QR Quick Connect Banner inside Modal */}
+                  <div className="p-4 rounded-xl border border-emerald-200 bg-emerald-50/60 flex items-center justify-between gap-3">
+                    <div>
+                      <h5 className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
+                        <QrCode className="w-4 h-4 text-emerald-600" />
+                        Quick Connect via QR
+                      </h5>
+                      <p className="text-[11px] text-emerald-800 mt-0.5">
+                        Log in to Meta on your phone/iPad without manually copying API tokens.
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => {
+                        setWhatsappDialogOpen(false)
+                        openConnectDialog('whatsapp')
+                      }}
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shrink-0 gap-1.5 shadow-sm"
+                    >
+                      <QrCode className="w-3.5 h-3.5" />
+                      Scan QR
+                    </Button>
+                  </div>
+
                   <IntegrationForm type="whatsapp" integration={integrations.whatsapp} user={user} onSave={saveIntegration} />
                   {!lastWhatsappWebhook && integrations.whatsapp.connected && (
                     <div className="rounded-xl border border-amber-100 bg-amber-50/50 p-4 space-y-2 mt-4 text-left">
@@ -1135,30 +1189,73 @@ export default function SettingsPage() {
 
               {/* Shopify */}
               <Dialog open={shopifyDialogOpen} onOpenChange={setShopifyDialogOpen}>
-                <DialogTrigger asChild>
-                  <div className="flex flex-col gap-4 cursor-pointer">
-                    <div className={`p-5 rounded-xl transition-colors group ${integrations.shopify.connected ? 'border-2 border-dashed border-[#005cc0]/20 bg-[#f8f9ff]' : 'bg-[#f8f9ff] hover:bg-[#eff4ff]'}`}>
-                      <div className="flex justify-between items-start mb-4">
-                        <div className="w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center">
-                          <Store className="text-[#005cc0] w-5 h-5" />
-                        </div>
+                <div className="flex flex-col gap-4">
+                  <div className={`p-5 rounded-xl transition-colors group ${integrations.shopify.connected ? 'border-2 border-dashed border-[#005cc0]/20 bg-[#f8f9ff]' : 'bg-[#f8f9ff] hover:bg-[#eff4ff]'}`}>
+                    <div className="flex justify-between items-start mb-4">
+                      <div className="w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center">
+                        <Store className="text-[#005cc0] w-5 h-5" />
+                      </div>
+                      <div className="flex items-center gap-2">
                         {integrations.shopify.connected ? (
                           <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[10px] font-black uppercase">Connected</span>
                         ) : (
                           <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[10px] font-black uppercase">Inactive</span>
                         )}
                       </div>
-                      <h4 className="font-bold mb-1">Shopify</h4>
-                      <p className="text-[11px] text-[#3d618c] mb-4">eCommerce Sync</p>
-                      <div className="w-full py-2 rounded-lg bg-[#e5eeff] text-[#005cc0] font-bold text-xs hover:bg-[#005cc0] hover:text-white transition-all text-center">Manage</div>
+                    </div>
+                    <h4 className="font-bold mb-1">Shopify</h4>
+                    <p className="text-[11px] text-[#3d618c] mb-4">eCommerce Sync</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => openConnectDialog('shopify')}
+                        className="py-2 px-3 rounded-lg bg-[#005cc0] text-white font-bold text-xs hover:bg-[#004a9e] transition-all flex items-center justify-center gap-1.5 shadow-sm"
+                      >
+                        <QrCode className="w-3.5 h-3.5" />
+                        <span>Scan QR</span>
+                      </button>
+                      <DialogTrigger asChild>
+                        <button
+                          type="button"
+                          className="py-2 px-3 rounded-lg bg-[#e5eeff] text-[#005cc0] font-bold text-xs hover:bg-[#005cc0] hover:text-white transition-all text-center"
+                        >
+                          Manage
+                        </button>
+                      </DialogTrigger>
                     </div>
                   </div>
-                </DialogTrigger>
+                </div>
                 <DialogContent className="sm:max-w-[500px]">
                   <DialogHeader>
                     <DialogTitle>Shopify Configuration</DialogTitle>
                     <DialogDescription>Manage your Shopify eCommerce integration</DialogDescription>
                   </DialogHeader>
+
+                  {/* QR Quick Connect Banner inside Modal */}
+                  <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/60 flex items-center justify-between gap-3">
+                    <div>
+                      <h5 className="text-xs font-bold text-blue-950 flex items-center gap-1.5">
+                        <QrCode className="w-4 h-4 text-[#005cc0]" />
+                        Quick Connect via QR
+                      </h5>
+                      <p className="text-[11px] text-blue-800 mt-0.5">
+                        Scan from your phone or iPad to install and authorize on Shopify.
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => {
+                        setShopifyDialogOpen(false)
+                        openConnectDialog('shopify')
+                      }}
+                      className="bg-[#005cc0] hover:bg-[#004a9e] text-white text-xs font-bold shrink-0 gap-1.5 shadow-sm"
+                    >
+                      <QrCode className="w-3.5 h-3.5" />
+                      Scan QR
+                    </Button>
+                  </div>
+
                   <IntegrationForm type="shopify" integration={integrations.shopify} user={user} onSave={saveIntegration} />
                 </DialogContent>
               </Dialog>
@@ -1667,11 +1764,18 @@ export default function SettingsPage() {
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <QrCode className="w-5 h-5 text-[#005cc0]" />
-                Connect via QR code
+                {connectTarget === 'whatsapp'
+                  ? 'Connect WhatsApp via QR code'
+                  : connectTarget === 'shopify'
+                  ? 'Connect Shopify via QR code'
+                  : 'Connect via QR code'}
               </DialogTitle>
               <DialogDescription>
-                Scan this code with your phone to link Shopify and WhatsApp. The phone opens a
-                secure page where you sign in to both &mdash; no tokens to copy.
+                {connectTarget === 'whatsapp'
+                  ? 'Scan this code with your phone or iPad to log in to Meta and connect your WhatsApp Business number automatically.'
+                  : connectTarget === 'shopify'
+                  ? 'Scan this code with your phone or iPad to log in to your Shopify store and install the integration.'
+                  : 'Scan this code with your phone or iPad to link Shopify and WhatsApp — no tokens to copy.'}
               </DialogDescription>
             </DialogHeader>
 
@@ -1682,7 +1786,7 @@ export default function SettingsPage() {
             ) : (
               <div className="space-y-5">
                 <div className="flex justify-center">
-                  <div className="p-4 bg-white rounded-2xl border border-slate-200">
+                  <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-sm">
                     {connectUrl ? (
                       <QRCodeSVG value={connectUrl} size={200} level="M" />
                     ) : (
@@ -1694,21 +1798,27 @@ export default function SettingsPage() {
                 <p className="text-center text-xs text-slate-500 break-all">{connectUrl}</p>
 
                 <div className="space-y-2">
-                  <ConnectRow
-                    label="Shopify"
-                    connected={connectStatus?.shopifyConnected}
-                    meta={connectStatus?.shopify?.shopDomain}
-                  />
-                  <ConnectRow
-                    label="WhatsApp"
-                    connected={connectStatus?.whatsappConnected}
-                    meta={connectStatus?.whatsapp?.accountName}
-                  />
+                  {(connectTarget === 'all' || connectTarget === 'shopify') && (
+                    <ConnectRow
+                      label="Shopify"
+                      connected={connectStatus?.shopifyConnected}
+                      meta={connectStatus?.shopify?.shopDomain}
+                    />
+                  )}
+                  {(connectTarget === 'all' || connectTarget === 'whatsapp') && (
+                    <ConnectRow
+                      label="WhatsApp"
+                      connected={connectStatus?.whatsappConnected}
+                      meta={connectStatus?.whatsapp?.accountName}
+                    />
+                  )}
                 </div>
 
-                {connectStatus?.status === 'complete' && (
+                {((connectTarget === 'whatsapp' && connectStatus?.whatsappConnected) ||
+                  (connectTarget === 'shopify' && connectStatus?.shopifyConnected) ||
+                  (connectTarget === 'all' && connectStatus?.status === 'complete')) && (
                   <p className="text-center text-sm font-semibold text-emerald-600">
-                    Both connected &mdash; you&rsquo;re all set!
+                    Connected successfully &mdash; you&rsquo;re all set!
                   </p>
                 )}
               </div>

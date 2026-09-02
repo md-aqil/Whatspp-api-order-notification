@@ -79,6 +79,15 @@ export default function ConnectTokenPage() {
     window.location.href = `/api/connect/whatsapp/authorize?token=${encodeURIComponent(token)}`
   }
 
+  const [serviceFocus, setServiceFocus] = useState('')
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const sp = new URLSearchParams(window.location.search).get('service')
+      if (sp) setServiceFocus(sp)
+    }
+  }, [])
+
   if (loading) {
     return (
       <main className="min-h-screen flex items-center justify-center bg-slate-50">
@@ -101,16 +110,38 @@ export default function ConnectTokenPage() {
     )
   }
 
-  const allDone = status?.status === 'complete'
+  const allDone = status?.status === 'complete' || 
+    (serviceFocus === 'whatsapp' && status?.whatsappConnected) || 
+    (serviceFocus === 'shopify' && status?.shopifyConnected)
 
   return (
     <main className="min-h-screen flex items-center justify-center bg-gradient-to-b from-[#005cc0] to-[#003a82] p-6">
       <div className="max-w-md w-full bg-white rounded-3xl shadow-xl p-8">
         <div className="flex items-center gap-3 mb-6">
-          <Smartphone className="w-7 h-7 text-[#005cc0]" />
+          <div className="w-12 h-12 rounded-2xl bg-blue-50 flex items-center justify-center text-[#005cc0]">
+            {serviceFocus === 'whatsapp' ? (
+              <MessageCircle className="w-6 h-6 text-emerald-600" />
+            ) : serviceFocus === 'shopify' ? (
+              <Store className="w-6 h-6 text-[#005cc0]" />
+            ) : (
+              <Smartphone className="w-6 h-6" />
+            )}
+          </div>
           <div>
-            <h1 className="text-xl font-bold text-slate-900">Connect your store</h1>
-            <p className="text-sm text-slate-500">Link Shopify and WhatsApp to your account</p>
+            <h1 className="text-xl font-bold text-slate-900">
+              {serviceFocus === 'whatsapp'
+                ? 'Connect WhatsApp Business'
+                : serviceFocus === 'shopify'
+                ? 'Connect Shopify Store'
+                : 'Connect your store'}
+            </h1>
+            <p className="text-xs text-slate-500">
+              {serviceFocus === 'whatsapp'
+                ? 'Authorize your Meta WhatsApp number'
+                : serviceFocus === 'shopify'
+                ? 'Link your Shopify eCommerce store'
+                : 'Link Shopify and WhatsApp to your account'}
+            </p>
           </div>
         </div>
 
@@ -121,41 +152,85 @@ export default function ConnectTokenPage() {
           </div>
         )}
 
-        <ConnectStep
-          icon={<Store className="w-5 h-5" />}
-          title="Shopify"
-          description="Sign in and install the app on your store"
-          connected={status?.shopifyConnected}
-          busy={busy.shopify}
-          onConnect={startShopify}
-          input={
-            <input
-              value={shopDomain}
-              onChange={(e) => setShopDomain(e.target.value)}
-              placeholder="your-store.myshopify.com"
-              disabled={busy.shopify || status?.shopifyConnected}
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[#005cc0] disabled:bg-slate-50"
+        {/* If WhatsApp focus: Show WhatsApp first */}
+        {serviceFocus === 'whatsapp' ? (
+          <>
+            <ConnectStep
+              icon={<MessageCircle className="w-5 h-5 text-emerald-600" />}
+              title="WhatsApp Business"
+              description="Log in to Meta and select your business number"
+              connected={status?.whatsappConnected}
+              busy={busy.whatsapp}
+              onConnect={startWhatsapp}
+              meta={status?.whatsapp?.accountName}
             />
-          }
-          meta={status?.shopify?.shopDomain}
-        />
 
-        <div className="my-4 h-px bg-slate-100" />
+            <div className="my-4 h-px bg-slate-100" />
 
-        <ConnectStep
-          icon={<MessageCircle className="w-5 h-5" />}
-          title="WhatsApp Business"
-          description="Log in to Meta and select your business number"
-          connected={status?.whatsappConnected}
-          busy={busy.whatsapp}
-          onConnect={startWhatsapp}
-          meta={status?.whatsapp?.accountName}
-        />
+            <ConnectStep
+              icon={<Store className="w-5 h-5 text-[#005cc0]" />}
+              title="Shopify (Optional)"
+              description="Sign in and install the app on your store"
+              connected={status?.shopifyConnected}
+              busy={busy.shopify}
+              onConnect={startShopify}
+              input={
+                <input
+                  value={shopDomain}
+                  onChange={(e) => setShopDomain(e.target.value)}
+                  placeholder="your-store.myshopify.com"
+                  disabled={busy.shopify || status?.shopifyConnected}
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[#005cc0] disabled:bg-slate-50"
+                />
+              }
+              meta={status?.shopify?.shopDomain}
+            />
+          </>
+        ) : (
+          <>
+            <ConnectStep
+              icon={<Store className="w-5 h-5 text-[#005cc0]" />}
+              title="Shopify"
+              description="Sign in and install the app on your store"
+              connected={status?.shopifyConnected}
+              busy={busy.shopify}
+              onConnect={startShopify}
+              input={
+                <input
+                  value={shopDomain}
+                  onChange={(e) => setShopDomain(e.target.value)}
+                  placeholder="your-store.myshopify.com"
+                  disabled={busy.shopify || status?.shopifyConnected}
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[#005cc0] disabled:bg-slate-50"
+                />
+              }
+              meta={status?.shopify?.shopDomain}
+            />
+
+            <div className="my-4 h-px bg-slate-100" />
+
+            <ConnectStep
+              icon={<MessageCircle className="w-5 h-5 text-emerald-600" />}
+              title="WhatsApp Business"
+              description="Log in to Meta and select your business number"
+              connected={status?.whatsappConnected}
+              busy={busy.whatsapp}
+              onConnect={startWhatsapp}
+              meta={status?.whatsapp?.accountName}
+            />
+          </>
+        )}
 
         {allDone && (
           <div className="mt-6 flex items-center justify-center gap-2 rounded-2xl bg-emerald-50 p-4 text-emerald-700">
             <CheckCircle2 className="w-5 h-5" />
-            <span className="text-sm font-semibold">All set! You can close this page.</span>
+            <span className="text-sm font-semibold">
+              {serviceFocus === 'whatsapp'
+                ? 'WhatsApp connected! You can close this page.'
+                : serviceFocus === 'shopify'
+                ? 'Shopify connected! You can close this page.'
+                : 'All set! You can close this page.'}
+            </span>
           </div>
         )}
       </div>
