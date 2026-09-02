@@ -1027,8 +1027,8 @@ Thank you for your purchase!`,
 // Shopify API functions
 async function fetchShopifyProducts(shopify) {
   const accessToken = await getShopifyAccessToken(shopify);
-  const { shopDomain } = shopify;
-  const url = `https://${shopDomain}/admin/api/2023-10/products.json`;
+  const shopDomain = normalizeShopifyDomain(shopify.shopDomain);
+  const url = `https://${shopDomain}/admin/api/2024-01/products.json?limit=50`;
 
   const response = await fetch(url, {
     headers: {
@@ -1037,25 +1037,32 @@ async function fetchShopifyProducts(shopify) {
     },
   });
 
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.errors || "Shopify API error");
+  let data;
+  const rawText = await response.text();
+  try {
+    data = JSON.parse(rawText);
+  } catch (e) {
+    throw new Error(`Invalid response from Shopify (${response.status} ${response.statusText}). Please verify your shop domain and API credentials.`);
   }
 
-  return data.products.map((product) => ({
+  if (!response.ok) {
+    throw new Error(data.errors || data.error || "Shopify API error");
+  }
+
+  return (data.products || []).map((product) => ({
     id: product.id.toString(),
     title: product.title,
     description: product.body_html?.replace(/<[^>]*>/g, "").substring(0, 200),
-    price: product.variants[0]?.price || "0.00",
-    image: product.images[0]?.src,
+    price: product.variants?.[0]?.price || "0.00",
+    image: product.images?.[0]?.src,
     handle: product.handle,
   }));
 }
 
 async function fetchShopifyOrders(shopify) {
   const accessToken = await getShopifyAccessToken(shopify);
-  const { shopDomain } = shopify;
-  const url = `https://${shopDomain}/admin/api/2023-10/orders.json?status=any`;
+  const shopDomain = normalizeShopifyDomain(shopify.shopDomain);
+  const url = `https://${shopDomain}/admin/api/2024-01/orders.json?status=any&limit=50`;
 
   const response = await fetch(url, {
     headers: {
@@ -1064,9 +1071,16 @@ async function fetchShopifyOrders(shopify) {
     },
   });
 
-  const data = await response.json();
+  let data;
+  const rawText = await response.text();
+  try {
+    data = JSON.parse(rawText);
+  } catch (e) {
+    throw new Error(`Invalid response from Shopify (${response.status} ${response.statusText}).`);
+  }
+
   if (!response.ok) {
-    throw new Error(data.errors || "Shopify API error");
+    throw new Error(data.errors || data.error || "Shopify API error");
   }
 
   // Transform Shopify orders to match our internal format

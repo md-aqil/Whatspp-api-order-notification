@@ -1202,31 +1202,6 @@ export default function SettingsPage() {
                     <DialogDescription>Manage your Shopify eCommerce integration</DialogDescription>
                   </DialogHeader>
 
-                  {/* QR Quick Connect Banner inside Modal */}
-                  <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/60 flex items-center justify-between gap-3">
-                    <div>
-                      <h5 className="text-xs font-bold text-blue-950 flex items-center gap-1.5">
-                        <QrCode className="w-4 h-4 text-[#005cc0]" />
-                        Quick Connect via QR / Direct Link
-                      </h5>
-                      <p className="text-[11px] text-blue-800 mt-0.5">
-                        Scan from your phone/iPad or click to authorize on this PC.
-                      </p>
-                    </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      onClick={() => {
-                        setShopifyDialogOpen(false)
-                        openConnectDialog('shopify')
-                      }}
-                      className="bg-[#005cc0] hover:bg-[#004a9e] text-white text-xs font-bold shrink-0 gap-1.5 shadow-sm"
-                    >
-                      <QrCode className="w-3.5 h-3.5" />
-                      Connect
-                    </Button>
-                  </div>
-
                   <IntegrationForm type="shopify" integration={integrations.shopify} user={user} onSave={saveIntegration} />
                 </DialogContent>
               </Dialog>
