@@ -1,4 +1,14 @@
+import dotenv from 'dotenv';
+import path from 'path';
+import fs from 'fs';
 import { query } from '../lib/mysql.js';
+
+for (const envPath of ['/etc/lcsw/.env', path.resolve(process.cwd(), '.env')]) {
+  if (fs.existsSync(envPath)) {
+    dotenv.config({ path: envPath });
+    break;
+  }
+}
 
 async function setupDatabase() {
     try {

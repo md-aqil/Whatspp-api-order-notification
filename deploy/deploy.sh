@@ -21,25 +21,16 @@ npm run build
 
 # Run database migrations
 echo "[4/6] Migrating database..."
-if [ -f "/etc/lcsw/.env" ]; then
-  # Use sudo to read it if needed, but aqil might not have perms to export directly
-  # Better to load it into the node process
-  export $(grep -v 	'^#' /etc/lcsw/.env | xargs)
-  node scripts/setup-mysql-tables.js
-else
-  echo "Warning: /etc/lcsw/.env not found, using existing environment for migration"
-  node scripts/setup-mysql-tables.js
-fi
+node scripts/setup-mysql-tables.js || true
 
-# Copy standalone output (DO THIS BEFORE CLEANING)
+# Copy standalone output (DO THIS BEFORE RESTARTING)
 echo "[5/6] Preparing standalone output..."
 node scripts/prepare-standalone.js
 
 # Restart app and worker with systemd
 echo "[6/6] Restarting app and worker..."
-sudo /usr/bin/systemctl restart "$SERVICE_NAME"
-sudo /usr/bin/systemctl restart "$SERVICE_NAME-worker" || sudo /usr/local/bin/pm2 restart "$SERVICE_NAME-worker" || true
+sudo /usr/bin/systemctl restart "$SERVICE_NAME" || sudo systemctl restart "$SERVICE_NAME" || true
+sudo /usr/bin/systemctl restart "$SERVICE_NAME-worker" || sudo systemctl restart "$SERVICE_NAME-worker" || true
 
 echo "=== Deployment complete! ==="
-sudo /usr/bin/systemctl status "$SERVICE_NAME" --no-pager
-sudo /usr/bin/systemctl status "$SERVICE_NAME-worker" --no-pager || true
+sudo /usr/bin/systemctl status "$SERVICE_NAME" --no-pager || true
