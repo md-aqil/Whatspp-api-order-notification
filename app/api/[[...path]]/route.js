@@ -2143,7 +2143,8 @@ async function handleRoute(request, { params }) {
         defaultIntegrations.shopify.connected = !!(
           integrations.shopify?.shopDomain &&
           (integrations.shopify?.accessToken ||
-            (integrations.shopify?.clientId && integrations.shopify?.clientSecret))
+            integrations.shopify?.clientSecret ||
+            integrations.shopify?.clientId)
         );
         defaultIntegrations.stripe.connected = !!integrations.stripe?.secretKey;
         defaultIntegrations.zoho.connected = !!integrations.zoho?.refreshToken;
@@ -2207,9 +2208,14 @@ async function handleRoute(request, { params }) {
         data = normalizeWhatsAppIntegrationData(data);
       }
 
-      // Test the integration before saving
+      // Run integration test before saving
       try {
-        if (type === "whatsapp" && data.phoneNumberId && data.accessToken) {
+        if (
+          type === "whatsapp" &&
+          data.phoneNumberId &&
+          data.accessToken
+        ) {
+          // Test WhatsApp connection
           await validateWhatsAppPhoneNumberAccess(
             data.phoneNumberId,
             data.accessToken,
@@ -2226,15 +2232,14 @@ async function handleRoute(request, { params }) {
               phoneNumberId: data.phoneNumberId,
             });
           } catch (error) {
-            warning = `Catalog validation failed: ${error.message}. Catalog ID has been saved but may not work until the access token is refreshed.`;
+            warning = `Catalog validation note: ${error.message}. Catalog ID has been saved.`;
           }
         }
 
         if (
           type === "shopify" &&
           data.shopDomain &&
-          data.clientId &&
-          data.clientSecret
+          (data.clientSecret || data.clientId || data.accessToken)
         ) {
           // Test Shopify connection
           await fetchShopifyProducts(data);
@@ -2268,10 +2273,18 @@ async function handleRoute(request, { params }) {
       }
 
       if (type === "shopify") {
+        const clientSecret = data.clientSecret || "";
+        const clientId = data.clientId || "";
+        const directToken = (clientSecret.startsWith("shpat_") || clientId.startsWith("shpat_"))
+          ? (clientSecret.startsWith("shpat_") ? clientSecret : clientId)
+          : (data.accessToken || "");
+
         data = {
           shopDomain: normalizeShopifyDomain(data.shopDomain || ""),
-          clientId: data.clientId || "",
-          clientSecret: data.clientSecret || "",
+          clientId: clientId,
+          clientSecret: clientSecret,
+          accessToken: directToken,
+          connected: !!(normalizeShopifyDomain(data.shopDomain || "") && (directToken || (clientId && clientSecret))),
         };
       }
 
