@@ -3916,23 +3916,23 @@ ${productInfo ? `${productInfo}` : ""}Browse our full collection and find someth
             msg.isCustomer === "true",
           );
 
-          if (isCustomer) {
-            return {
-              id: msg.id || msg._id?.toString() || uuidv4(),
-              text: msg.message || msg.text || "",
-              isCustomer: true,
-              timestamp: msg.timestamp || new Date(),
-              phone: msg.phone || phone,
-            };
-          } else {
-            return {
-              id: msg.id || msg._id?.toString() || uuidv4(),
-              text: msg.message || msg.text || "",
-              isCustomer: false,
-              timestamp: msg.timestamp || new Date(),
-              phone: msg.recipient || phone,
-            };
-          }
+          const messageText = msg.message || msg.text || msg.content || "";
+          const imgUrl = msg.imageUrl || (msg.imageUrls && msg.imageUrls[0]) || null;
+          const imgUrls = Array.isArray(msg.imageUrls) && msg.imageUrls.length > 0 
+            ? msg.imageUrls 
+            : (imgUrl ? [imgUrl] : []);
+
+          return {
+            id: msg.id || msg._id?.toString() || uuidv4(),
+            text: messageText,
+            message: messageText,
+            content: messageText,
+            imageUrl: imgUrl,
+            imageUrls: imgUrls,
+            isCustomer: isCustomer,
+            timestamp: msg.timestamp || new Date(),
+            phone: isCustomer ? (msg.phone || phone) : (msg.recipient || phone),
+          };
         });
 
         console.log(
