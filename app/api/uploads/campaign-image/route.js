@@ -27,19 +27,20 @@ export async function POST(request) {
       return NextResponse.json({ error: 'At least one image file is required' }, { status: 400 })
     }
 
-    // Determine upload directory
+    // Determine all candidate upload directories
     const candidates = [
       path.join(process.cwd(), 'public', 'campaign-uploads'),
+      path.join(process.cwd(), '.next', 'standalone', 'public', 'campaign-uploads'),
       path.join(process.cwd(), '..', 'public', 'campaign-uploads'),
-      '/var/www/lcsw/public/campaign-uploads'
+      '/var/www/lcsw/public/campaign-uploads',
+      '/var/www/lcsw/.next/standalone/public/campaign-uploads'
     ]
 
-    let uploadDir = candidates[0]
+    const validDirs = []
     for (const cand of candidates) {
       try {
         await mkdir(cand, { recursive: true })
-        uploadDir = cand
-        break
+        validDirs.push(cand)
       } catch (e) {}
     }
 
@@ -59,10 +60,13 @@ export async function POST(request) {
 
       const extension = extensionFor(file.type)
       const fileName = `chat-${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${extension}`
-      const filePath = path.join(uploadDir, fileName)
       const buffer = Buffer.from(await file.arrayBuffer())
 
-      await writeFile(filePath, buffer)
+      for (const dir of validDirs) {
+        try {
+          await writeFile(path.join(dir, fileName), buffer)
+        } catch (err) {}
+      }
 
       const relativeUrl = `/campaign-uploads/${fileName}`
       const absoluteUrl = new URL(relativeUrl, baseUrl).toString()
