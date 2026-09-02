@@ -2268,6 +2268,26 @@ async function handleRoute(request, { params }) {
         if (data.catalogId === "") {
           delete data.catalogId;
         }
+
+        // Automatically subscribe WhatsApp Business Account to Webhooks in Meta Graph API
+        if (data.businessAccountId && data.accessToken) {
+          try {
+            const subRes = await fetch(
+              `https://graph.facebook.com/v21.0/${data.businessAccountId}/subscribed_apps`,
+              {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${data.accessToken}`,
+                  "Content-Type": "application/json",
+                },
+              }
+            );
+            const subData = await subRes.json();
+            console.log("[Meta WABA Subscribed Apps Result]:", subData);
+          } catch (subErr) {
+            console.warn("[Meta WABA Subscribe Error]:", subErr.message);
+          }
+        }
       }
 
       if (type === "shopify") {
@@ -2302,6 +2322,59 @@ async function handleRoute(request, { params }) {
       return handleCORS(
         NextResponse.json({ success: true, ...(warning ? { warning } : {}) }),
       );
+    }
+
+    if (route === "/whatsapp/subscribe-webhook" && (method === "POST" || method === "GET")) {
+      try {
+        const integrations = await getStoredIntegrations(currentUserId);
+        const wa = integrations?.whatsapp;
+        if (!wa?.businessAccountId || !wa?.accessToken) {
+          return handleCORS(
+            NextResponse.json(
+              { error: "WhatsApp Business Account ID and Access Token are required" },
+              { status: 400 },
+            ),
+          );
+        }
+
+        const subRes = await fetch(
+          `https://graph.facebook.com/v21.0/${wa.businessAccountId}/subscribed_apps`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${wa.accessToken}`,
+              "Content-Type": "application/json",
+            },
+          }
+        );
+        const subData = await subRes.json();
+        console.log("[Meta WABA Subscribed Apps Response]:", subData);
+
+        if (subData.error) {
+          return handleCORS(
+            NextResponse.json(
+              { error: `Meta Error: ${subData.error.message}` },
+              { status: 400 },
+            ),
+          );
+        }
+
+        return handleCORS(
+          NextResponse.json({
+            success: true,
+            message: "WhatsApp Business Account subscribed to Webhooks successfully!",
+            metaResponse: subData,
+          }),
+        );
+      } catch (err) {
+        console.error("Subscribe WABA webhook error:", err);
+        return handleCORS(
+          NextResponse.json(
+            { error: `Failed to subscribe WABA to webhooks: ${err.message}` },
+            { status: 500 },
+          ),
+        );
+      }
     }
 
     // Setup webhooks endpoint
