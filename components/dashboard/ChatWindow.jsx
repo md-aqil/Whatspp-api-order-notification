@@ -11,6 +11,9 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
   const [inputValue, setInputValue] = useState('')
   const [suggestions, setSuggestions] = useState([])
   const [loadingSuggestions, setLoadingSuggestions] = useState(false)
+  const [selectedImage, setSelectedImage] = useState(null)
+  const [isUploadingImage, setIsUploadingImage] = useState(false)
+  const fileInputRef = useRef(null)
   const messagesEndRef = useRef(null)
   const messagesContainerRef = useRef(null)
   const prevMessageCountRef = useRef(messages.length)
@@ -35,7 +38,6 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
   useEffect(() => {
     let intervalId;
     const originalTitle = document.title;
-    const currentMessageCount = messages.length;
     
     // Check if the last message was from a customer AND we are not the active tab
     const lastMessage = messages[messages.length - 1];
@@ -53,76 +55,46 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
     // Reset title when tab becomes visible
     const handleVisibilityChange = () => {
       if (!document.hidden) {
-        clearInterval(intervalId);
         document.title = originalTitle;
+        if (intervalId) clearInterval(intervalId);
       }
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     
     return () => {
-      clearInterval(intervalId);
+      if (intervalId) clearInterval(intervalId);
       document.title = originalTitle;
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     }
   }, [messages])
 
-  // Play sound effect with better handling
-  const playSound = (soundRef) => {
-    if (soundRef.current) {
-      soundRef.current.currentTime = 0;
-      soundRef.current.volume = 0.5;
-      soundRef.current.play().catch(e => {
-        // Silently fail if browser blocks autoplay
-        console.log("Audio play deferred until user interaction");
-      });
-    }
-  }
-
-  // Check if user is at the bottom of the chat
-  const isUserAtBottom = () => {
-    if (messagesContainerRef.current) {
-      const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current
-      const threshold = 50 // pixels from bottom
-      return scrollHeight - scrollTop - clientHeight < threshold
-    }
-    return true
-  }
-
   // Scroll to bottom
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  const scrollToBottom = (behavior = 'smooth') => {
+    messagesEndRef.current?.scrollIntoView({ behavior })
   }
 
   // Handle scrolling when messages change
   useEffect(() => {
     const currentMessageCount = messages.length
-    const hasNewMessages = currentMessageCount > prevMessageCountRef.current
     
     // On initial render, always scroll to bottom
     if (isInitialRenderRef.current) {
-      scrollToBottom()
+      scrollToBottom('auto')
       isInitialRenderRef.current = false
     } 
     // Logic for new messages
-    else if (hasNewMessages) {
+    else if (currentMessageCount > prevMessageCountRef.current) {
       const lastMessage = messages[messages.length - 1]
       
-      // If user/AI sent a message
-      if (lastMessage?.isCustomer === false) {
-        scrollToBottom()
-        playSound(outgoingSoundRef)
-      } 
-      // If new incoming message from customer
-      else {
-        // Play sound regardless of position
-        playSound(incomingSoundRef)
-        
-        // Scroll only if user is already at bottom
-        if (isUserAtBottom()) {
-          scrollToBottom()
-        }
+      // Play sound
+      if (lastMessage?.isCustomer) {
+        incomingSoundRef.current?.play().catch(e => console.log('Audio play blocked:', e))
+      } else {
+        outgoingSoundRef.current?.play().catch(e => console.log('Audio play blocked:', e))
       }
+      
+      scrollToBottom('smooth')
     }
     
     // Update the previous message count
@@ -134,6 +106,11 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
       fetchSuggestions()
     }
   }, [messages])
+
+  useEffect(() => {
+    scrollToBottom('auto')
+    isInitialRenderRef.current = false
+  }, [chat?.id])
 
   const fetchSuggestions = async () => {
     if (!chat?.phone) return
@@ -155,26 +132,68 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
     }
   }
 
+  const handleImageFileChange = (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
 
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please select a valid image file (JPG, PNG, WebP)')
+      return
+    }
 
-  // Handle scroll events
-  const handleScroll = () => {
-    // We don't need to do anything here, just let the natural scroll happen
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('Image must be under 5MB')
+      return
+    }
+
+    const previewUrl = URL.createObjectURL(file)
+    setSelectedImage({ file, previewUrl })
+    e.target.value = ''
   }
 
-  // Set up scroll listener
-  useEffect(() => {
-    const container = messagesContainerRef.current
-    if (container) {
-      container.addEventListener('scroll', handleScroll)
-      return () => container.removeEventListener('scroll', handleScroll)
+  const removeSelectedImage = () => {
+    if (selectedImage?.previewUrl) {
+      URL.revokeObjectURL(selectedImage.previewUrl)
     }
-  }, [])
+    setSelectedImage(null)
+  }
 
-  const handleSendMessage = () => {
-    if (inputValue.trim() === '') return
-    onSendMessage(inputValue)
+  const handleSendMessage = async () => {
+    if (inputValue.trim() === '' && !selectedImage) return
+
+    let uploadedImageUrl = null
+
+    if (selectedImage?.file) {
+      setIsUploadingImage(true)
+      try {
+        const formData = new FormData()
+        formData.append('file', selectedImage.file)
+        const uploadRes = await fetch('/api/uploads/campaign-image', {
+          method: 'POST',
+          body: formData
+        })
+
+        if (!uploadRes.ok) {
+          const errData = await uploadRes.json()
+          throw new Error(errData.error || 'Failed to upload image')
+        }
+
+        const uploadData = await uploadRes.json()
+        uploadedImageUrl = uploadData.url
+      } catch (err) {
+        toast.error(`Image upload failed: ${err.message}`)
+        setIsUploadingImage(false)
+        return
+      } finally {
+        setIsUploadingImage(false)
+      }
+    }
+
+    const textToSend = inputValue.trim()
+    removeSelectedImage()
     setInputValue('')
+
+    onSendMessage(textToSend, uploadedImageUrl)
   }
 
   const handleKeyPress = (e) => {
@@ -198,6 +217,15 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
 
   return (
     <div className="flex h-full flex-col bg-[#f9fafb] dark:bg-[#0b0d14] overflow-hidden">
+      {/* Hidden File Input */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        accept="image/jpeg,image/png,image/webp"
+        className="hidden"
+        onChange={handleImageFileChange}
+      />
+
       {/* Chat Header */}
       <div className="flex items-center justify-between bg-white dark:bg-[#0b0d14] border-b border-gray-200 dark:border-slate-800 px-4 md:px-6 py-3 md:py-4 sticky top-0 z-20 shadow-sm">
         <div className="flex items-center">
@@ -222,43 +250,13 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-1 md:gap-2">
-          <Button variant="ghost" size="icon" className="text-gray-400 hover:text-gray-600 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 h-9 w-9 md:h-10 md:w-10">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-          </Button>
-          <Button variant="ghost" size="icon" className="text-gray-400 hover:text-gray-600 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 h-9 w-9 md:h-10 md:w-10">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="1"></circle><circle cx="12" cy="5" r="1"></circle><circle cx="12" cy="19" r="1"></circle></svg>
-          </Button>
-        </div>
       </div>
+
     <div className="flex-1 relative overflow-hidden bg-[#e5ddd5] dark:bg-[#0b0d14]">
-      {/* Fixed Background Layer - Does not scroll */}
+      {/* Fixed Background Layer */}
       <div className="absolute inset-0 pointer-events-none">
-        {/* Light Mode Doodle - Blended */}
-        <div 
-          className="absolute inset-0 dark:hidden"
-          style={{
-            backgroundImage: `url('/images/doodle-light.jpg')`,
-            backgroundRepeat: 'repeat',
-            backgroundSize: '800px',
-            mixBlendMode: 'multiply',
-            opacity: '0.8'
-          }}
-        ></div>
-
-        {/* Dark Mode Doodle - Blended */}
-        <div 
-          className="absolute inset-0 hidden dark:block"
-          style={{
-            backgroundImage: `url('/images/doodle-dark.png')`,
-            backgroundRepeat: 'repeat',
-            backgroundSize: '800px',
-            mixBlendMode: 'screen',
-            opacity: '0.4'
-          }}
-        ></div>
-
-        {/* Softening Overlay - Tones down doodles slightly for better readability */}
+        <div className="absolute inset-0 dark:hidden" style={{ backgroundImage: `url('/images/doodle-light.jpg')`, backgroundRepeat: 'repeat', backgroundSize: '800px', mixBlendMode: 'multiply', opacity: '0.8' }}></div>
+        <div className="absolute inset-0 hidden dark:block" style={{ backgroundImage: `url('/images/doodle-dark.png')`, backgroundRepeat: 'repeat', backgroundSize: '800px', mixBlendMode: 'screen', opacity: '0.4' }}></div>
         <div className="absolute inset-0 bg-[#e5ddd5]/30 dark:bg-[#0b0d14]/50 pointer-events-none"></div>
       </div>
 
@@ -279,6 +277,7 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
           
           {messages.map((message, idx) => {
             const isCustomer = message.isCustomer;
+            const imgSource = message.imageUrl || message.image || message.mediaUrl;
             
             return (
               <div
@@ -293,18 +292,20 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
                   }`}
                 >
                   <div className="flex flex-col">
-                    <span className="text-[14.5px] md:text-[15.5px] leading-[1.5] break-words whitespace-pre-wrap font-normal">
-                      {message.text || message.message}
-                    </span>
+                    {imgSource && (
+                      <div className="mb-2 rounded-xl overflow-hidden max-w-[280px] border border-black/10 dark:border-white/10">
+                        <img src={imgSource} alt="Attached" className="w-full h-auto object-cover max-h-64" />
+                      </div>
+                    )}
+                    {message.text && message.text !== '[Image]' && (
+                      <span className="text-[14.5px] md:text-[15.5px] leading-[1.5] break-words whitespace-pre-wrap font-normal">
+                        {message.text || message.message}
+                      </span>
+                    )}
                     <div className={`flex items-center justify-end space-x-1 mt-1 opacity-40 self-end`}>
                       <span className="text-[9px] md:text-[10px] font-medium tabular-nums">
                         {formatTime(message.timestamp || message.createdAt)}
                       </span>
-                      {!isCustomer && (
-                        <svg viewBox="0 0 16 15" width="12" height="12" fill={isCustomer ? "currentColor" : "#4fc3f7"}>
-                          <path d="M15.01 3.3L8.07 10.24l-3.32-3.32-.73.73 4.05 4.05 7.68-7.68-.74-.72zm-4.72 0L9.56 4.03l2.8 2.8.73-.73-2.8-2.8zm-7.69.74l3.32 3.32.73-.73-4.05-4.05-.73.73z" />
-                        </svg>
-                      )}
                     </div>
                   </div>
                 </div>
@@ -343,11 +344,43 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
         </div>
       )}
 
+      {/* Image Attachment Preview Bar */}
+      {selectedImage && (
+        <div className="bg-white/95 dark:bg-[#11131d]/95 backdrop-blur px-4 md:px-6 py-2 border-t border-emerald-200 dark:border-emerald-800/40 animate-in slide-in-from-bottom-2">
+          <div className="max-w-4xl mx-auto flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="relative w-12 h-12 rounded-lg overflow-hidden border border-emerald-300 dark:border-emerald-700 shadow-sm">
+                <img src={selectedImage.previewUrl} alt="Preview" className="w-full h-full object-cover" />
+              </div>
+              <div>
+                <p className="text-xs font-bold text-gray-800 dark:text-gray-200">Image Attached</p>
+                <p className="text-[11px] text-gray-500">Will be sent with your message</p>
+              </div>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={removeSelectedImage}
+              className="h-8 w-8 p-0 rounded-full text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"
+            >
+              <X className="w-4 h-4" />
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Input Area */}
       <div className="bg-white dark:bg-[#0b0d14] px-4 md:px-6 py-4 md:py-6 border-t border-gray-100 dark:border-slate-800 shadow-[0_-4px_12px_rgba(0,0,0,0.05)] relative z-20">
         <div className="max-w-4xl mx-auto flex items-center gap-3">
           <div className="flex items-center gap-1">
-            <Button variant="ghost" size="icon" className="text-gray-400 hover:text-emerald-500 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 h-10 w-10 flex-shrink-0">
+            <Button 
+              type="button" 
+              variant="ghost" 
+              size="icon" 
+              onClick={() => fileInputRef.current?.click()}
+              className="text-gray-400 hover:text-emerald-500 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 h-10 w-10 flex-shrink-0"
+            >
               <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
             </Button>
           </div>
@@ -357,7 +390,7 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               onKeyPress={handleKeyPress}
-              placeholder="Type your message..."
+              placeholder={selectedImage ? "Add a caption..." : "Type your message..."}
               className="w-full resize-none border-gray-200 dark:border-slate-700 bg-gray-50/50 dark:bg-slate-800/50 rounded-xl px-4 py-2.5 focus:border-emerald-500 focus:ring-emerald-500/10 text-gray-900 dark:text-white text-[14px] md:text-[15px] min-h-[44px] max-h-[120px] shadow-sm"
               rows="1"
             />
@@ -365,14 +398,14 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
           
           <Button
             onClick={handleSendMessage}
-            disabled={inputValue.trim() === ''}
+            disabled={(inputValue.trim() === '' && !selectedImage) || isUploadingImage}
             className={`h-10 w-10 md:h-12 md:w-12 rounded-full flex-shrink-0 shadow-md transition-all ${
-              inputValue.trim() === '' 
+              (inputValue.trim() === '' && !selectedImage) || isUploadingImage
                 ? 'bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-slate-600' 
                 : 'bg-emerald-500 text-white hover:bg-emerald-600'
             }`}
           >
-            <Send className="w-5 h-5" />
+            {isUploadingImage ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
           </Button>
         </div>
       </div>

@@ -39,7 +39,8 @@ export async function POST(request) {
     await writeFile(filePath, buffer)
 
     const relativeUrl = `/campaign-uploads/${fileName}`
-    const absoluteUrl = new URL(relativeUrl, request.nextUrl.origin).toString()
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || request.nextUrl.origin
+    const absoluteUrl = new URL(relativeUrl, baseUrl).toString()
 
     return NextResponse.json({
       success: true,
