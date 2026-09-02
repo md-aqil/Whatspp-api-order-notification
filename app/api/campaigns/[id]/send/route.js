@@ -4,16 +4,24 @@ import { query, queryMany, queryOne } from '@/lib/postgres'
 import { requireRequestUserId } from '@/lib/request-user'
 import { decrypt } from '@/lib/encryption'
 
+import { ensureSettingsTables } from '@/lib/settings-db'
+
 async function ensureCampaignSchema() {
-  try {
-    await query('ALTER TABLE campaigns ADD COLUMN templateLanguage TEXT')
-    await query('ALTER TABLE campaigns ADD COLUMN templateCategory TEXT')
-    await query('ALTER TABLE campaigns ADD COLUMN templateHeaderImageUrl TEXT')
-    await query('ALTER TABLE campaigns ADD COLUMN campaignType TEXT DEFAULT "template"')
-    await query('ALTER TABLE campaigns ADD COLUMN productIds JSON DEFAULT "[]"')
-    await query('ALTER TABLE campaigns ADD COLUMN variables JSON DEFAULT "[]"')
-  } catch (e) {
-    // Column might already exist
+  await ensureSettingsTables()
+  const columns = [
+    'ALTER TABLE campaigns ADD COLUMN templateLanguage VARCHAR(50)',
+    'ALTER TABLE campaigns ADD COLUMN templateCategory VARCHAR(100)',
+    'ALTER TABLE campaigns ADD COLUMN templateHeaderImageUrl TEXT',
+    'ALTER TABLE campaigns ADD COLUMN campaignType VARCHAR(50) DEFAULT "template"',
+    'ALTER TABLE campaigns ADD COLUMN productIds JSON',
+    'ALTER TABLE campaigns ADD COLUMN variables JSON'
+  ]
+  for (const sql of columns) {
+    try {
+      await query(sql)
+    } catch (e) {
+      // Column might already exist
+    }
   }
 }
 

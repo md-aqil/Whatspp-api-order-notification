@@ -106,12 +106,90 @@ export default function CampaignsPage() {
   const [sendingCampaignId, setSendingCampaignId] = useState(null)
   const [selectedProducts, setSelectedProducts] = useState([])
   const [uploadingImage, setUploadingImage] = useState(false)
+  const [audienceCounts, setAudienceCounts] = useState({ allCustomers: 0, recentBuyers: 0 })
+  const [existingContacts, setExistingContacts] = useState([])
+  const [contactSearchTerm, setContactSearchTerm] = useState('')
+  const [showContactPicker, setShowContactPicker] = useState(false)
   const fileInputRef = useRef(null)
   
   useEffect(() => {
     loadTemplates()
     loadProducts()
+    loadAudienceStats()
   }, [])
+
+  async function loadAudienceStats() {
+    try {
+      const [chatsRes, ordersRes] = await Promise.all([
+        fetch('/api/chats').then(r => r.ok ? r.json() : []).catch(() => []),
+        fetch('/api/orders').then(r => r.ok ? r.json() : []).catch(() => [])
+      ])
+      
+      const contactsMap = new Map()
+      const uniquePhones = new Set()
+
+      ;(chatsRes || []).forEach(c => {
+        if (c.phone) {
+          const raw = String(c.phone).replace(/\D/g, '')
+          if (raw.length >= 10) {
+            uniquePhones.add(raw)
+            contactsMap.set(raw, {
+              id: c.id || raw,
+              name: c.name || 'Customer',
+              phone: raw
+            })
+          }
+        }
+      })
+
+      ;(ordersRes || []).forEach(o => { 
+        const p = o.customerPhone || o.phone
+        if (p) {
+          const raw = String(p).replace(/\D/g, '')
+          if (raw.length >= 10) {
+            uniquePhones.add(raw)
+            if (!contactsMap.has(raw)) {
+              contactsMap.set(raw, {
+                id: o.id || raw,
+                name: o.customerName || 'Store Buyer',
+                phone: raw
+              })
+            }
+          }
+        }
+      })
+
+      const thirtyDaysAgo = new Date()
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+
+      const recentOrders = (ordersRes || []).filter(o => {
+        const orderDate = new Date(o.createdAt || o.created_at || o.timestamp)
+        return !isNaN(orderDate.getTime()) && orderDate >= thirtyDaysAgo
+      })
+      const recentPhones = new Set()
+      recentOrders.forEach(o => {
+        const p = o.customerPhone || o.phone
+        if (p) recentPhones.add(String(p).replace(/\D/g, ''))
+      })
+
+      if (recentPhones.size === 0) {
+        (chatsRes || []).forEach(c => {
+          const chatDate = new Date(c.timestamp || c.createdAt)
+          if (!isNaN(chatDate.getTime()) && chatDate >= thirtyDaysAgo && c.phone) {
+            recentPhones.add(String(c.phone).replace(/\D/g, ''))
+          }
+        })
+      }
+
+      setAudienceCounts({
+        allCustomers: uniquePhones.size,
+        recentBuyers: recentPhones.size
+      })
+      setExistingContacts(Array.from(contactsMap.values()))
+    } catch (e) {
+      console.error('Failed to load audience stats:', e)
+    }
+  }
 
   async function handleHeaderImageUpload(e) {
     const file = e.target.files?.[0]
@@ -194,7 +272,71 @@ export default function CampaignsPage() {
     })
   }
 
-  const customRecipients = campaignForm.recipientPhones.split(',').map((p) => p.trim()).filter(Boolean)
+  const customRecipients = useMemo(() => {
+    return campaignForm.recipientPhones.split(/[\n,]/).map((p) => p.trim()).filter(Boolean)
+  }, [campaignForm.recipientPhones])
+
+  const filteredExistingContacts = useMemo(() => {
+    if (!contactSearchTerm.trim()) return existingContacts
+    const term = contactSearchTerm.toLowerCase()
+    return existingContacts.filter(c => c.name.toLowerCase().includes(term) || c.phone.includes(term))
+  }, [existingContacts, contactSearchTerm])
+
+  function toggleContactSelection(phone) {
+    const raw = String(phone).replace(/\D/g, '')
+    const currentList = campaignForm.recipientPhones.split(/[\n,]/).map(p => p.trim()).filter(Boolean)
+    let nextList
+    if (currentList.includes(raw)) {
+      nextList = currentList.filter(p => p !== raw)
+    } else {
+      nextList = [...currentList, raw]
+    }
+    setCampaignForm(c => ({ ...c, recipientPhones: nextList.join(', ') }))
+  }
+
+  function selectAllFilteredContacts() {
+    const allPhones = filteredExistingContacts.map(c => c.phone)
+    const currentList = new Set(campaignForm.recipientPhones.split(/[\n,]/).map(p => p.trim()).filter(Boolean))
+    allPhones.forEach(p => currentList.add(p))
+    setCampaignForm(c => ({ ...c, recipientPhones: Array.from(currentList).join(', ') }))
+    toast.success(`Selected ${allPhones.length} contacts`)
+  }
+
+  function deselectAllFilteredContacts() {
+    const filteredPhones = new Set(filteredExistingContacts.map(c => c.phone))
+    const currentList = campaignForm.recipientPhones.split(/[\n,]/).map(p => p.trim()).filter(Boolean)
+    const nextList = currentList.filter(p => !filteredPhones.has(p))
+    setCampaignForm(c => ({ ...c, recipientPhones: nextList.join(', ') }))
+  }
+
+  const dynamicAudienceOptions = useMemo(() => [
+    {
+      value: 'all_customers',
+      label: 'All Customers',
+      description: `${audienceCounts.allCustomers.toLocaleString()} recipients in chat & store`,
+      count: audienceCounts.allCustomers,
+      icon: Users
+    },
+    {
+      value: 'recent_buyers',
+      label: 'Recent Buyers',
+      description: `Last 30 days • ${audienceCounts.recentBuyers.toLocaleString()} buyers`,
+      count: audienceCounts.recentBuyers,
+      icon: Clock3
+    },
+    {
+      value: 'custom',
+      label: 'Custom List',
+      description: customRecipients.length > 0 ? `${customRecipients.length.toLocaleString()} phone numbers loaded` : 'Select contacts, upload CSV, or type numbers',
+      count: customRecipients.length,
+      icon: Wand2
+    }
+  ], [audienceCounts, customRecipients.length])
+
+  const selectedAudienceObj = dynamicAudienceOptions.find(o => o.value === campaignForm.audience) || dynamicAudienceOptions[0]
+  const recipientCount = selectedAudienceObj.count || 0
+  const estimatedCostInr = (recipientCount * 0.78).toFixed(2)
+
   const templateVariableCount = selectedTemplateSlots.length
   const trimmedVariableValues = campaignForm.variables.slice(0, templateVariableCount).map((v) => v.trim())
   const previewText = fillTemplatePreview(campaignForm.templateBody || getTemplateBody(selectedTemplate), trimmedVariableValues)
@@ -272,7 +414,7 @@ export default function CampaignsPage() {
           <div>
             <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-4">Target Audience</label>
             <div className="space-y-3">
-              {audienceOptions.map((opt) => {
+              {dynamicAudienceOptions.map((opt) => {
                 const active = campaignForm.audience === opt.value
                 const Icon = opt.icon
                 return (
@@ -291,47 +433,118 @@ export default function CampaignsPage() {
               })}
             </div>
             {campaignForm.audience === 'custom' && (
-              <div className="mt-4 space-y-4">
+              <div className="mt-4 space-y-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
                 <div className="flex items-center justify-between">
-                   <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Phone List</label>
-                   <button 
-                     onClick={() => document.getElementById('csv-upload').click()}
-                     className="text-[10px] font-bold text-blue-600 hover:underline flex items-center gap-1"
-                   >
-                     <PlusCircle className="w-3 h-3" /> Upload CSV
-                   </button>
-                   <input 
-                     id="csv-upload" 
-                     type="file" 
-                     accept=".csv" 
-                     className="hidden" 
-                     onChange={(e) => {
-                       const file = e.target.files[0]
-                       if (file) {
-                         const reader = new FileReader()
-                         reader.onload = (event) => {
-                           const text = event.target.result
-                           const phones = text.split(/[\n,]/).map(p => p.trim()).filter(p => /^\d+$/.test(p))
-                           if (phones.length > 0) {
-                             setCampaignForm(c => ({...c, recipientPhones: phones.join(', ')}))
-                             toast.success(`Loaded ${phones.length} phone numbers from CSV`)
-                           } else {
-                             toast.error('No valid phone numbers found in CSV')
-                           }
-                         }
-                         reader.readAsText(file)
-                       }
-                     }}
-                   />
+                  <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5 text-blue-600" />
+                    Select Existing Contacts
+                  </span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">
+                    {customRecipients.length} Selected
+                  </span>
                 </div>
-                <Textarea 
-                   placeholder="e.g. 919876543210, 919876543211"
-                   value={campaignForm.recipientPhones}
-                   onChange={e => setCampaignForm(c => ({...c, recipientPhones: e.target.value}))}
-                   className="bg-white rounded-xl resize-none text-[12px] font-mono"
-                   rows={4}
-                />
-                <p className="text-[10px] text-slate-400">Include country code without + (e.g. 91...)</p>
+
+                {/* Search Contacts */}
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                  <Input
+                    placeholder="Search contact name or phone..."
+                    value={contactSearchTerm}
+                    onChange={e => setContactSearchTerm(e.target.value)}
+                    className="pl-8 bg-slate-50 border-none focus:ring-1 focus:ring-blue-600 rounded-lg text-xs h-8"
+                  />
+                </div>
+
+                {/* Quick actions */}
+                <div className="flex items-center justify-between text-[11px] pt-1">
+                  <button
+                    type="button"
+                    onClick={selectAllFilteredContacts}
+                    className="text-blue-600 font-bold hover:underline"
+                  >
+                    Select All ({filteredExistingContacts.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={deselectAllFilteredContacts}
+                    className="text-slate-400 font-medium hover:text-slate-600"
+                  >
+                    Deselect All
+                  </button>
+                </div>
+
+                {/* Scrollable contacts list */}
+                <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1 divide-y divide-slate-100">
+                  {filteredExistingContacts.length === 0 ? (
+                    <div className="text-xs text-slate-400 py-3 text-center">No matching contacts found</div>
+                  ) : filteredExistingContacts.map((contact) => {
+                    const isSelected = customRecipients.includes(contact.phone)
+                    return (
+                      <div
+                        key={contact.id || contact.phone}
+                        onClick={() => toggleContactSelection(contact.phone)}
+                        className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors pt-2 ${isSelected ? 'bg-blue-50/70 border border-blue-200' : 'hover:bg-slate-50'}`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold flex-shrink-0 ${isSelected ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-600'}`}>
+                            {contact.name?.substring(0, 2).toUpperCase() || 'CU'}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-xs font-bold text-slate-900 truncate">{contact.name}</p>
+                            <p className="text-[10px] text-slate-500 font-mono">+{contact.phone}</p>
+                          </div>
+                        </div>
+                        <div className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${isSelected ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-300'}`}>
+                          {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {/* CSV & Direct Input Section */}
+                <div className="pt-2 border-t border-slate-100 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Or Upload CSV / Type</label>
+                    <button 
+                      onClick={() => document.getElementById('csv-upload').click()}
+                      className="text-[10px] font-bold text-blue-600 hover:underline flex items-center gap-1"
+                    >
+                      <PlusCircle className="w-3 h-3" /> Upload CSV
+                    </button>
+                    <input 
+                      id="csv-upload" 
+                      type="file" 
+                      accept=".csv" 
+                      className="hidden" 
+                      onChange={(e) => {
+                        const file = e.target.files[0]
+                        if (file) {
+                          const reader = new FileReader()
+                          reader.onload = (event) => {
+                            const text = event.target.result
+                            const phones = text.split(/[\n,]/).map(p => p.trim()).filter(p => /^\d+$/.test(p))
+                            if (phones.length > 0) {
+                              setCampaignForm(c => ({...c, recipientPhones: phones.join(', ')}))
+                              toast.success(`Loaded ${phones.length} phone numbers from CSV`)
+                            } else {
+                              toast.error('No valid phone numbers found in CSV')
+                            }
+                          }
+                          reader.readAsText(file)
+                        }
+                      }}
+                    />
+                  </div>
+                  <Textarea 
+                    placeholder="e.g. 919876543210, 919876543211"
+                    value={campaignForm.recipientPhones}
+                    onChange={e => setCampaignForm(c => ({...c, recipientPhones: e.target.value}))}
+                    className="bg-slate-50 rounded-xl resize-none text-[11px] font-mono border-none"
+                    rows={3}
+                  />
+                  <p className="text-[10px] text-slate-400">Include country code without + (e.g. 91...)</p>
+                </div>
               </div>
             )}
           </div>
@@ -339,12 +552,14 @@ export default function CampaignsPage() {
           <div className="mt-auto p-4 rounded-xl bg-slate-100/50 border border-slate-200 mt-6 lg:mt-auto">
             <div className="flex justify-between items-center mb-2">
               <span className="text-xs font-semibold">Estimated Cost</span>
-              <span className="text-xs font-bold text-blue-600">$42.80</span>
+              <span className="text-xs font-bold text-blue-600">₹{estimatedCostInr}</span>
             </div>
             <div className="w-full bg-slate-200 rounded-full h-1">
-              <div className="bg-blue-600 h-1 rounded-full w-2/3"></div>
+              <div className="bg-blue-600 h-1 rounded-full" style={{ width: `${Math.min(100, Math.max(5, recipientCount > 0 ? 100 : 0))}%` }}></div>
             </div>
-            <p className="text-[10px] text-slate-500 mt-2 leading-relaxed">Based on current region pricing for 12,482 Marketing messages.</p>
+            <p className="text-[10px] text-slate-500 mt-2 leading-relaxed">
+              Based on current WhatsApp Marketing rate (₹0.78 / msg) for {recipientCount.toLocaleString()} {recipientCount === 1 ? 'recipient' : 'recipients'}.
+            </p>
           </div>
         </section>
 
