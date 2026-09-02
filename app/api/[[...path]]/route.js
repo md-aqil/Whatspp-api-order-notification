@@ -2326,9 +2326,32 @@ async function handleRoute(request, { params }) {
 
     if (route === "/whatsapp/subscribe-webhook" && (method === "POST" || method === "GET")) {
       try {
+        let incomingBody = {};
+        if (method === "POST") {
+          try {
+            incomingBody = await request.json();
+          } catch (e) {}
+        }
+
+        const queryToken = request.nextUrl.searchParams.get("token") || request.nextUrl.searchParams.get("accessToken");
+        const queryWabaId = request.nextUrl.searchParams.get("wabaId") || request.nextUrl.searchParams.get("businessAccountId");
+
         const integrations = await getStoredIntegrations(currentUserId);
         const wa = integrations?.whatsapp;
-        if (!wa?.businessAccountId || !wa?.accessToken) {
+        
+        let accessToken = incomingBody.accessToken || queryToken || wa?.accessToken;
+        let businessAccountId = incomingBody.businessAccountId || queryWabaId || wa?.businessAccountId;
+
+        if (!accessToken || !businessAccountId) {
+          const accounts = await getStoredWhatsAppAccounts(currentUserId);
+          if (accounts && accounts.length > 0) {
+            const acc = await getWhatsAppAccountById(accounts[0].id, currentUserId);
+            if (!accessToken && acc?.accessToken) accessToken = acc.accessToken;
+            if (!businessAccountId && acc?.businessAccountId) businessAccountId = acc.businessAccountId;
+          }
+        }
+
+        if (!businessAccountId || !accessToken) {
           return handleCORS(
             NextResponse.json(
               { error: "WhatsApp Business Account ID and Access Token are required" },
@@ -2338,11 +2361,11 @@ async function handleRoute(request, { params }) {
         }
 
         const subRes = await fetch(
-          `https://graph.facebook.com/v21.0/${wa.businessAccountId}/subscribed_apps`,
+          `https://graph.facebook.com/v21.0/${businessAccountId}/subscribed_apps`,
           {
             method: "POST",
             headers: {
-              Authorization: `Bearer ${wa.accessToken}`,
+              Authorization: `Bearer ${accessToken}`,
               "Content-Type": "application/json",
             },
           }
@@ -2358,6 +2381,24 @@ async function handleRoute(request, { params }) {
             ),
           );
         }
+
+        return handleCORS(
+          NextResponse.json({
+            success: true,
+            message: "WhatsApp Business Account subscribed to Webhooks successfully!",
+            metaResponse: subData,
+          }),
+        );
+      } catch (err) {
+        console.error("Subscribe WABA webhook error:", err);
+        return handleCORS(
+          NextResponse.json(
+            { error: `Failed to subscribe WABA to webhooks: ${err.message}` },
+            { status: 500 },
+          ),
+        );
+      }
+    }
 
         return handleCORS(
           NextResponse.json({
