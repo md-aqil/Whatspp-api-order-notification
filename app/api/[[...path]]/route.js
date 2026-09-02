@@ -3544,6 +3544,186 @@ ${productInfo ? `${productInfo}` : ""}Browse our full collection and find someth
       }
     }
 
+    // Broadcast / Batch message sending endpoint
+    if (route === "/send-whatsapp-batch" && method === "POST") {
+      try {
+        const authenticatedUserId = requireRequestUserId(request);
+        const body = await request.json();
+        const { recipients, message, accountId, imageUrls: rawImageUrls, imageUrl } = body;
+
+        const rawImages = Array.isArray(rawImageUrls)
+          ? rawImageUrls
+          : (imageUrl ? [imageUrl] : []);
+        const imageUrls = rawImages.filter(Boolean);
+
+        if (!Array.isArray(recipients) || recipients.length === 0) {
+          return handleCORS(
+            NextResponse.json(
+              { error: "At least one recipient is required" },
+              { status: 400 },
+            ),
+          );
+        }
+
+        if (!message && imageUrls.length === 0) {
+          return handleCORS(
+            NextResponse.json(
+              { error: "Message or image is required" },
+              { status: 400 },
+            ),
+          );
+        }
+
+        let phoneNumberId, accessToken, businessAccountId;
+
+        if (accountId) {
+          const waAccount = await getWhatsAppAccountById(
+            accountId,
+            authenticatedUserId,
+          );
+          if (!waAccount) {
+            return handleCORS(
+              NextResponse.json(
+                { error: "WhatsApp account not found" },
+                { status: 404 },
+              ),
+            );
+          }
+          phoneNumberId = waAccount.phoneNumberId;
+          accessToken = waAccount.accessToken;
+          businessAccountId = waAccount.businessAccountId || "";
+        } else {
+          const integrations = await getStoredIntegrations(authenticatedUserId);
+          const waIntegration =
+            typeof integrations?.whatsapp === "string"
+              ? JSON.parse(integrations.whatsapp)
+              : integrations?.whatsapp;
+
+          if (!waIntegration?.phoneNumberId || !waIntegration?.accessToken) {
+            return handleCORS(
+              NextResponse.json(
+                {
+                  error:
+                    "WhatsApp not configured. Please add a WhatsApp account first.",
+                },
+                { status: 400 },
+              ),
+            );
+          }
+          phoneNumberId = waIntegration.phoneNumberId;
+          accessToken = waIntegration.accessToken;
+          businessAccountId = waIntegration.businessAccountId || "";
+        }
+
+        await validateWhatsAppPhoneNumberAccess(
+          phoneNumberId,
+          accessToken,
+          businessAccountId,
+        );
+
+        const results = [];
+        let sentCount = 0;
+        let failedCount = 0;
+
+        for (const recipient of recipients) {
+          const phone = typeof recipient === "string" ? recipient : recipient.phone;
+          const name = typeof recipient === "object" ? recipient.name : "";
+
+          if (!phone) continue;
+
+          // Personalize message
+          let personalizedText = message || "";
+          if (personalizedText) {
+            personalizedText = personalizedText
+              .replace(/{name}/gi, name || "there")
+              .replace(/{phone}/gi, phone);
+          }
+
+          try {
+            if (imageUrls.length > 0) {
+              for (let i = 0; i < imageUrls.length; i++) {
+                const currentImg = imageUrls[i];
+                const caption = (i === imageUrls.length - 1 && personalizedText)
+                  ? String(personalizedText).trim()
+                  : undefined;
+
+                const messageData = {
+                  messaging_product: "whatsapp",
+                  to: phone.replace(/\D/g, ""),
+                  type: "image",
+                  image: {
+                    link: currentImg,
+                    caption: caption,
+                  },
+                };
+
+                const res = await sendWhatsAppMessage(
+                  phoneNumberId,
+                  accessToken,
+                  phone,
+                  messageData,
+                );
+
+                await saveOutgoingMessage(
+                  phone,
+                  caption || "[Image]",
+                  res,
+                  authenticatedUserId,
+                );
+              }
+            } else {
+              const messageData = {
+                messaging_product: "whatsapp",
+                to: phone.replace(/\D/g, ""),
+                type: "text",
+                text: {
+                  body: personalizedText,
+                },
+              };
+
+              const res = await sendWhatsAppMessage(
+                phoneNumberId,
+                accessToken,
+                phone,
+                messageData,
+              );
+
+              await saveOutgoingMessage(
+                phone,
+                personalizedText,
+                res,
+                authenticatedUserId,
+              );
+            }
+
+            sentCount++;
+            results.push({ phone, name, success: true });
+          } catch (err) {
+            failedCount++;
+            results.push({ phone, name, success: false, error: err.message });
+          }
+        }
+
+        return handleCORS(
+          NextResponse.json({
+            success: true,
+            total: recipients.length,
+            sentCount,
+            failedCount,
+            results,
+          }),
+        );
+      } catch (error) {
+        console.error("Batch WhatsApp send error:", error);
+        return handleCORS(
+          NextResponse.json(
+            { error: `Batch send failed: ${error.message}` },
+            { status: 500 },
+          ),
+        );
+      }
+    }
+
     // New endpoint to get chats for the dashboard
     if (route === "/chats" && method === "GET") {
       try {
