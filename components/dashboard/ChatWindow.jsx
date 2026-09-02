@@ -428,11 +428,21 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
           </div>
         ) : (
           messages.map((message, index) => {
-            const isCustomer = message.isCustomer ?? (message.sender === 'customer' || message.sender === 'user')
+            const isCustomer = message.isCustomer == 1 || message.isCustomer === true || message.sender === 'customer' || message.sender === 'user'
             const timeStr = message.timestamp ? format(new Date(message.timestamp), 'h:mm a') : ''
-            const messageImages = Array.isArray(message.imageUrls) 
-              ? message.imageUrls 
-              : (message.imageUrl ? [message.imageUrl] : [])
+            
+            let messageImages = []
+            if (Array.isArray(message.imageUrls) && message.imageUrls.length > 0) {
+              messageImages = message.imageUrls
+            } else if (message.imageUrl) {
+              messageImages = [message.imageUrl]
+            } else if (message.image) {
+              messageImages = [message.image]
+            } else if (message.mediaUrl) {
+              messageImages = [message.mediaUrl]
+            }
+
+            const messageText = message.content || message.message || message.text || ''
 
             return (
               <div
@@ -470,9 +480,9 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
                   )}
 
                   {/* Text Content */}
-                  {message.content && (
+                  {messageText && messageText !== '[Image]' && (
                     <p className="text-[13px] md:text-[14px] leading-relaxed whitespace-pre-wrap break-words">
-                      {message.content}
+                      {messageText}
                     </p>
                   )}
 
