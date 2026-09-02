@@ -428,7 +428,7 @@ async function getRecipients(campaign, userId) {
       }
     }
     if (Array.isArray(rec)) {
-      return rec.map(p => typeof p === 'string' ? p.replace(/\D/g, '') : String(p)).filter(Boolean)
+      return rec.map(p => String(p).replace(/\D/g, '')).filter(p => p.length >= 10)
     }
     return []
   }
@@ -442,7 +442,7 @@ async function getRecipients(campaign, userId) {
          AND createdAt >= DATE_SUB(NOW(), INTERVAL 30 DAY)`,
       [userId]
     )
-    const orderPhones = (rows || []).map((row) => String(row.customerPhone).replace(/\D/g, '')).filter(Boolean)
+    const orderPhones = (rows || []).map((row) => String(row.customerPhone).replace(/\D/g, '')).filter(p => p.length >= 10)
     if (orderPhones.length > 0) return orderPhones
     
     // Fallback to recent chats
@@ -454,49 +454,49 @@ async function getRecipients(campaign, userId) {
          AND (timestamp >= DATE_SUB(NOW(), INTERVAL 30 DAY) OR createdAt >= DATE_SUB(NOW(), INTERVAL 30 DAY))`,
       [userId]
     )
-    return (chatRows || []).map((row) => String(row.phone).replace(/\D/g, '')).filter(Boolean)
+    return (chatRows || []).map((row) => String(row.phone).replace(/\D/g, '')).filter(p => p.length >= 10)
   }
 
-  const [rows] = await query(
+  const [chatRows] = await query(
     `SELECT DISTINCT phone
      FROM chats
      WHERE (userId = ? OR userId = 'default' OR userId IS NULL) AND phone IS NOT NULL`,
     [userId]
   )
+  const chatPhones = (chatRows || []).map((row) => String(row.phone).replace(/\D/g, '')).filter(p => p.length >= 10)
 
-  const chatPhones = (rows || []).map((row) => String(row.phone).replace(/\D/g, '')).filter(Boolean)
   const [orderRows] = await query(
     `SELECT DISTINCT customerPhone
      FROM orders
      WHERE (userId = ? OR userId = 'default' OR userId IS NULL) AND customerPhone IS NOT NULL`,
     [userId]
   )
-  const orderPhones = (orderRows || []).map((row) => String(row.customerPhone).replace(/\D/g, '')).filter(Boolean)
+  const orderPhones = (orderRows || []).map((row) => String(row.customerPhone).replace(/\D/g, '')).filter(p => p.length >= 10)
+
   return Array.from(new Set([...chatPhones, ...orderPhones]))
 }
 
-export async function POST(request, { params }) {
+export async function POST(request, props) {
   try {
+    const resolvedParams = await Promise.resolve(props?.params || {})
+    const campaignId = resolvedParams.id || props?.params?.id
     const userId = requireRequestUserId(request)
     await ensureCampaignSchema()
+
+    console.log(`[Send Campaign] Dispatching campaign ${campaignId} for user ${userId}`);
+
     const [campaignRows] = await query(
       `SELECT id, name, template, templateLanguage, templateCategory, templateHeaderImageUrl, campaignType, productIds, message, variables, audience, recipients, status
        FROM campaigns
-       WHERE id = ? AND (userId = ? OR userId = 'default' OR userId IS NULL)`,
-      [params.id, userId]
+       WHERE id = ?`,
+      [campaignId]
     )
 
-    const campaign = campaignRows[0]
+    const campaign = campaignRows?.[0]
 
     if (!campaign) {
+      console.error(`[Send Campaign] Campaign not found: ${campaignId}`);
       return NextResponse.json({ error: 'Campaign not found' }, { status: 404 })
-    }
-
-    if (campaign.status === 'sent') {
-      return NextResponse.json(
-        { error: `Campaign "${campaign.name}" was already sent on this saved record. Create a new campaign to send again.` },
-        { status: 409 }
-      )
     }
 
     let [integrationsRows] = await query(
@@ -557,7 +557,7 @@ export async function POST(request, { params }) {
 
     if (hasProductActions && selectedProducts.length === 0) {
       return NextResponse.json(
-        { error: `Campaign template "${campaign.template}" includes a catalog product button. Campaigns without selected products cannot send this template. Use a template without MPM/catalog buttons or add campaign product selection support.` },
+        { error: `Campaign template "${campaign.template}" includes a catalog product button. Please select at least one product in Catalog Integration.` },
         { status: 400 }
       )
     }
@@ -565,8 +565,10 @@ export async function POST(request, { params }) {
     const productContext = buildProductContext(selectedProducts, integrations.shopify, integrations.whatsapp)
 
     const recipients = await getRecipients(campaign, userId)
+    console.log(`[Send Campaign] Found ${recipients.length} recipients for campaign ${campaign.id}:`, recipients);
+
     if (recipients.length === 0) {
-      return NextResponse.json({ error: 'No recipients found for this campaign' }, { status: 400 })
+      return NextResponse.json({ error: 'No recipients found for this campaign. Please select or add at least one recipient.' }, { status: 400 })
     }
 
     const results = []
@@ -583,6 +585,8 @@ export async function POST(request, { params }) {
           recipientContext
         })
 
+        console.log(`[Send Campaign] Sending template ${campaign.template} to ${recipient}...`);
+
         const result = await sendWhatsAppMessage(
           phoneNumberId,
           accessToken,
@@ -594,6 +598,8 @@ export async function POST(request, { params }) {
             template: messageTemplate
           }
         )
+
+        console.log(`[Send Campaign] Result for ${recipient}:`, result);
 
         await query(
           `INSERT INTO messages (id, userId, campaignId, recipient, phone, message, isCustomer, timestamp, whatsappMessageId, status, template, sentAt, createdAt)
@@ -614,6 +620,7 @@ export async function POST(request, { params }) {
 
         results.push({ recipient, success: true, messageId: result.messages?.[0]?.id || null })
       } catch (error) {
+        console.error(`[Send Campaign] Failed to send to ${recipient}:`, error.message);
         results.push({ recipient, success: false, error: error.message })
       }
     }
@@ -624,8 +631,8 @@ export async function POST(request, { params }) {
       `UPDATE campaigns
        SET status = ?, results = ?, sentAt = CASE WHEN ? = 'sent' THEN NOW() ELSE sentAt END,
            failedAt = CASE WHEN ? = 'failed' THEN NOW() ELSE failedAt END
-       WHERE id = ? AND (userId = ? OR userId = 'default' OR userId IS NULL)`,
-      [anySuccess ? 'sent' : 'failed', JSON.stringify(results), anySuccess ? 'sent' : 'failed', anySuccess ? 'sent' : 'failed', campaign.id, userId]
+       WHERE id = ?`,
+      [anySuccess ? 'sent' : 'failed', JSON.stringify(results), anySuccess ? 'sent' : 'failed', anySuccess ? 'sent' : 'failed', campaign.id]
     )
 
     return NextResponse.json({
@@ -637,7 +644,8 @@ export async function POST(request, { params }) {
     if (error?.status === 401) {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
     }
-    console.error('Error sending campaign:', error)
+
+    console.error('[Send Campaign] Error sending campaign:', error)
     return NextResponse.json({ error: error.message || 'Failed to send campaign' }, { status: 500 })
   }
 }
