@@ -2855,16 +2855,28 @@ async function handleRoute(request, { params }) {
           );
         }
 
-        // Get integrations
+        // Get integrations with fallbacks
         const integrations = await getStoredIntegrations(currentUserId);
+        let phoneNumberId = integrations?.whatsapp?.phoneNumberId;
+        let accessToken = integrations?.whatsapp?.accessToken;
 
-        if (
-          !integrations?.whatsapp?.phoneNumberId ||
-          !integrations?.whatsapp?.accessToken
-        ) {
+        if (!phoneNumberId || !accessToken) {
+          const acc = await queryOne(
+            "SELECT phoneNumberId, accessToken, businessAccountId FROM whatsapp_accounts ORDER BY updatedAt DESC LIMIT 1"
+          );
+          if (acc?.phoneNumberId && acc?.accessToken) {
+            phoneNumberId = acc.phoneNumberId;
+            accessToken = acc.accessToken;
+            if (!integrations.whatsapp) integrations.whatsapp = {};
+            integrations.whatsapp.phoneNumberId = phoneNumberId;
+            integrations.whatsapp.accessToken = accessToken;
+          }
+        }
+
+        if (!phoneNumberId || !accessToken) {
           return handleCORS(
             NextResponse.json(
-              { error: "WhatsApp not configured" },
+              { error: "WhatsApp not configured. Please check your WhatsApp integration settings." },
               { status: 400 },
             ),
           );
@@ -3013,8 +3025,8 @@ async function handleRoute(request, { params }) {
               };
 
               const result = await sendWhatsAppMessage(
-                integrations.whatsapp.phoneNumberId,
-                integrations.whatsapp.accessToken,
+                phoneNumberId,
+                accessToken,
                 formattedRecipient,
                 messageData,
               );

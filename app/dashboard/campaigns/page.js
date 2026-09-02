@@ -105,11 +105,39 @@ export default function CampaignsPage() {
   const [savingCampaign, setSavingCampaign] = useState(false)
   const [sendingCampaignId, setSendingCampaignId] = useState(null)
   const [selectedProducts, setSelectedProducts] = useState([])
+  const [uploadingImage, setUploadingImage] = useState(false)
+  const fileInputRef = useRef(null)
   
   useEffect(() => {
     loadTemplates()
     loadProducts()
   }, [])
+
+  async function handleHeaderImageUpload(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    try {
+      setUploadingImage(true)
+      const formData = new FormData()
+      formData.append('file', file)
+      const res = await fetch('/api/uploads/campaign-image', {
+        method: 'POST',
+        body: formData
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to upload header image')
+      const uploadedUrl = data.url || (data.urls && data.urls[0])
+      if (uploadedUrl) {
+        setCampaignForm(c => ({ ...c, templateHeaderImageUrl: uploadedUrl }))
+        toast.success('Header image uploaded successfully!')
+      }
+    } catch (err) {
+      toast.error(err.message || 'Image upload failed')
+    } finally {
+      setUploadingImage(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
 
   async function loadTemplates() {
     try {
@@ -154,7 +182,16 @@ export default function CampaignsPage() {
   }
 
   function toggleProduct(id) {
-    setSelectedProducts(prev => prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id])
+    setSelectedProducts(prev => {
+      const next = prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id]
+      if (next.length > 0 && selectedTemplate?.components?.some(c => c.format === 'IMAGE')) {
+        const prod = products.find(p => p.id === next[0])
+        if (prod?.image && !campaignForm.templateHeaderImageUrl) {
+          setCampaignForm(c => ({ ...c, templateHeaderImageUrl: prod.image }))
+        }
+      }
+      return next
+    })
   }
 
   const customRecipients = campaignForm.recipientPhones.split(',').map((p) => p.trim()).filter(Boolean)
@@ -440,17 +477,87 @@ export default function CampaignsPage() {
               })}
               
               {selectedTemplate?.components?.some(c => c.format === 'IMAGE') && (
-                 <div className="p-4 rounded-xl bg-white shadow-sm border border-transparent transition-all">
-                      <div className="flex items-center gap-2 mb-3">
-                        <span className="text-xs font-semibold text-slate-500">Image Header URL</span>
-                      </div>
-                      <Input
-                        className="w-full bg-slate-50 border-none focus:ring-1 focus:ring-blue-600 rounded-lg text-sm"
-                        placeholder="https://example.com/image.jpg"
-                        value={campaignForm.templateHeaderImageUrl}
-                        onChange={(e) => setCampaignForm(c => ({...c, templateHeaderImageUrl: e.target.value}))}
+                <div className="p-4 rounded-2xl bg-white shadow-sm border border-slate-100 transition-all space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                      <ImagePlus className="w-4 h-4 text-blue-600" />
+                      Header Image
+                    </span>
+                    {campaignForm.templateHeaderImageUrl && (
+                      <button
+                        onClick={() => setCampaignForm(c => ({ ...c, templateHeaderImageUrl: '' }))}
+                        className="text-[10px] font-bold text-rose-500 hover:text-rose-700 flex items-center gap-0.5"
+                      >
+                        <X className="w-3 h-3" /> Clear
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Hidden File Input */}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    className="hidden"
+                    onChange={handleHeaderImageUpload}
+                  />
+
+                  {/* Image Thumbnail Preview or Upload Dropzone */}
+                  {campaignForm.templateHeaderImageUrl ? (
+                    <div className="relative rounded-xl overflow-hidden border border-slate-200 group bg-slate-50">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={campaignForm.templateHeaderImageUrl}
+                        alt="Header Banner"
+                        className="w-full h-32 object-cover"
                       />
-                 </div>
+                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                        <button
+                          onClick={() => fileInputRef.current?.click()}
+                          disabled={uploadingImage}
+                          className="px-3 py-1.5 bg-white/90 hover:bg-white text-slate-900 rounded-lg text-xs font-bold shadow"
+                        >
+                          Change Photo
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={uploadingImage}
+                      className="w-full border-2 border-dashed border-slate-200 hover:border-blue-500 rounded-xl p-4 flex flex-col items-center justify-center gap-2 text-slate-500 hover:text-blue-600 transition-colors bg-slate-50/50 hover:bg-blue-50/20"
+                    >
+                      {uploadingImage ? (
+                        <div className="flex items-center gap-2 text-xs font-bold text-blue-600">
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Uploading photo...
+                        </div>
+                      ) : (
+                        <>
+                          <ImagePlus className="w-6 h-6 text-blue-500" />
+                          <div className="text-center">
+                            <span className="text-xs font-bold text-slate-800">Upload Header Image</span>
+                            <p className="text-[10px] text-slate-400 mt-0.5">JPG, PNG or WEBP (up to 10MB)</p>
+                          </div>
+                        </>
+                      )}
+                    </button>
+                  )}
+
+                  {/* Fallback Direct URL Input */}
+                  <div className="pt-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                      Or paste direct image URL
+                    </label>
+                    <Input
+                      className="w-full bg-slate-50 border-none focus:ring-1 focus:ring-blue-600 rounded-lg text-xs"
+                      placeholder="https://.../image.jpg"
+                      value={campaignForm.templateHeaderImageUrl}
+                      onChange={(e) => setCampaignForm(c => ({ ...c, templateHeaderImageUrl: e.target.value }))}
+                    />
+                  </div>
+                </div>
               )}
             </div>
           </div>
