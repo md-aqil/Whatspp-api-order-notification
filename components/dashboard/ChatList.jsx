@@ -232,12 +232,20 @@ export function ChatList({
               )}
 
               <div className="relative flex-shrink-0">
-                <div className="w-11 h-11 md:w-12 md:h-12 rounded-2xl overflow-hidden shadow-sm border border-gray-100 dark:border-slate-700">
-                  <img
-                    src={chat.avatar || `https://i.pravatar.cc/150?u=${chat.phone}`}
-                    alt={chat.name}
-                    className="w-full h-full object-cover"
-                  />
+                <div className="w-11 h-11 md:w-12 md:h-12 rounded-2xl overflow-hidden shadow-sm border border-gray-100 dark:border-slate-700 bg-gradient-to-br from-emerald-500 to-teal-700 flex items-center justify-center text-white font-black text-xs md:text-sm uppercase tracking-wider select-none">
+                  {chat.avatar && !chat.avatar.includes('pravatar') ? (
+                    <img
+                      src={chat.avatar}
+                      alt={chat.name}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <span>
+                      {chat.name && !/^\+?\d+$/.test(chat.name.trim())
+                        ? chat.name.trim().split(/\s+/).map(n => n[0]).slice(0, 2).join('').toUpperCase()
+                        : (chat.phone ? chat.phone.slice(-2) : 'WA')}
+                    </span>
+                  )}
                 </div>
                 <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-emerald-500 border-2 border-white dark:border-[#0b0d14] rounded-full"></div>
               </div>

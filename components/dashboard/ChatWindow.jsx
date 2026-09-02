@@ -364,12 +364,20 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
       <div className="flex items-center justify-between bg-white dark:bg-[#0b0d14] border-b border-gray-200 dark:border-slate-800 px-4 md:px-6 py-3 md:py-4 sticky top-0 z-20 shadow-sm">
         <div className="flex items-center">
           <div className="relative">
-            <div className="w-10 h-10 md:w-12 md:h-12 rounded-full overflow-hidden border-2 border-emerald-100 dark:border-emerald-900/30 shadow-sm">
-              <img
-                src={chat.avatar || `https://i.pravatar.cc/150?u=${chat.phone}`}
-                alt={chat.name}
-                className="w-full h-full object-cover"
-              />
+            <div className="w-10 h-10 md:w-12 md:h-12 rounded-full overflow-hidden border-2 border-emerald-100 dark:border-emerald-900/30 shadow-sm bg-gradient-to-br from-emerald-500 to-teal-700 flex items-center justify-center text-white font-black text-sm uppercase tracking-wider select-none">
+              {chat.avatar && !chat.avatar.includes('pravatar') ? (
+                <img
+                  src={chat.avatar}
+                  alt={chat.name}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <span>
+                  {chat.name && !/^\+?\d+$/.test(chat.name.trim())
+                    ? chat.name.trim().split(/\s+/).map(n => n[0]).slice(0, 2).join('').toUpperCase()
+                    : (chat.phone ? chat.phone.slice(-2) : 'WA')}
+                </span>
+              )}
             </div>
             <div className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-white dark:border-[#0b0d14] rounded-full"></div>
           </div>
