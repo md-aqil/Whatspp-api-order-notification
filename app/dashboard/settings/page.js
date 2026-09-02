@@ -1094,9 +1094,9 @@ export default function SettingsPage() {
                                 Active
                               </span>
                             ) : (
-                              <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-black uppercase flex items-center gap-1 animate-pulse">
-                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-                                No Webhooks
+                              <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-black uppercase flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                Connected
                               </span>
                             )
                           ) : (
@@ -1107,9 +1107,9 @@ export default function SettingsPage() {
                       <h4 className="font-bold mb-1">WhatsApp</h4>
                       <p className="text-[11px] text-[#3d618c] mb-2">Business API</p>
                       {integrations.whatsapp.connected && !lastWhatsappWebhook ? (
-                        <div className="flex items-center gap-1 text-[10px] text-amber-600 font-semibold mb-3">
-                          <AlertCircle className="w-3.5 h-3.5" />
-                          <span>Pending webhook setup</span>
+                        <div className="flex items-center gap-1 text-[10px] text-emerald-600 font-semibold mb-3">
+                          <CheckCheck className="w-3.5 h-3.5" />
+                          <span>Ready • Send a message to test</span>
                         </div>
                       ) : (
                         <div className="h-6 mb-1"></div>
