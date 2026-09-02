@@ -2400,24 +2400,6 @@ async function handleRoute(request, { params }) {
       }
     }
 
-        return handleCORS(
-          NextResponse.json({
-            success: true,
-            message: "WhatsApp Business Account subscribed to Webhooks successfully!",
-            metaResponse: subData,
-          }),
-        );
-      } catch (err) {
-        console.error("Subscribe WABA webhook error:", err);
-        return handleCORS(
-          NextResponse.json(
-            { error: `Failed to subscribe WABA to webhooks: ${err.message}` },
-            { status: 500 },
-          ),
-        );
-      }
-    }
-
     // Setup webhooks endpoint
     if (route === "/setup-webhooks" && method === "POST") {
       const integrations = await getStoredIntegrations(currentUserId);
