@@ -2431,7 +2431,6 @@ async function handleRoute(request, { params }) {
     if (route === "/products" && method === "GET") {
       const integrations = await getStoredIntegrations(currentUserId);
       let allProducts = [];
-      let lastError = null;
 
       // 1. Try fetching from Shopify
       let shopifyProducts = [];
@@ -2440,10 +2439,30 @@ async function handleRoute(request, { params }) {
         (integrations?.shopify?.clientSecret || integrations?.shopify?.clientId || integrations?.shopify?.accessToken)
       ) {
         try {
-          shopifyProducts = await fetchShopifyProducts(integrations.shopify);
+          const rawShopify = await fetchShopifyProducts(integrations.shopify);
+          shopifyProducts = (rawShopify || []).map((p) => {
+            const domain = normalizeShopifyDomain(integrations.shopify.shopDomain);
+            const handle = p.handle || "";
+            const url = domain && handle ? `https://${domain}/products/${handle}` : "";
+            const price = p.variants?.[0]?.price || p.price || "";
+            const image = p.image?.src || p.images?.[0]?.src || p.image || "";
+
+            return {
+              id: String(p.id || "").trim(),
+              title: p.title || "Product",
+              description: (p.body_html || p.description || "").replace(/<[^>]*>?/gm, ""),
+              price: String(price),
+              image: image,
+              handle: handle,
+              url: url,
+              retailer_id: String(p.id || "").trim(),
+              metaCatalogProductId: "",
+              metaCatalogMatched: false,
+              source: "shopify",
+            };
+          });
         } catch (shopifyError) {
           console.warn("[/api/products] Shopify fetch warning:", shopifyError.message);
-          lastError = shopifyError;
         }
       }
 
@@ -2455,7 +2474,6 @@ async function handleRoute(request, { params }) {
           metaProducts = mapMetaCatalogProductsToAppProducts(metaCatalogProducts);
         } catch (metaError) {
           console.warn("[/api/products] Meta Catalog fetch warning:", metaError.message);
-          if (!lastError) lastError = metaError;
         }
       }
 
@@ -2463,38 +2481,19 @@ async function handleRoute(request, { params }) {
       if (shopifyProducts.length > 0 && metaProducts.length > 0) {
         allProducts = mergeShopifyProductsWithMetaCatalog(shopifyProducts, metaProducts);
       } else if (shopifyProducts.length > 0) {
-        allProducts = shopifyProducts.map((p) => ({
-          ...p,
-          source: "shopify",
-          metaCatalogMatched: false,
-        }));
+        allProducts = shopifyProducts;
       } else if (metaProducts.length > 0) {
         allProducts = metaProducts;
       }
 
       if (allProducts.length > 0) {
-        await saveStoredProducts(allProducts);
+        await saveStoredProducts(currentUserId, allProducts);
         return handleCORS(NextResponse.json(allProducts));
       }
 
-      if (lastError) {
-        return handleCORS(
-          NextResponse.json(
-            { error: `Could not load products: ${lastError.message}. Please verify your Shopify or Meta Catalog integration.` },
-            { status: 400 },
-          ),
-        );
-      }
-
-      return handleCORS(
-        NextResponse.json(
-          {
-            error:
-              "No products found. Please connect your Shopify store or WhatsApp Meta Catalog in Settings.",
-          },
-          { status: 400 },
-        ),
-      );
+      // 4. Fallback to cached products in database
+      const cached = await getStoredProducts(currentUserId);
+      return handleCORS(NextResponse.json(cached || []));
     }
 
     // Orders endpoint
