@@ -43,7 +43,8 @@ import {
   Instagram,
   Zap,
   QrCode,
-  ExternalLink
+  ExternalLink,
+  CheckCheck
 } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { toast } from 'sonner'
