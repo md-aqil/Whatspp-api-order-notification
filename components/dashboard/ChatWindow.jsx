@@ -414,7 +414,7 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               onKeyPress={handleKeyPress}
-              placeholder={selectedImage ? "Add a caption..." : "Type your message..."}
+              placeholder={selectedImages.length > 0 ? "Add a caption (optional)..." : "Type your message..."}
               className="w-full resize-none border-gray-200 dark:border-slate-700 bg-gray-50/50 dark:bg-slate-800/50 rounded-xl px-4 py-2.5 focus:border-emerald-500 focus:ring-emerald-500/10 text-gray-900 dark:text-white text-[14px] md:text-[15px] min-h-[44px] max-h-[120px] shadow-sm"
               rows="1"
             />
@@ -422,9 +422,9 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
           
           <Button
             onClick={handleSendMessage}
-            disabled={(inputValue.trim() === '' && !selectedImage) || isUploadingImage}
+            disabled={(inputValue.trim() === '' && selectedImages.length === 0) || isUploadingImage}
             className={`h-10 w-10 md:h-12 md:w-12 rounded-full flex-shrink-0 shadow-md transition-all ${
-              (inputValue.trim() === '' && !selectedImage) || isUploadingImage
+              (inputValue.trim() === '' && selectedImages.length === 0) || isUploadingImage
                 ? 'bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-slate-600' 
                 : 'bg-emerald-500 text-white hover:bg-emerald-600'
             }`}
