@@ -2737,6 +2737,185 @@ export function AutomationStudio() {
                           {tplErr && <p role="alert" className="text-[10px] text-amber-500">{tplErr}</p>}
                         </div>
                       )}
+
+                      {/* Live Visual WhatsApp Template Preview & Inline Variable Editor */}
+                      {sel.channel !== 'instagram' && sel.template && (
+                        <div className="space-y-4 pt-2 animate-in fade-in slide-in-from-top-1 duration-200">
+                          {/* Live Visual WhatsApp Preview Bubble */}
+                          <div className="rounded-2xl border border-emerald-500/20 bg-gradient-to-b from-[#0b141a]/90 to-[#0b141a] p-3.5 space-y-2.5 shadow-lg">
+                            <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-emerald-400">
+                              <span className="flex items-center gap-1.5">
+                                <Sparkles className="w-3.5 h-3.5" /> Message Preview
+                              </span>
+                              <span className="text-white/30 lowercase bg-white/5 px-2 py-0.5 rounded-full font-mono">
+                                {sel.templateLanguage || 'en_US'}
+                              </span>
+                            </div>
+
+                            {/* Simulated WhatsApp Bubble */}
+                            <div className="bg-[#005c4b] border border-emerald-400/20 text-white rounded-2xl rounded-tl-sm p-3.5 text-xs shadow-md space-y-2 relative">
+                              {/* Header Component */}
+                              {(() => {
+                                const comps = selTpl?.components || sel.templateComponents || [];
+                                const headerComp = comps.find(c => c.type === 'HEADER');
+                                if (!headerComp) return null;
+
+                                if (headerComp.format === 'IMAGE' || headerComp.format === 'VIDEO') {
+                                  return (
+                                    <div className="rounded-xl overflow-hidden bg-black/30 border border-white/10 p-4 text-center text-[11px] text-emerald-200 font-medium flex items-center justify-center gap-2">
+                                      <span>🖼️</span> Header {headerComp.format}
+                                    </div>
+                                  );
+                                }
+                                return (
+                                  <div className="font-black text-sm text-white/95 pb-1 border-b border-white/10 tracking-tight">
+                                    {headerComp.text || 'Header Title'}
+                                  </div>
+                                );
+                              })()}
+
+                              {/* Body Component with Live Variables */}
+                              <div className="whitespace-pre-wrap leading-relaxed text-[12px] text-white/95 font-normal">
+                                {renderAutomationTemplateBodyPreview(
+                                  selTpl || { components: sel.templateComponents || [] },
+                                  sel.variableMappings || []
+                                ) || sel.message || 'Template message body'}
+                              </div>
+
+                              {/* Footer Component */}
+                              {(() => {
+                                const comps = selTpl?.components || sel.templateComponents || [];
+                                const footerComp = comps.find(c => c.type === 'FOOTER');
+                                if (!footerComp?.text) return null;
+                                return (
+                                  <div className="text-[10px] text-white/50 pt-1 font-medium">
+                                    {footerComp.text}
+                                  </div>
+                                );
+                              })()}
+
+                              {/* Buttons Component */}
+                              {(() => {
+                                const comps = selTpl?.components || sel.templateComponents || [];
+                                const buttonComp = comps.find(c => c.type === 'BUTTONS');
+                                if (!buttonComp?.buttons?.length) return null;
+                                return (
+                                  <div className="pt-2 border-t border-white/10 space-y-1.5">
+                                    {buttonComp.buttons.map((btn, bIdx) => (
+                                      <div
+                                        key={bIdx}
+                                        className="bg-black/20 hover:bg-black/30 border border-white/10 text-emerald-300 text-center py-1.5 px-3 rounded-xl font-bold text-[11px] flex items-center justify-center gap-1.5 shadow-sm"
+                                      >
+                                        <span>{btn.text || btn.url || `Button ${bIdx + 1}`}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                          </div>
+
+                          {/* Interactive Variable Customization */}
+                          {selectedTemplateSlots.length > 0 && (
+                            <div className="space-y-3 pt-1">
+                              <div className="flex items-center justify-between">
+                                <Label className="text-[10px] font-bold uppercase tracking-widest text-emerald-400">
+                                  Configure Template Variables ({selectedTemplateSlots.length})
+                                </Label>
+                              </div>
+
+                              {selectedTemplateSlots.map((slot, i) => {
+                                const mapping = sel.variableMappings?.[i] || {
+                                  mode: 'variable',
+                                  value: slot.example || 'customer_name',
+                                  text: ''
+                                };
+
+                                return (
+                                  <div key={i} className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-3 space-y-2.5">
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-[11px] font-bold text-white/90">
+                                        {`{{${i + 1}}}`} • {slot.label || `Parameter ${i + 1}`}
+                                      </span>
+                                      <div className="flex bg-white/5 p-0.5 rounded-lg border border-white/10">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const newMappings = [...(sel.variableMappings || [])];
+                                            newMappings[i] = { ...(newMappings[i] || {}), mode: 'variable' };
+                                            updStep({ variableMappings: newMappings });
+                                          }}
+                                          className={`px-2 py-0.5 text-[9px] rounded-md font-bold transition-all ${
+                                            mapping.mode !== 'text' ? 'bg-emerald-600 text-white shadow-sm' : 'text-white/40 hover:text-white'
+                                          }`}
+                                        >
+                                          Dynamic Field
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const newMappings = [...(sel.variableMappings || [])];
+                                            newMappings[i] = { ...(newMappings[i] || {}), mode: 'text' };
+                                            updStep({ variableMappings: newMappings });
+                                          }}
+                                          className={`px-2 py-0.5 text-[9px] rounded-md font-bold transition-all ${
+                                            mapping.mode === 'text' ? 'bg-emerald-600 text-white shadow-sm' : 'text-white/40 hover:text-white'
+                                          }`}
+                                        >
+                                          Custom Text
+                                        </button>
+                                      </div>
+                                    </div>
+
+                                    {mapping.mode === 'text' ? (
+                                      <Input
+                                        value={mapping.text ?? mapping.value ?? ''}
+                                        onChange={(e) => {
+                                          const newMappings = [...(sel.variableMappings || [])];
+                                          newMappings[i] = {
+                                            ...(newMappings[i] || {}),
+                                            mode: 'text',
+                                            text: e.target.value,
+                                            value: e.target.value
+                                          };
+                                          updStep({ variableMappings: newMappings });
+                                        }}
+                                        placeholder={slot.example ? `e.g. ${slot.example}` : `Enter custom text for {{${i + 1}}}...`}
+                                        className={inputCls}
+                                      />
+                                    ) : (
+                                      <Select
+                                        value={mapping.value || 'customer_name'}
+                                        onValueChange={(v) => {
+                                          const newMappings = [...(sel.variableMappings || [])];
+                                          newMappings[i] = {
+                                            ...(newMappings[i] || {}),
+                                            mode: 'variable',
+                                            value: v
+                                          };
+                                          updStep({ variableMappings: newMappings });
+                                        }}
+                                      >
+                                        <SelectTrigger className={inputCls}>
+                                          <SelectValue placeholder="Select dynamic field..." />
+                                        </SelectTrigger>
+                                        <SelectContent className="z-[260] bg-[#13151f] border-white/10 max-h-56">
+                                          {activeVariableOptions.map((opt) => (
+                                            <SelectItem key={opt.value} value={opt.value} className="text-white/80 text-xs">
+                                              {opt.label}
+                                            </SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
                       {!sel.template && !msgLocked && (
                         <>
                           {activeTriggerEvent === 'instagram.comment_created' ? (
