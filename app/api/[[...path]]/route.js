@@ -2430,40 +2430,71 @@ async function handleRoute(request, { params }) {
     // Products endpoint
     if (route === "/products" && method === "GET") {
       const integrations = await getStoredIntegrations(currentUserId);
+      let allProducts = [];
+      let lastError = null;
 
-      try {
-        const hasMetaCatalog = !!(
-          integrations?.whatsapp?.catalogId &&
-          integrations?.whatsapp?.accessToken
-        );
-
-        if (!hasMetaCatalog) {
-          return handleCORS(
-            NextResponse.json(
-              {
-                error:
-                  "Meta catalog not configured. Connect WhatsApp catalog access to load products.",
-              },
-              { status: 400 },
-            ),
-          );
+      // 1. Try fetching from Shopify
+      let shopifyProducts = [];
+      if (
+        integrations?.shopify?.shopDomain &&
+        (integrations?.shopify?.clientSecret || integrations?.shopify?.clientId || integrations?.shopify?.accessToken)
+      ) {
+        try {
+          shopifyProducts = await fetchShopifyProducts(integrations.shopify);
+        } catch (shopifyError) {
+          console.warn("[/api/products] Shopify fetch warning:", shopifyError.message);
+          lastError = shopifyError;
         }
+      }
 
-        const metaCatalogProducts = await fetchMetaCatalogProducts(
-          integrations.whatsapp,
-        );
-        const metaProducts =
-          mapMetaCatalogProductsToAppProducts(metaCatalogProducts);
-        await saveStoredProducts(metaProducts);
-        return handleCORS(NextResponse.json(metaProducts));
-      } catch (error) {
+      // 2. Try fetching from Meta Catalog
+      let metaProducts = [];
+      if (integrations?.whatsapp?.catalogId && integrations?.whatsapp?.accessToken) {
+        try {
+          const metaCatalogProducts = await fetchMetaCatalogProducts(integrations.whatsapp);
+          metaProducts = mapMetaCatalogProductsToAppProducts(metaCatalogProducts);
+        } catch (metaError) {
+          console.warn("[/api/products] Meta Catalog fetch warning:", metaError.message);
+          if (!lastError) lastError = metaError;
+        }
+      }
+
+      // 3. Combine / fallback
+      if (shopifyProducts.length > 0 && metaProducts.length > 0) {
+        allProducts = mergeShopifyProductsWithMetaCatalog(shopifyProducts, metaProducts);
+      } else if (shopifyProducts.length > 0) {
+        allProducts = shopifyProducts.map((p) => ({
+          ...p,
+          source: "shopify",
+          metaCatalogMatched: false,
+        }));
+      } else if (metaProducts.length > 0) {
+        allProducts = metaProducts;
+      }
+
+      if (allProducts.length > 0) {
+        await saveStoredProducts(allProducts);
+        return handleCORS(NextResponse.json(allProducts));
+      }
+
+      if (lastError) {
         return handleCORS(
           NextResponse.json(
-            { error: `Failed to fetch products: ${error.message}` },
+            { error: `Could not load products: ${lastError.message}. Please verify your Shopify or Meta Catalog integration.` },
             { status: 400 },
           ),
         );
       }
+
+      return handleCORS(
+        NextResponse.json(
+          {
+            error:
+              "No products found. Please connect your Shopify store or WhatsApp Meta Catalog in Settings.",
+          },
+          { status: 400 },
+        ),
+      );
     }
 
     // Orders endpoint
