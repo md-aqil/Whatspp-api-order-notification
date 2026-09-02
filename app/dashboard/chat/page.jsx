@@ -127,8 +127,13 @@ export default function DashboardChatPage() {
     ))
   }
 
-  const handleSendMessage = async (messageText, imageUrl = null) => {
-    if (!activeChat || (!messageText?.trim() && !imageUrl)) return
+  const handleSendMessage = async (messageText, imageUrlsParam = null) => {
+    const rawImages = Array.isArray(imageUrlsParam)
+      ? imageUrlsParam
+      : (imageUrlsParam ? [imageUrlsParam] : [])
+    const hasImages = rawImages.length > 0
+
+    if (!activeChat || (!messageText?.trim() && !hasImages)) return
 
     try {
       const response = await fetch('/api/send-whatsapp-message', {
@@ -137,7 +142,8 @@ export default function DashboardChatPage() {
         body: JSON.stringify({
           to: activeChat.phone,
           message: messageText,
-          imageUrl: imageUrl,
+          imageUrls: rawImages,
+          imageUrl: rawImages[0] || null,
           accountId: selectedAccountId
         })
       })
@@ -158,7 +164,7 @@ export default function DashboardChatPage() {
       // Update chat list last message
       setChats(prev => prev.map(chat => 
         chat.phone === activeChat.phone 
-          ? { ...chat, lastMessage: messageText || '📷 Image', timestamp: new Date() }
+          ? { ...chat, lastMessage: messageText || (hasImages ? `📷 ${rawImages.length} Image(s)` : ''), timestamp: new Date() }
           : chat
       ))
       

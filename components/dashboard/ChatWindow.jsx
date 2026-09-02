@@ -11,7 +11,7 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
   const [inputValue, setInputValue] = useState('')
   const [suggestions, setSuggestions] = useState([])
   const [loadingSuggestions, setLoadingSuggestions] = useState(false)
-  const [selectedImage, setSelectedImage] = useState(null)
+  const [selectedImages, setSelectedImages] = useState([])
   const [isUploadingImage, setIsUploadingImage] = useState(false)
   const fileInputRef = useRef(null)
   const messagesEndRef = useRef(null)
@@ -23,11 +23,9 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
 
   // Initialize sound effects with high-quality sources
   useEffect(() => {
-    // Use high-quality professional notification sounds
-    incomingSoundRef.current = new Audio('https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3') // Clean "Ding"
-    outgoingSoundRef.current = new Audio('https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3') // Soft "Whoosh"
+    incomingSoundRef.current = new Audio('https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3')
+    outgoingSoundRef.current = new Audio('https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3')
     
-    // Cleanup
     return () => {
       incomingSoundRef.current = null
       outgoingSoundRef.current = null
@@ -39,10 +37,8 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
     let intervalId;
     const originalTitle = document.title;
     
-    // Check if the last message was from a customer AND we are not the active tab
     const lastMessage = messages[messages.length - 1];
     if (lastMessage?.isCustomer === true && !isInitialRenderRef.current) {
-      // Blink title if tab is hidden
       if (document.hidden) {
         let showNotification = true;
         intervalId = setInterval(() => {
@@ -52,7 +48,6 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
       }
     }
 
-    // Reset title when tab becomes visible
     const handleVisibilityChange = () => {
       if (!document.hidden) {
         document.title = originalTitle;
@@ -60,34 +55,29 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
       }
     };
 
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
     return () => {
       if (intervalId) clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
       document.title = originalTitle;
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    }
-  }, [messages])
+    };
+  }, [messages]);
 
-  // Scroll to bottom
   const scrollToBottom = (behavior = 'smooth') => {
     messagesEndRef.current?.scrollIntoView({ behavior })
   }
 
-  // Handle scrolling when messages change
   useEffect(() => {
     const currentMessageCount = messages.length
     
-    // On initial render, always scroll to bottom
     if (isInitialRenderRef.current) {
       scrollToBottom('auto')
       isInitialRenderRef.current = false
     } 
-    // Logic for new messages
     else if (currentMessageCount > prevMessageCountRef.current) {
       const lastMessage = messages[messages.length - 1]
       
-      // Play sound
       if (lastMessage?.isCustomer) {
         incomingSoundRef.current?.play().catch(e => console.log('Audio play blocked:', e))
       } else {
@@ -97,14 +87,7 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
       scrollToBottom('smooth')
     }
     
-    // Update the previous message count
-    prevMessageCountRef.current = currentMessageCount
-
-    // Fetch AI suggestions when a new customer message arrives or chat changes
-    const lastMessage = messages[messages.length - 1]
-    if (lastMessage?.isCustomer) {
-      fetchSuggestions()
-    }
+    prevMessageCountRef.current = messages.length
   }, [messages])
 
   useEffect(() => {
@@ -132,42 +115,60 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
     }
   }
 
-  const handleImageFileChange = (e) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+  const handleImageFilesChange = (e) => {
+    const files = Array.from(e.target.files || [])
+    if (files.length === 0) return
 
-    if (!file.type.startsWith('image/')) {
-      toast.error('Please select a valid image file (JPG, PNG, WebP)')
-      return
+    const newEntries = []
+    for (const file of files) {
+      if (!file.type.startsWith('image/')) {
+        toast.error(`${file.name} is not a supported image file`)
+        continue
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        toast.error(`${file.name} exceeds the 10MB limit`)
+        continue
+      }
+      const previewUrl = URL.createObjectURL(file)
+      newEntries.push({ file, previewUrl })
     }
 
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error('Image must be under 5MB')
-      return
+    if (newEntries.length > 0) {
+      setSelectedImages((prev) => [...prev, ...newEntries])
     }
-
-    const previewUrl = URL.createObjectURL(file)
-    setSelectedImage({ file, previewUrl })
     e.target.value = ''
   }
 
-  const removeSelectedImage = () => {
-    if (selectedImage?.previewUrl) {
-      URL.revokeObjectURL(selectedImage.previewUrl)
-    }
-    setSelectedImage(null)
+  const removeSelectedImage = (indexToRemove) => {
+    setSelectedImages((prev) => {
+      const item = prev[indexToRemove]
+      if (item?.previewUrl) {
+        URL.revokeObjectURL(item.previewUrl)
+      }
+      return prev.filter((_, idx) => idx !== indexToRemove)
+    })
+  }
+
+  const clearAllSelectedImages = () => {
+    selectedImages.forEach((img) => {
+      if (img.previewUrl) URL.revokeObjectURL(img.previewUrl)
+    })
+    setSelectedImages([])
   }
 
   const handleSendMessage = async () => {
-    if (inputValue.trim() === '' && !selectedImage) return
+    if (inputValue.trim() === '' && selectedImages.length === 0) return
 
-    let uploadedImageUrl = null
+    let uploadedUrls = []
 
-    if (selectedImage?.file) {
+    if (selectedImages.length > 0) {
       setIsUploadingImage(true)
       try {
         const formData = new FormData()
-        formData.append('file', selectedImage.file)
+        selectedImages.forEach((item) => {
+          formData.append('files', item.file)
+        })
+
         const uploadRes = await fetch('/api/uploads/campaign-image', {
           method: 'POST',
           body: formData
@@ -175,11 +176,11 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
 
         if (!uploadRes.ok) {
           const errData = await uploadRes.json()
-          throw new Error(errData.error || 'Failed to upload image')
+          throw new Error(errData.error || 'Failed to upload image(s)')
         }
 
         const uploadData = await uploadRes.json()
-        uploadedImageUrl = uploadData.url
+        uploadedUrls = uploadData.urls || (uploadData.url ? [uploadData.url] : [])
       } catch (err) {
         toast.error(`Image upload failed: ${err.message}`)
         setIsUploadingImage(false)
@@ -190,10 +191,10 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
     }
 
     const textToSend = inputValue.trim()
-    removeSelectedImage()
+    clearAllSelectedImages()
     setInputValue('')
 
-    onSendMessage(textToSend, uploadedImageUrl)
+    onSendMessage(textToSend, uploadedUrls)
   }
 
   const handleKeyPress = (e) => {
@@ -217,13 +218,14 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
 
   return (
     <div className="flex h-full flex-col bg-[#f9fafb] dark:bg-[#0b0d14] overflow-hidden">
-      {/* Hidden File Input */}
+      {/* Hidden File Input for Multi-Images */}
       <input
         type="file"
         ref={fileInputRef}
+        multiple
         accept="image/jpeg,image/png,image/webp"
         className="hidden"
-        onChange={handleImageFileChange}
+        onChange={handleImageFilesChange}
       />
 
       {/* Chat Header */}
@@ -344,28 +346,50 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
         </div>
       )}
 
-      {/* Image Attachment Preview Bar */}
-      {selectedImage && (
-        <div className="bg-white/95 dark:bg-[#11131d]/95 backdrop-blur px-4 md:px-6 py-2 border-t border-emerald-200 dark:border-emerald-800/40 animate-in slide-in-from-bottom-2">
+      {/* Multi-Image Attachment Preview Gallery */}
+      {selectedImages.length > 0 && (
+        <div className="bg-white/95 dark:bg-[#11131d]/95 backdrop-blur px-4 md:px-6 py-2.5 border-t border-emerald-200 dark:border-emerald-800/40 animate-in slide-in-from-bottom-2">
           <div className="max-w-4xl mx-auto flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="relative w-12 h-12 rounded-lg overflow-hidden border border-emerald-300 dark:border-emerald-700 shadow-sm">
-                <img src={selectedImage.previewUrl} alt="Preview" className="w-full h-full object-cover" />
-              </div>
-              <div>
-                <p className="text-xs font-bold text-gray-800 dark:text-gray-200">Image Attached</p>
-                <p className="text-[11px] text-gray-500">Will be sent with your message</p>
-              </div>
+            <div className="flex items-center gap-2 overflow-x-auto py-1 max-w-[80%]">
+              {selectedImages.map((img, index) => (
+                <div key={index} className="relative group flex-shrink-0">
+                  <div className="w-14 h-14 rounded-lg overflow-hidden border-2 border-emerald-400 dark:border-emerald-600 shadow-sm bg-black/5">
+                    <img src={img.previewUrl} alt={`Upload preview ${index + 1}`} className="w-full h-full object-cover" />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeSelectedImage(index)}
+                    className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full p-0.5 shadow hover:bg-red-600 transition-colors"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => fileInputRef.current?.click()}
+                className="h-14 w-14 rounded-lg border-2 border-dashed border-emerald-300 dark:border-emerald-700 flex flex-col items-center justify-center p-0 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 flex-shrink-0"
+              >
+                <span className="text-lg font-bold leading-none">+</span>
+                <span className="text-[9px] font-medium">Add</span>
+              </Button>
             </div>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={removeSelectedImage}
-              className="h-8 w-8 p-0 rounded-full text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"
-            >
-              <X className="w-4 h-4" />
-            </Button>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                {selectedImages.length} image{selectedImages.length > 1 ? 's' : ''}
+              </span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={clearAllSelectedImages}
+                className="text-xs text-red-500 hover:text-red-700 px-2 py-1 h-auto"
+              >
+                Clear all
+              </Button>
+            </div>
           </div>
         </div>
       )}

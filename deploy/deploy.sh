@@ -26,6 +26,8 @@ node scripts/setup-mysql-tables.js || true
 # Copy standalone output (DO THIS BEFORE RESTARTING)
 echo "[5/6] Preparing standalone output..."
 node scripts/prepare-standalone.js
+mkdir -p public/campaign-uploads .next/standalone/public/campaign-uploads || true
+chmod -R 777 public/campaign-uploads .next/standalone/public/campaign-uploads 2>/dev/null || true
 
 # Restart app and worker with systemd
 echo "[6/6] Restarting app and worker..."

@@ -3368,12 +3368,17 @@ ${productInfo ? `${productInfo}` : ""}Browse our full collection and find someth
       try {
         const authenticatedUserId = requireRequestUserId(request);
         const body = await request.json();
-        const { to, message, accountId } = body;
+        const { to, message, accountId, imageUrl, imageUrls: rawImageUrls } = body;
 
-        if (!to || !message) {
+        const rawImages = Array.isArray(rawImageUrls)
+          ? rawImageUrls
+          : (imageUrl ? [imageUrl] : []);
+        const imageUrls = rawImages.filter(Boolean);
+
+        if (!to || (!message && imageUrls.length === 0)) {
           return handleCORS(
             NextResponse.json(
-              { error: "Recipient and message are required" },
+              { error: "Recipient and message or image are required" },
               { status: 400 },
             ),
           );
@@ -3428,17 +3433,67 @@ ${productInfo ? `${productInfo}` : ""}Browse our full collection and find someth
           businessAccountId,
         );
 
-        // Prepare message data
+        if (imageUrls.length > 0) {
+          let lastResult = null;
+          let lastSaved = null;
+
+          for (let i = 0; i < imageUrls.length; i++) {
+            const currentImg = imageUrls[i];
+            const caption = (i === imageUrls.length - 1 && message) ? String(message).trim() : undefined;
+            const messageData = {
+              messaging_product: "whatsapp",
+              to: to.replace(/\D/g, ""),
+              type: "image",
+              image: {
+                link: currentImg,
+                caption: caption,
+              },
+            };
+
+            const result = await sendWhatsAppMessage(
+              phoneNumberId,
+              accessToken,
+              to,
+              messageData,
+            );
+
+            const savedText = caption || "[Image]";
+            lastSaved = await saveOutgoingMessage(
+              to,
+              savedText,
+              result,
+              authenticatedUserId,
+            );
+            lastResult = result;
+          }
+
+          return handleCORS(
+            NextResponse.json({
+              success: true,
+              message: {
+                id: lastSaved.id,
+                text: lastSaved.message,
+                imageUrl: imageUrls[0],
+                imageUrls: imageUrls,
+                isCustomer: false,
+                timestamp: lastSaved.timestamp,
+                phone: lastSaved.phone,
+              },
+              messageId: lastResult?.messages?.[0]?.id,
+            }),
+          );
+        }
+
+        // Send Text Message
         const messageData = {
           messaging_product: "whatsapp",
-          to: to.replace(/\D/g, ""), // Remove any non-digit characters
+          to: to.replace(/\D/g, ""),
           type: "text",
           text: {
             body: message,
           },
         };
 
-        // Send message via WhatsApp API
         const result = await sendWhatsAppMessage(
           phoneNumberId,
           accessToken,
@@ -3446,7 +3501,6 @@ ${productInfo ? `${productInfo}` : ""}Browse our full collection and find someth
           messageData,
         );
 
-        // Save message to database
         const savedMessage = await saveOutgoingMessage(
           to,
           message,
@@ -3454,19 +3508,17 @@ ${productInfo ? `${productInfo}` : ""}Browse our full collection and find someth
           authenticatedUserId,
         );
 
-        // Return the saved message object
-        const messageResponse = {
-          id: savedMessage.id,
-          text: savedMessage.message,
-          isCustomer: savedMessage.isCustomer,
-          timestamp: savedMessage.timestamp,
-          phone: savedMessage.phone,
-        };
-
         return handleCORS(
           NextResponse.json({
             success: true,
-            message: messageResponse,
+            message: {
+              id: savedMessage.id,
+              text: savedMessage.message,
+              imageUrl: null,
+              isCustomer: savedMessage.isCustomer,
+              timestamp: savedMessage.timestamp,
+              phone: savedMessage.phone,
+            },
             messageId: result.messages?.[0]?.id,
           }),
         );
