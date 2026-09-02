@@ -16,8 +16,10 @@ jobs:
           username: aqil
           password: ${{ secrets.SSH_PASSWORD }}
           script: |
+            echo "${{ secrets.SSH_PASSWORD }}" | sudo -S chown -R aqil:aqil /var/www/lcsw
             cd /var/www/lcsw
             git fetch origin main
             git reset --hard origin/main
             chmod +x deploy/deploy.sh
+            export SUDO_PASS="${{ secrets.SSH_PASSWORD }}"
             ./deploy/deploy.sh

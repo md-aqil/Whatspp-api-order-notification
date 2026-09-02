@@ -29,8 +29,12 @@ node scripts/prepare-standalone.js
 
 # Restart app and worker with systemd
 echo "[6/6] Restarting app and worker..."
-sudo /usr/bin/systemctl restart "$SERVICE_NAME" || sudo systemctl restart "$SERVICE_NAME" || true
-sudo /usr/bin/systemctl restart "$SERVICE_NAME-worker" || sudo systemctl restart "$SERVICE_NAME-worker" || true
+if [ -n "$SUDO_PASS" ]; then
+  echo "$SUDO_PASS" | sudo -S systemctl restart "$SERVICE_NAME" || true
+  echo "$SUDO_PASS" | sudo -S systemctl restart "$SERVICE_NAME-worker" || true
+else
+  sudo systemctl restart "$SERVICE_NAME" || true
+  sudo systemctl restart "$SERVICE_NAME-worker" || true
+fi
 
 echo "=== Deployment complete! ==="
-sudo /usr/bin/systemctl status "$SERVICE_NAME" --no-pager || true
