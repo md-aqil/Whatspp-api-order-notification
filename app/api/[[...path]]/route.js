@@ -418,13 +418,14 @@ async function getStoredWebhooks(type = "shopify", userId = "default") {
 async function getWebhookLogs(limit = 10, userId = "default") {
   await ensureSettingsTables();
 
+  const normalizedUserId = String(userId || "default");
   const [rows] = await getPool().query(
     `SELECT id, type, topic, payload, receivedAt, createdAt
      FROM webhook_logs
-     WHERE userId = ?
+     WHERE userId = ? OR userId = 'default' OR userId IS NULL
      ORDER BY receivedAt DESC
-     LIMIT ${parseInt(limit, 10) || 10}`,
-    [String(userId || "default")],
+     LIMIT ${parseInt(limit, 10) || 20}`,
+    [normalizedUserId],
   );
 
   return rows || [];
@@ -1287,12 +1288,8 @@ async function handleRoute(request, { params }) {
                       const savedMessage = await saveIncomingMessage(
                         message,
                         incomingUserId,
+                        contact
                       );
-
-                      if (savedMessage.duplicate) {
-                        console.log(`[WhatsApp Webhook] Ignoring duplicate message: ${message.id}`);
-                        continue;
-                      }
 
                       const context = buildIncomingWhatsAppAutomationContext(
                         message,
@@ -3463,6 +3460,8 @@ ${productInfo ? `${productInfo}` : ""}Browse our full collection and find someth
               savedText,
               result,
               authenticatedUserId,
+              currentImg,
+              imageUrls,
             );
             lastResult = result;
           }

@@ -27,7 +27,7 @@ export async function GET(request) {
     const [rows] = await query(
       `SELECT id, type, topic, payload, receivedAt, createdAt
        FROM webhook_logs
-       WHERE userId = ?
+       WHERE userId = ? OR userId = 'default' OR userId IS NULL
        ORDER BY receivedAt DESC
        LIMIT ?`,
       [String(userId || 'default'), limit]
