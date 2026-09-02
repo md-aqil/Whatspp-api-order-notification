@@ -42,7 +42,8 @@ import {
   Save,
   Instagram,
   Zap,
-  QrCode
+  QrCode,
+  ExternalLink
 } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { toast } from 'sonner'
@@ -601,7 +602,12 @@ export default function SettingsPage() {
       const data = await res.json()
       setConnectToken(data.token)
       const targetQuery = target !== 'all' ? `?service=${target}` : ''
-      setConnectUrl(`${data.connectUrl}${targetQuery}`)
+      let finalUrl = data.connectUrl
+      const publicBase = process.env.NEXT_PUBLIC_BASE_URL || baseUrl
+      if (publicBase && finalUrl && (finalUrl.includes('localhost') || finalUrl.includes('127.0.0.1'))) {
+        finalUrl = `${publicBase.replace(/\/$/, '')}/connect/${data.token}`
+      }
+      setConnectUrl(`${finalUrl}${targetQuery}`)
     } catch (e) {
       toast.error('Could not start QR connect session')
       setConnectOpen(false)
@@ -1068,74 +1074,52 @@ export default function SettingsPage() {
           <div className="bg-white p-8 rounded-2xl shadow-sm border-none ring-1 ring-black/[0.03]">
             <div className="flex items-center justify-between mb-8 gap-3 flex-wrap">
               <h3 className="text-xl font-bold font-headline">Service Connections</h3>
-              <div className="flex items-center gap-3">
-                <Button
-                  onClick={openConnectDialog}
-                  className="bg-[#005cc0] hover:bg-[#004a9e] text-white gap-2"
-                >
-                  <QrCode className="w-4 h-4" />
-                  Connect via QR
-                </Button>
-                <div className="text-[#3d618c] text-sm font-semibold">{activeWebhookCount} active endpoints</div>
-              </div>
+              <div className="text-[#3d618c] text-sm font-semibold">{activeWebhookCount} active endpoints</div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {/* WhatsApp */}
               <Dialog open={whatsappDialogOpen} onOpenChange={setWhatsappDialogOpen}>
-                <div className="flex flex-col gap-4">
-                  <div className={`p-5 rounded-xl transition-colors group bg-[#f8f9ff] hover:bg-[#eff4ff]`}>
-                    <div className="flex justify-between items-start mb-4">
-                      <div className="w-10 h-10 rounded-lg bg-green-50 flex items-center justify-center">
-                        <MessageCircle className="text-green-600 w-5 h-5" />
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {integrations.whatsapp.connected ? (
-                          lastWhatsappWebhook ? (
-                            <span className="px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-[10px] font-black uppercase flex items-center gap-1">
-                              <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
-                              Active
-                            </span>
+                <DialogTrigger asChild>
+                  <div className="flex flex-col gap-4 cursor-pointer">
+                    <div className="p-5 rounded-xl transition-colors group bg-[#f8f9ff] hover:bg-[#eff4ff]">
+                      <div className="flex justify-between items-start mb-4">
+                        <div className="w-10 h-10 rounded-lg bg-green-50 flex items-center justify-center">
+                          <MessageCircle className="text-green-600 w-5 h-5" />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {integrations.whatsapp.connected ? (
+                            lastWhatsappWebhook ? (
+                              <span className="px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-[10px] font-black uppercase flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+                                Active
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-black uppercase flex items-center gap-1 animate-pulse">
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                                No Webhooks
+                              </span>
+                            )
                           ) : (
-                            <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-black uppercase flex items-center gap-1 animate-pulse">
-                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-                              No Webhooks
-                            </span>
-                          )
-                        ) : (
-                          <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[10px] font-black uppercase">Inactive</span>
-                        )}
+                            <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[10px] font-black uppercase">Inactive</span>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                    <h4 className="font-bold mb-1">WhatsApp</h4>
-                    <p className="text-[11px] text-[#3d618c] mb-2">Business API</p>
-                    {integrations.whatsapp.connected && !lastWhatsappWebhook ? (
-                      <div className="flex items-center gap-1 text-[10px] text-amber-600 font-semibold mb-3">
-                        <AlertCircle className="w-3.5 h-3.5" />
-                        <span>Pending webhook setup</span>
+                      <h4 className="font-bold mb-1">WhatsApp</h4>
+                      <p className="text-[11px] text-[#3d618c] mb-2">Business API</p>
+                      {integrations.whatsapp.connected && !lastWhatsappWebhook ? (
+                        <div className="flex items-center gap-1 text-[10px] text-amber-600 font-semibold mb-3">
+                          <AlertCircle className="w-3.5 h-3.5" />
+                          <span>Pending webhook setup</span>
+                        </div>
+                      ) : (
+                        <div className="h-6 mb-1"></div>
+                      )}
+                      <div className="w-full py-2 rounded-lg bg-[#e5eeff] text-[#005cc0] font-bold text-xs group-hover:bg-[#005cc0] group-hover:text-white transition-all text-center">
+                        Configure
                       </div>
-                    ) : (
-                      <div className="h-6 mb-1"></div>
-                    )}
-                    <div className="grid grid-cols-2 gap-2 mt-2">
-                      <button
-                        type="button"
-                        onClick={() => openConnectDialog('whatsapp')}
-                        className="py-2 px-3 rounded-lg bg-emerald-600 text-white font-bold text-xs hover:bg-emerald-700 transition-all flex items-center justify-center gap-1.5 shadow-sm"
-                      >
-                        <QrCode className="w-3.5 h-3.5" />
-                        <span>Scan QR</span>
-                      </button>
-                      <DialogTrigger asChild>
-                        <button
-                          type="button"
-                          className="py-2 px-3 rounded-lg bg-[#e5eeff] text-[#005cc0] font-bold text-xs hover:bg-[#005cc0] hover:text-white transition-all text-center"
-                        >
-                          Manual
-                        </button>
-                      </DialogTrigger>
                     </div>
                   </div>
-                </div>
+                </DialogTrigger>
                 <DialogContent className="sm:max-w-[500px]">
                   <DialogHeader>
                     <DialogTitle>WhatsApp Configuration</DialogTitle>
@@ -1147,10 +1131,10 @@ export default function SettingsPage() {
                     <div>
                       <h5 className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
                         <QrCode className="w-4 h-4 text-emerald-600" />
-                        Quick Connect via QR
+                        Quick Connect via QR / Direct Link
                       </h5>
                       <p className="text-[11px] text-emerald-800 mt-0.5">
-                        Log in to Meta on your phone/iPad without manually copying API tokens.
+                        Scan with your phone/iPad or click to connect on this PC without copying tokens.
                       </p>
                     </div>
                     <Button
@@ -1163,7 +1147,7 @@ export default function SettingsPage() {
                       className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shrink-0 gap-1.5 shadow-sm"
                     >
                       <QrCode className="w-3.5 h-3.5" />
-                      Scan QR
+                      Connect
                     </Button>
                   </div>
 
@@ -1189,42 +1173,29 @@ export default function SettingsPage() {
 
               {/* Shopify */}
               <Dialog open={shopifyDialogOpen} onOpenChange={setShopifyDialogOpen}>
-                <div className="flex flex-col gap-4">
-                  <div className={`p-5 rounded-xl transition-colors group ${integrations.shopify.connected ? 'border-2 border-dashed border-[#005cc0]/20 bg-[#f8f9ff]' : 'bg-[#f8f9ff] hover:bg-[#eff4ff]'}`}>
-                    <div className="flex justify-between items-start mb-4">
-                      <div className="w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center">
-                        <Store className="text-[#005cc0] w-5 h-5" />
+                <DialogTrigger asChild>
+                  <div className="flex flex-col gap-4 cursor-pointer">
+                    <div className={`p-5 rounded-xl transition-colors group ${integrations.shopify.connected ? 'border-2 border-dashed border-[#005cc0]/20 bg-[#f8f9ff]' : 'bg-[#f8f9ff] hover:bg-[#eff4ff]'}`}>
+                      <div className="flex justify-between items-start mb-4">
+                        <div className="w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center">
+                          <Store className="text-[#005cc0] w-5 h-5" />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {integrations.shopify.connected ? (
+                            <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[10px] font-black uppercase">Connected</span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[10px] font-black uppercase">Inactive</span>
+                          )}
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        {integrations.shopify.connected ? (
-                          <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[10px] font-black uppercase">Connected</span>
-                        ) : (
-                          <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[10px] font-black uppercase">Inactive</span>
-                        )}
+                      <h4 className="font-bold mb-1">Shopify</h4>
+                      <p className="text-[11px] text-[#3d618c] mb-4">eCommerce Sync</p>
+                      <div className="w-full py-2 rounded-lg bg-[#e5eeff] text-[#005cc0] font-bold text-xs group-hover:bg-[#005cc0] group-hover:text-white transition-all text-center">
+                        Manage
                       </div>
-                    </div>
-                    <h4 className="font-bold mb-1">Shopify</h4>
-                    <p className="text-[11px] text-[#3d618c] mb-4">eCommerce Sync</p>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => openConnectDialog('shopify')}
-                        className="py-2 px-3 rounded-lg bg-[#005cc0] text-white font-bold text-xs hover:bg-[#004a9e] transition-all flex items-center justify-center gap-1.5 shadow-sm"
-                      >
-                        <QrCode className="w-3.5 h-3.5" />
-                        <span>Scan QR</span>
-                      </button>
-                      <DialogTrigger asChild>
-                        <button
-                          type="button"
-                          className="py-2 px-3 rounded-lg bg-[#e5eeff] text-[#005cc0] font-bold text-xs hover:bg-[#005cc0] hover:text-white transition-all text-center"
-                        >
-                          Manage
-                        </button>
-                      </DialogTrigger>
                     </div>
                   </div>
-                </div>
+                </DialogTrigger>
                 <DialogContent className="sm:max-w-[500px]">
                   <DialogHeader>
                     <DialogTitle>Shopify Configuration</DialogTitle>
@@ -1236,10 +1207,10 @@ export default function SettingsPage() {
                     <div>
                       <h5 className="text-xs font-bold text-blue-950 flex items-center gap-1.5">
                         <QrCode className="w-4 h-4 text-[#005cc0]" />
-                        Quick Connect via QR
+                        Quick Connect via QR / Direct Link
                       </h5>
                       <p className="text-[11px] text-blue-800 mt-0.5">
-                        Scan from your phone or iPad to install and authorize on Shopify.
+                        Scan from your phone/iPad or click to authorize on this PC.
                       </p>
                     </div>
                     <Button
@@ -1252,7 +1223,7 @@ export default function SettingsPage() {
                       className="bg-[#005cc0] hover:bg-[#004a9e] text-white text-xs font-bold shrink-0 gap-1.5 shadow-sm"
                     >
                       <QrCode className="w-3.5 h-3.5" />
-                      Scan QR
+                      Connect
                     </Button>
                   </div>
 
@@ -1760,9 +1731,9 @@ export default function SettingsPage() {
 
         {/* QR Connect Dialog */}
         <Dialog open={connectOpen} onOpenChange={setConnectOpen}>
-          <DialogContent className="max-w-md">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
+          <DialogContent className="sm:max-w-[450px] w-[95vw] p-6 bg-white rounded-2xl shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto">
+            <DialogHeader className="text-left space-y-1">
+              <DialogTitle className="flex items-center gap-2 text-slate-900 text-lg font-bold">
                 <QrCode className="w-5 h-5 text-[#005cc0]" />
                 {connectTarget === 'whatsapp'
                   ? 'Connect WhatsApp via QR code'
@@ -1770,7 +1741,7 @@ export default function SettingsPage() {
                   ? 'Connect Shopify via QR code'
                   : 'Connect via QR code'}
               </DialogTitle>
-              <DialogDescription>
+              <DialogDescription className="text-xs text-slate-500 leading-relaxed">
                 {connectTarget === 'whatsapp'
                   ? 'Scan this code with your phone or iPad to log in to Meta and connect your WhatsApp Business number automatically.'
                   : connectTarget === 'shopify'
@@ -1780,24 +1751,55 @@ export default function SettingsPage() {
             </DialogHeader>
 
             {connectLoading ? (
-              <div className="flex items-center justify-center py-10">
-                <Loader2 className="animate-spin w-6 h-6 text-[#005cc0]" />
+              <div className="flex flex-col items-center justify-center py-12 gap-3">
+                <Loader2 className="animate-spin w-8 h-8 text-[#005cc0]" />
+                <p className="text-xs text-slate-500 font-medium">Generating secure QR code...</p>
               </div>
             ) : (
-              <div className="space-y-5">
-                <div className="flex justify-center">
-                  <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-sm">
-                    {connectUrl ? (
-                      <QRCodeSVG value={connectUrl} size={200} level="M" />
-                    ) : (
-                      <div className="w-[200px] h-[200px] bg-slate-100 rounded-xl" />
-                    )}
-                  </div>
+              <div className="flex flex-col items-center gap-4 mt-2 w-full">
+                <div className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-sm flex items-center justify-center">
+                  {connectUrl ? (
+                    <QRCodeSVG
+                      value={connectUrl}
+                      size={180}
+                      level="M"
+                      className="w-[180px] h-[180px]"
+                    />
+                  ) : (
+                    <div className="w-[180px] h-[180px] bg-slate-100 rounded-xl animate-pulse" />
+                  )}
                 </div>
 
-                <p className="text-center text-xs text-slate-500 break-all">{connectUrl}</p>
+                <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl p-2 w-full max-w-full overflow-hidden">
+                  <p className="flex-1 text-[11px] text-slate-600 font-mono truncate px-1.5 select-all">{connectUrl}</p>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs text-slate-700 hover:bg-slate-200 shrink-0 gap-1 font-medium"
+                    onClick={() => {
+                      if (connectUrl) {
+                        navigator.clipboard.writeText(connectUrl)
+                        toast.success('Connect link copied!')
+                      }
+                    }}
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    Copy
+                  </Button>
+                </div>
 
-                <div className="space-y-2">
+                <Button
+                  asChild
+                  className="w-full bg-[#005cc0] hover:bg-[#004a9e] text-white font-bold gap-2 py-2.5 rounded-xl shadow-sm text-sm"
+                >
+                  <a href={connectUrl} target="_blank" rel="noopener noreferrer">
+                    <ExternalLink className="w-4 h-4" />
+                    Open Direct Link (Connect on this PC)
+                  </a>
+                </Button>
+
+                <div className="w-full space-y-2 pt-1">
                   {(connectTarget === 'all' || connectTarget === 'shopify') && (
                     <ConnectRow
                       label="Shopify"
@@ -1817,7 +1819,7 @@ export default function SettingsPage() {
                 {((connectTarget === 'whatsapp' && connectStatus?.whatsappConnected) ||
                   (connectTarget === 'shopify' && connectStatus?.shopifyConnected) ||
                   (connectTarget === 'all' && connectStatus?.status === 'complete')) && (
-                  <p className="text-center text-sm font-semibold text-emerald-600">
+                  <p className="text-center text-xs font-bold text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-lg py-2 w-full">
                     Connected successfully &mdash; you&rsquo;re all set!
                   </p>
                 )}
