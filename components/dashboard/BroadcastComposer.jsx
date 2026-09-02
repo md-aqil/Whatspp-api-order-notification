@@ -28,7 +28,53 @@ export function BroadcastComposer({
   const [isSending, setIsSending] = useState(false)
   const [progress, setProgress] = useState({ current: 0, total: 0, percent: 0 })
   const [sendResults, setSendResults] = useState(null)
+  const [showProductModal, setShowProductModal] = useState(false)
+  const [productsList, setProductsList] = useState([])
+  const [loadingProducts, setLoadingProducts] = useState(false)
+  const [productSearch, setProductSearch] = useState('')
   const fileInputRef = useRef(null)
+
+  const openProductPicker = async () => {
+    setShowProductModal(true)
+    if (productsList.length === 0) {
+      setLoadingProducts(true)
+      try {
+        const res = await fetch('/api/products')
+        if (res.ok) {
+          const data = await res.json()
+          setProductsList(Array.isArray(data) ? data : [])
+        }
+      } catch (err) {
+        console.error('Failed to load products:', err)
+      } finally {
+        setLoadingProducts(false)
+      }
+    }
+  }
+
+  const handlePickProduct = (product) => {
+    if (product.image) {
+      setSelectedImages((prev) => [
+        ...prev,
+        {
+          file: null,
+          previewUrl: product.image,
+          isRemoteUrl: true,
+          url: product.image
+        }
+      ])
+    }
+
+    const productInfo = `🛍️ *${product.title}*\n💰 Price: ${product.price ? '₹' + product.price : ''}\n${product.url ? '🔗 ' + product.url : ''}`.trim()
+    setMessageText((prev) => (prev ? `${prev}\n\n${productInfo}` : productInfo))
+    setShowProductModal(false)
+    toast.success(`Attached "${product.title}"`)
+  }
+
+  const filteredProducts = productsList.filter((p) =>
+    (p.title || '').toLowerCase().includes(productSearch.toLowerCase()) ||
+    (p.description || '').toLowerCase().includes(productSearch.toLowerCase())
+  )
 
   const handleImageFilesChange = (e) => {
     const files = Array.from(e.target.files || [])
@@ -46,7 +92,8 @@ export function BroadcastComposer({
       }
       newEntries.push({
         file,
-        previewUrl: URL.createObjectURL(file)
+        previewUrl: URL.createObjectURL(file),
+        isRemoteUrl: false
       })
     }
 
@@ -59,7 +106,7 @@ export function BroadcastComposer({
   const removeImage = (indexToRemove) => {
     setSelectedImages((prev) => {
       const item = prev[indexToRemove]
-      if (item?.previewUrl) URL.revokeObjectURL(item.previewUrl)
+      if (item?.previewUrl && !item?.isRemoteUrl) URL.revokeObjectURL(item.previewUrl)
       return prev.filter((_, idx) => idx !== indexToRemove)
     })
   }
@@ -86,14 +133,20 @@ export function BroadcastComposer({
     try {
       let uploadedUrls = []
 
-      // 1. Upload images if attached (automatically compressed client-side)
-      if (selectedImages.length > 0) {
+      // 1. Collect remote images (Shopify products)
+      const remoteImages = selectedImages.filter((img) => img.isRemoteUrl && img.url)
+      remoteImages.forEach((img) => uploadedUrls.push(img.url))
+
+      // 2. Upload local image files
+      const localFiles = selectedImages.filter((img) => !img.isRemoteUrl && img.file)
+      if (localFiles.length > 0) {
         setIsUploading(true)
-        uploadedUrls = await uploadSingleOrMultipleImages(selectedImages.map((i) => i.file))
+        const newlyUploaded = await uploadSingleOrMultipleImages(localFiles.map((i) => i.file))
+        uploadedUrls.push(...newlyUploaded)
         setIsUploading(false)
       }
 
-      // 2. Send via Batch Endpoint
+      // 3. Send via Batch Endpoint
       const response = await fetch('/api/send-whatsapp-batch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -258,16 +311,28 @@ export function BroadcastComposer({
                   <span className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
                     Attached Photos ({selectedImages.length})
                   </span>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="h-8 text-xs border-dashed border-emerald-300 dark:border-emerald-700 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/20"
-                  >
-                    <Paperclip className="w-3.5 h-3.5 mr-1.5" />
-                    Attach Images
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={openProductPicker}
+                      className="h-8 text-xs border-emerald-300 dark:border-emerald-700 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 font-bold"
+                    >
+                      <ShoppingBag className="w-3.5 h-3.5 mr-1.5" />
+                      Shopify Products
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="h-8 text-xs border-dashed border-emerald-300 dark:border-emerald-700 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/20"
+                    >
+                      <Paperclip className="w-3.5 h-3.5 mr-1.5" />
+                      Upload Photos
+                    </Button>
+                  </div>
                 </div>
 
                 {selectedImages.length > 0 ? (
@@ -278,7 +343,7 @@ export function BroadcastComposer({
                         <button
                           type="button"
                           onClick={() => removeImage(idx)}
-                          className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 shadow hover:bg-red-600 transition-colors"
+                          className="absolute top-1 right-1 bg-black/70 hover:bg-red-600 text-white rounded-full p-0.5 transition-colors"
                         >
                           <X className="w-3 h-3" />
                         </button>
@@ -288,12 +353,10 @@ export function BroadcastComposer({
                 ) : (
                   <div
                     onClick={() => fileInputRef.current?.click()}
-                    className="border-2 border-dashed border-gray-200 dark:border-slate-800 hover:border-emerald-400 rounded-xl p-4 text-center cursor-pointer transition-colors bg-gray-50/30 dark:bg-slate-900/20"
+                    className="border-2 border-dashed border-gray-200 dark:border-slate-800 hover:border-emerald-400 rounded-xl p-6 text-center cursor-pointer transition-colors"
                   >
-                    <ImageIcon className="w-6 h-6 mx-auto mb-1.5 text-gray-400" />
-                    <p className="text-xs text-gray-500 dark:text-gray-400 font-medium">
-                      Click to upload photos (multi-select supported, up to 10MB)
-                    </p>
+                    <ImageIcon className="w-7 h-7 mx-auto text-gray-400 mb-1.5" />
+                    <p className="text-xs text-gray-500 font-medium">Click to upload photos or pick from Shopify products above</p>
                   </div>
                 )}
               </div>

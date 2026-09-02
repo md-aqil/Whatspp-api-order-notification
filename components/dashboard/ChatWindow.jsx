@@ -305,48 +305,67 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
     </div>
 
       {/* AI Suggestions Row */}
-      {suggestions.length > 0 && (
-        <div className="bg-white/80 dark:bg-[#0b0d14]/80 backdrop-blur-md px-4 md:px-6 py-2 border-t border-gray-100 dark:border-slate-800 animate-in slide-in-from-bottom-2 duration-300">
-          <div className="max-w-4xl mx-auto flex flex-wrap gap-2 items-center">
-            <div className="flex items-center gap-1.5 mr-2">
-              <Sparkles className="w-3.5 h-3.5 text-emerald-500" />
-              <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">AI Suggestions</span>
-            </div>
-            {suggestions.map((suggestion, idx) => (
-              <button
-                key={idx}
-                onClick={() => setInputValue(suggestion)}
-                className="text-[12px] font-medium bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 px-3 py-1.5 rounded-full border border-emerald-100 dark:border-emerald-500/20 hover:bg-emerald-100 dark:hover:bg-emerald-500/20 transition-all whitespace-nowrap"
-              >
-                {suggestion}
-              </button>
-            ))}
-            <button 
-              onClick={() => setSuggestions([])}
-              className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-white"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        </div>
-      )}
+                  {/* Render Message Photos */}
+                  {messageImages.length > 0 && (
+                    <div className={`grid gap-1.5 rounded-xl overflow-hidden ${
+                      messageImages.length === 1 ? 'grid-cols-1' : messageImages.length === 2 ? 'grid-cols-2' : 'grid-cols-2 md:grid-cols-3'
+                    }`}>
+                      {messageImages.map((imgUrl, imgIdx) => (
+                        <a 
+                          key={imgIdx} 
+                          href={imgUrl} 
+                          target="_blank" 
+                          rel="noreferrer"
+                          className="block overflow-hidden rounded-lg bg-black/10 aspect-square group relative"
+                        >
+                          <img 
+                            src={imgUrl} 
+                            alt={`Attachment ${imgIdx + 1}`} 
+                            className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                          />
+                        </a>
+                      ))}
+                    </div>
+                  )}
 
-      {/* Multi-Image Attachment Preview Gallery */}
-      {selectedImages.length > 0 && (
-        <div className="bg-white/95 dark:bg-[#11131d]/95 backdrop-blur px-4 md:px-6 py-2.5 border-t border-emerald-200 dark:border-emerald-800/40 animate-in slide-in-from-bottom-2">
-          <div className="max-w-4xl mx-auto flex items-center justify-between">
-            <div className="flex items-center gap-2 overflow-x-auto py-1 max-w-[80%]">
-              {selectedImages.map((img, index) => (
-                <div key={index} className="relative group flex-shrink-0">
-                  <div className="w-14 h-14 rounded-lg overflow-hidden border-2 border-emerald-400 dark:border-emerald-600 shadow-sm bg-black/5">
-                    <img src={img.previewUrl} alt={`Upload preview ${index + 1}`} className="w-full h-full object-cover" />
+                  {/* Text Content */}
+                  {message.content && (
+                    <p className="text-[13px] md:text-[14px] leading-relaxed whitespace-pre-wrap break-words">
+                      {message.content}
+                    </p>
+                  )}
+
+                  {/* Timestamp */}
+                  <div className={`flex items-center justify-end gap-1 text-[10px] ${
+                    isCustomer ? 'text-gray-400' : 'text-emerald-100'
+                  }`}>
+                    <span>{timeStr}</span>
+                    {!isCustomer && (
+                      <span className="text-xs">✓✓</span>
+                    )}
                   </div>
+                </div>
+              </div>
+            )
+          })
+        )}
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Selected Image Preview Gallery (Before Sending) */}
+      {selectedImages.length > 0 && (
+        <div className="bg-white dark:bg-[#11131d] px-6 py-3 border-t border-gray-100 dark:border-slate-800 animate-in slide-in-from-bottom-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 overflow-x-auto pb-1">
+              {selectedImages.map((item, idx) => (
+                <div key={idx} className="relative w-14 h-14 rounded-xl overflow-hidden border border-emerald-200 dark:border-emerald-800 shadow-sm flex-shrink-0 group">
+                  <img src={item.previewUrl} alt={`Preview ${idx}`} className="w-full h-full object-cover" />
                   <button
                     type="button"
-                    onClick={() => removeSelectedImage(index)}
-                    className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full p-0.5 shadow hover:bg-red-600 transition-colors"
+                    onClick={() => removeSelectedImage(idx)}
+                    className="absolute top-1 right-1 bg-black/70 hover:bg-red-600 text-white rounded-full p-0.5 transition-colors"
                   >
-                    <X className="w-3.5 h-3.5" />
+                    <X className="w-3 h-3" />
                   </button>
                 </div>
               ))}
@@ -355,26 +374,21 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
                 variant="outline"
                 size="sm"
                 onClick={() => fileInputRef.current?.click()}
-                className="h-14 w-14 rounded-lg border-2 border-dashed border-emerald-300 dark:border-emerald-700 flex flex-col items-center justify-center p-0 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 flex-shrink-0"
+                className="h-14 w-14 rounded-xl border-2 border-dashed border-emerald-300 dark:border-emerald-700 flex flex-col items-center justify-center p-0 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 flex-shrink-0"
               >
                 <span className="text-lg font-bold leading-none">+</span>
                 <span className="text-[9px] font-medium">Add</span>
               </Button>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-                {selectedImages.length} image{selectedImages.length > 1 ? 's' : ''}
-              </span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={clearAllSelectedImages}
-                className="text-xs text-red-500 hover:text-red-700 px-2 py-1 h-auto"
-              >
-                Clear all
-              </Button>
-            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={clearAllSelectedImages}
+              className="text-xs text-red-500 hover:text-red-700 h-auto"
+            >
+              Clear all
+            </Button>
           </div>
         </div>
       )}
@@ -383,14 +397,28 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
       <div className="bg-white dark:bg-[#0b0d14] px-4 md:px-6 py-4 md:py-6 border-t border-gray-100 dark:border-slate-800 shadow-[0_-4px_12px_rgba(0,0,0,0.05)] relative z-20">
         <div className="max-w-4xl mx-auto flex items-center gap-3">
           <div className="flex items-center gap-1">
+            {/* Attachment Button */}
             <Button 
               type="button" 
               variant="ghost" 
               size="icon" 
               onClick={() => fileInputRef.current?.click()}
+              title="Attach photos"
               className="text-gray-400 hover:text-emerald-500 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 h-10 w-10 flex-shrink-0"
             >
               <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+            </Button>
+
+            {/* Shopify Products Button */}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={openProductPicker}
+              title="Pick product from Shopify"
+              className="text-gray-400 hover:text-emerald-500 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 h-10 w-10 flex-shrink-0"
+            >
+              <ShoppingBag className="w-5 h-5 text-emerald-600" />
             </Button>
           </div>
           
@@ -421,3 +449,4 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
     </div>
   )
 }
+

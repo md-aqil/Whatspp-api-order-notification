@@ -236,7 +236,16 @@ export default function SendCatalogPage() {
   }
 
   function handleSelectProduct(productId) {
-    setSelectedProducts(c => c.includes(productId) ? c.filter((id) => id !== productId) : [...c, productId])
+    setSelectedProducts(c => {
+      const next = c.includes(productId) ? c.filter((id) => id !== productId) : [...c, productId]
+      if (next.length > 0) {
+        const firstProd = products.find(p => p.id === next[0])
+        if (firstProd?.image && (!headerImageUrl || selectedProducts.length === 0)) {
+          setHeaderImageUrl(firstProd.image)
+        }
+      }
+      return next
+    })
   }
 
   async function handleSendCatalog() {
