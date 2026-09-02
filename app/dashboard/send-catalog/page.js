@@ -174,9 +174,21 @@ export default function SendCatalogPage() {
       return isSameValues ? current : next
     })
 
-    if (!isSameTemplate) setHeaderImageUrl('')
+    if (!isSameTemplate) {
+      const firstProd = products.find(p => selectedProducts.includes(p.id))
+      setHeaderImageUrl(firstProd?.image || '')
+    }
     previousTemplateKeyRef.current = selectedTemplateKey
-  }, [selectedTemplate, selectedTemplateKey, textParameterSlots])
+  }, [selectedTemplate, selectedTemplateKey, textParameterSlots, products, selectedProducts])
+
+  useEffect(() => {
+    if (hasImageHeader && !headerImageUrl && selectedProducts.length > 0) {
+      const firstProd = products.find(p => selectedProducts.includes(p.id))
+      if (firstProd?.image) {
+        setHeaderImageUrl(firstProd.image)
+      }
+    }
+  }, [hasImageHeader, selectedProducts, products, headerImageUrl])
 
   async function loadContacts() {
     try {
