@@ -43,8 +43,25 @@ async function sendWhatsAppMessage(phoneNumberId, accessToken, to, messageData) 
   return data
 }
 
-async function getApprovedTemplateDefinition(businessAccountId, accessToken, templateName) {
-  const response = await fetch(`https://graph.facebook.com/v22.0/${businessAccountId}/message_templates?limit=1000`, {
+async function getApprovedTemplateDefinition(businessAccountId, accessToken, templateName, phoneNumberId = null) {
+  let effectiveWabaId = businessAccountId
+  if (!effectiveWabaId && phoneNumberId) {
+    try {
+      const phoneRes = await fetch(`https://graph.facebook.com/v22.0/${phoneNumberId}?fields=whatsapp_business_account_id`, {
+        headers: buildMetaAuthHeaders(accessToken)
+      })
+      const phoneData = await phoneRes.json()
+      if (phoneData?.whatsapp_business_account_id) {
+        effectiveWabaId = phoneData.whatsapp_business_account_id
+      }
+    } catch (e) {}
+  }
+
+  if (!effectiveWabaId) {
+    throw new Error('WhatsApp Business Account ID is missing. Please check your WhatsApp integration.')
+  }
+
+  const response = await fetch(`https://graph.facebook.com/v22.0/${effectiveWabaId}/message_templates?limit=1000`, {
     headers: {
       ...buildMetaAuthHeaders(accessToken),
       'Content-Type': 'application/json'
@@ -73,7 +90,7 @@ async function getRecipientContext(recipient, userId) {
     queryOne(
       `SELECT name
        FROM chats
-       WHERE userId = ? AND REPLACE(REPLACE(REPLACE(phone, '+', ''), '-', ''), ' ', '') = ?
+       WHERE (userId = ? OR userId = 'default' OR userId IS NULL) AND REPLACE(REPLACE(REPLACE(phone, '+', ''), '-', ''), ' ', '') = ?
        ORDER BY timestamp DESC, createdAt DESC
        LIMIT 1`,
       [userId, phone]
@@ -81,7 +98,7 @@ async function getRecipientContext(recipient, userId) {
     queryOne(
       `SELECT customerName, orderNumber
        FROM orders
-       WHERE userId = ? AND REPLACE(REPLACE(REPLACE(customerPhone, '+', ''), '-', ''), ' ', '') = ?
+       WHERE (userId = ? OR userId = 'default' OR userId IS NULL) AND REPLACE(REPLACE(REPLACE(customerPhone, '+', ''), '-', ''), ' ', '') = ?
        ORDER BY createdAt DESC
        LIMIT 1`,
       [userId, phone]
@@ -99,7 +116,7 @@ async function getSelectedProducts(productIds, userId) {
   if (!Array.isArray(productIds) || productIds.length === 0) return []
 
   const [rows] = await query(
-    'SELECT products FROM products WHERE userId = ? ORDER BY updatedAt DESC, id DESC LIMIT 1',
+    'SELECT products FROM products WHERE (userId = ? OR userId = "default" OR userId IS NULL) ORDER BY updatedAt DESC, id DESC LIMIT 1',
     [userId]
   )
 
@@ -205,12 +222,12 @@ function getTemplateParameterSlots(templateComponents = []) {
     if (component?.type === 'BUTTONS' && Array.isArray(component.buttons)) {
       component.buttons.forEach((button) => {
         const matches = button?.url?.match(/\{\{\d+\}\}/g) || []
+        const examples = getTemplateExamples(button, 'url_suffix')
         matches.forEach((_match, index) => {
           slots.push({
-            componentType: 'BUTTON',
-            parameterType: 'text',
-            buttonType: String(button.type || '').toUpperCase(),
-            example: button?.example?.[index] || ''
+            componentType: 'BUTTONS',
+            parameterType: 'button_url',
+            example: examples[index] || ''
           })
         })
       })
@@ -231,10 +248,14 @@ function templateHasProductActions(templateComponents = []) {
   ))
 }
 
-function validatePublicMediaUrl(url, typeLabel) {
+function validatePublicMediaUrl(url, typeLabel = 'media') {
   const value = String(url || '').trim()
   if (!value) {
-    throw new Error(`Template requires a ${typeLabel} header but no public ${typeLabel} URL was provided.`)
+    throw new Error(`Template requires a ${typeLabel} header, but no ${typeLabel} URL was provided.`)
+  }
+
+  if (!/^https?:\/\//i.test(value)) {
+    throw new Error(`Template ${typeLabel} URL must start with http:// or https://`)
   }
 
   if (value.startsWith('http://localhost') || value.startsWith('http://0.0.0.0') || value.startsWith('http://127.0.0.1')) {
@@ -398,29 +419,60 @@ function buildCampaignTemplatePayload({ templateDefinition, templateName, templa
 
 async function getRecipients(campaign, userId) {
   if (campaign.audience === 'custom') {
-    return Array.isArray(campaign.recipients) ? campaign.recipients : []
+    let rec = campaign.recipients
+    if (typeof rec === 'string') {
+      try {
+        rec = JSON.parse(rec)
+      } catch (e) {
+        rec = rec.split(/[\n,]/).map(p => p.trim()).filter(Boolean)
+      }
+    }
+    if (Array.isArray(rec)) {
+      return rec.map(p => typeof p === 'string' ? p.replace(/\D/g, '') : String(p)).filter(Boolean)
+    }
+    return []
   }
 
   if (campaign.audience === 'recent_buyers') {
     const [rows] = await query(
       `SELECT DISTINCT customerPhone
        FROM orders
-       WHERE userId = ?
+       WHERE (userId = ? OR userId = 'default' OR userId IS NULL)
          AND customerPhone IS NOT NULL
          AND createdAt >= DATE_SUB(NOW(), INTERVAL 30 DAY)`,
       [userId]
     )
-    return (rows || []).map((row) => row.customerPhone).filter(Boolean)
+    const orderPhones = (rows || []).map((row) => String(row.customerPhone).replace(/\D/g, '')).filter(Boolean)
+    if (orderPhones.length > 0) return orderPhones
+    
+    // Fallback to recent chats
+    const [chatRows] = await query(
+      `SELECT DISTINCT phone
+       FROM chats
+       WHERE (userId = ? OR userId = 'default' OR userId IS NULL)
+         AND phone IS NOT NULL
+         AND (timestamp >= DATE_SUB(NOW(), INTERVAL 30 DAY) OR createdAt >= DATE_SUB(NOW(), INTERVAL 30 DAY))`,
+      [userId]
+    )
+    return (chatRows || []).map((row) => String(row.phone).replace(/\D/g, '')).filter(Boolean)
   }
 
   const [rows] = await query(
     `SELECT DISTINCT phone
      FROM chats
-     WHERE userId = ? AND phone IS NOT NULL`,
+     WHERE (userId = ? OR userId = 'default' OR userId IS NULL) AND phone IS NOT NULL`,
     [userId]
   )
 
-  return (rows || []).map((row) => row.phone).filter(Boolean)
+  const chatPhones = (rows || []).map((row) => String(row.phone).replace(/\D/g, '')).filter(Boolean)
+  const [orderRows] = await query(
+    `SELECT DISTINCT customerPhone
+     FROM orders
+     WHERE (userId = ? OR userId = 'default' OR userId IS NULL) AND customerPhone IS NOT NULL`,
+    [userId]
+  )
+  const orderPhones = (orderRows || []).map((row) => String(row.customerPhone).replace(/\D/g, '')).filter(Boolean)
+  return Array.from(new Set([...chatPhones, ...orderPhones]))
 }
 
 export async function POST(request, { params }) {
@@ -430,7 +482,7 @@ export async function POST(request, { params }) {
     const [campaignRows] = await query(
       `SELECT id, name, template, templateLanguage, templateCategory, templateHeaderImageUrl, campaignType, productIds, message, variables, audience, recipients, status
        FROM campaigns
-       WHERE id = ? AND userId = ?`,
+       WHERE id = ? AND (userId = ? OR userId = 'default' OR userId IS NULL)`,
       [params.id, userId]
     )
 
@@ -447,15 +499,15 @@ export async function POST(request, { params }) {
       )
     }
 
-    const [integrationsRows] = await query(
+    let [integrationsRows] = await query(
       `SELECT whatsapp, shopify FROM integrations
-       WHERE userId = ?
+       WHERE userId = ? OR userId = 'default' OR userId IS NULL
        ORDER BY updatedAt DESC, id DESC
        LIMIT 1`,
       [userId]
     )
 
-    const rawIntegrations = integrationsRows[0]
+    const rawIntegrations = integrationsRows?.[0]
     const decryptField = (val) => {
       if (typeof val !== 'string') return val
       const decrypted = val.includes(':') ? decrypt(val) : val
@@ -466,15 +518,37 @@ export async function POST(request, { params }) {
       shopify: decryptField(rawIntegrations?.shopify)
     }
 
-    if (!integrations?.whatsapp?.phoneNumberId || !integrations?.whatsapp?.accessToken) {
-      return NextResponse.json({ error: 'WhatsApp not configured' }, { status: 400 })
+    let phoneNumberId = integrations?.whatsapp?.phoneNumberId
+    let accessToken = integrations?.whatsapp?.accessToken
+    let businessAccountId = integrations?.whatsapp?.businessAccountId
+
+    // Fallback to whatsapp_accounts
+    if (!phoneNumberId || !accessToken) {
+      const [accRows] = await query(
+        `SELECT phoneNumberId, accessToken, businessAccountId FROM whatsapp_accounts ORDER BY updatedAt DESC LIMIT 1`
+      )
+      const acc = accRows?.[0]
+      if (acc?.phoneNumberId && acc?.accessToken) {
+        phoneNumberId = acc.phoneNumberId
+        accessToken = acc.accessToken
+        businessAccountId = acc.businessAccountId || businessAccountId
+        if (!integrations.whatsapp) integrations.whatsapp = {}
+        integrations.whatsapp.phoneNumberId = phoneNumberId
+        integrations.whatsapp.accessToken = accessToken
+        integrations.whatsapp.businessAccountId = businessAccountId
+      }
+    }
+
+    if (!phoneNumberId || !accessToken) {
+      return NextResponse.json({ error: 'WhatsApp not configured. Please connect WhatsApp in Settings.' }, { status: 400 })
     }
 
     // Fetch the live template definition from WhatsApp API
     const templateDefinition = await getApprovedTemplateDefinition(
-      integrations.whatsapp.businessAccountId,
-      integrations.whatsapp.accessToken,
-      campaign.template
+      businessAccountId,
+      accessToken,
+      campaign.template,
+      phoneNumberId
     )
 
     const storedVariables = Array.isArray(campaign.variables) ? campaign.variables : []
@@ -510,8 +584,8 @@ export async function POST(request, { params }) {
         })
 
         const result = await sendWhatsAppMessage(
-          integrations.whatsapp.phoneNumberId,
-          integrations.whatsapp.accessToken,
+          phoneNumberId,
+          accessToken,
           recipient,
           {
             messaging_product: 'whatsapp',
@@ -550,13 +624,13 @@ export async function POST(request, { params }) {
       `UPDATE campaigns
        SET status = ?, results = ?, sentAt = CASE WHEN ? = 'sent' THEN NOW() ELSE sentAt END,
            failedAt = CASE WHEN ? = 'failed' THEN NOW() ELSE failedAt END
-       WHERE id = ? AND userId = ?`,
+       WHERE id = ? AND (userId = ? OR userId = 'default' OR userId IS NULL)`,
       [anySuccess ? 'sent' : 'failed', JSON.stringify(results), anySuccess ? 'sent' : 'failed', anySuccess ? 'sent' : 'failed', campaign.id, userId]
     )
 
     return NextResponse.json({
       success: anySuccess,
-      message: anySuccess ? 'Campaign sent successfully using the approved template' : 'Campaign failed',
+      message: anySuccess ? 'Campaign sent successfully using the approved template' : 'Campaign failed to send to recipients',
       results
     })
   } catch (error) {

@@ -370,13 +370,30 @@ export default function CampaignsPage() {
       if (!response.ok) throw new Error(data.error || 'Failed to save campaign')
       toast.success('Campaign saved and scheduled!')
       
-      // Auto-send immediately for this demo logic if we wanted, but API is standard.
-      const sendResp = await fetch(`/api/campaigns/${data.id}/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' } })
-      if(sendResp.ok) {
-         toast.success('Campaign sent successfully')
+      const sendResp = await fetch(`/api/campaigns/${data.id}/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      })
+      const sendData = await sendResp.json()
+
+      if (!sendResp.ok || !sendData.success) {
+        const failedReasons = (sendData.results || [])
+          .filter(r => !r.success)
+          .map(r => r.error)
+          .filter(Boolean)
+        const errorMessage = failedReasons.length > 0 
+          ? failedReasons[0] 
+          : (sendData.error || sendData.message || 'Failed to dispatch WhatsApp template')
+        throw new Error(errorMessage)
       }
-    } catch (error) { toast.error(error.message) }
-    finally { setSavingCampaign(false) }
+      
+      const sentCount = sendData.results?.filter(r => r.success)?.length || 0
+      toast.success(`Campaign sent successfully to ${sentCount} recipient(s)!`)
+    } catch (error) {
+      toast.error(error.message)
+    } finally {
+      setSavingCampaign(false)
+    }
   }
 
   // Preview text renderer to style actual text
