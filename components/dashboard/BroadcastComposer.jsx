@@ -14,6 +14,7 @@ import {
   Smartphone
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { uploadSingleOrMultipleImages } from '@/lib/image-compressor'
 
 export function BroadcastComposer({
   selectedChats = [],
@@ -85,24 +86,10 @@ export function BroadcastComposer({
     try {
       let uploadedUrls = []
 
-      // 1. Upload images if attached
+      // 1. Upload images if attached (automatically compressed client-side)
       if (selectedImages.length > 0) {
         setIsUploading(true)
-        const formData = new FormData()
-        selectedImages.forEach((img) => formData.append('files', img.file))
-
-        const uploadRes = await fetch('/api/uploads/campaign-image', {
-          method: 'POST',
-          body: formData
-        })
-
-        if (!uploadRes.ok) {
-          const err = await uploadRes.json()
-          throw new Error(err.error || 'Failed to upload attachments')
-        }
-
-        const uploadData = await uploadRes.json()
-        uploadedUrls = uploadData.urls || (uploadData.url ? [uploadData.url] : [])
+        uploadedUrls = await uploadSingleOrMultipleImages(selectedImages.map((i) => i.file))
         setIsUploading(false)
       }
 
@@ -120,10 +107,19 @@ export function BroadcastComposer({
         })
       })
 
-      const data = await response.json()
+      const rawText = await response.text()
+      let data
+      try {
+        data = JSON.parse(rawText)
+      } catch (e) {
+        if (response.status === 413 || rawText.includes('413') || rawText.includes('Too Large')) {
+          throw new Error('Message payload or image is too large for the server.')
+        }
+        throw new Error(`Broadcast server error (Status ${response.status})`)
+      }
 
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to send broadcast')
+        throw new Error(data?.error || 'Failed to send broadcast')
       }
 
       setSendResults(data)

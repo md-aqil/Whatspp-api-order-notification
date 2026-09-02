@@ -6,6 +6,7 @@ import { Send, MessageSquare, Sparkles, X, Loader2, ShoppingBag } from 'lucide-r
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
+import { uploadSingleOrMultipleImages } from '@/lib/image-compressor'
 
 export function ChatWindow({ chat, messages, onSendMessage }) {
   const [inputValue, setInputValue] = useState('')
@@ -164,23 +165,7 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
     if (selectedImages.length > 0) {
       setIsUploadingImage(true)
       try {
-        const formData = new FormData()
-        selectedImages.forEach((item) => {
-          formData.append('files', item.file)
-        })
-
-        const uploadRes = await fetch('/api/uploads/campaign-image', {
-          method: 'POST',
-          body: formData
-        })
-
-        if (!uploadRes.ok) {
-          const errData = await uploadRes.json()
-          throw new Error(errData.error || 'Failed to upload image(s)')
-        }
-
-        const uploadData = await uploadRes.json()
-        uploadedUrls = uploadData.urls || (uploadData.url ? [uploadData.url] : [])
+        uploadedUrls = await uploadSingleOrMultipleImages(selectedImages.map(item => item.file))
       } catch (err) {
         toast.error(`Image upload failed: ${err.message}`)
         setIsUploadingImage(false)
