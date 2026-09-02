@@ -252,7 +252,16 @@ export default function SendCatalogPage() {
     if (selectedRecipients.length === 0) return toast.error('Please select at least one recipient')
     if (!selectedTemplate) return toast.error('Please select a template')
     if (needsProducts && selectedProducts.length === 0) return toast.error('This template uses product variables or buttons. Select at least one Meta catalog product.')
-    if ((hasImageHeader || hasVideoHeader) && !headerImageUrl.trim()) return toast.error(`Add a public ${hasVideoHeader ? 'video' : 'image'} URL for this template`)
+    
+    let effectiveHeaderUrl = headerImageUrl.trim()
+    if (!effectiveHeaderUrl && hasImageHeader && selectedProducts.length > 0) {
+      const firstProd = products.find(p => selectedProducts.includes(p.id))
+      if (firstProd?.image) effectiveHeaderUrl = firstProd.image
+    }
+
+    if ((hasImageHeader || hasVideoHeader) && !effectiveHeaderUrl) {
+      return toast.error(`Please select a product with a photo or upload an image for the header banner`)
+    }
 
     try {
       setLoading(c => ({ ...c, send: true }))
@@ -262,7 +271,7 @@ export default function SendCatalogPage() {
         language: selectedTemplate.language,
         components: selectedTemplate.components || [],
         variables: templateVariables.map((item) => item.mode === 'token' ? item.value : item.value.trim()),
-        headerImageUrl: headerImageUrl.trim()
+        headerImageUrl: effectiveHeaderUrl
       }
 
       for (const phoneNumber of selectedRecipients) {
@@ -549,17 +558,34 @@ export default function SendCatalogPage() {
               })}
               
               {(hasImageHeader || hasVideoHeader) && (
-                 <div className="p-4 rounded-xl bg-white shadow-sm border border-transparent transition-all">
-                      <div className="flex items-center gap-2 mb-3">
-                        <span className="text-xs font-semibold text-slate-500">{hasVideoHeader ? 'Video Header URL' : 'Image Header URL'}</span>
-                      </div>
-                      <Input
-                        className="w-full bg-slate-50 border-none focus:ring-1 focus:ring-blue-600 rounded-lg text-sm shadow-inner"
-                        placeholder={`https://example.com/media.${hasVideoHeader?'mp4':'jpg'}`}
-                        value={headerImageUrl}
-                        onChange={(e) => setHeaderImageUrl(e.target.value)}
-                      />
-                 </div>
+                <div className="p-4 rounded-xl bg-white shadow-sm border border-slate-100 transition-all space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-700">{hasVideoHeader ? 'Video Header URL' : 'Template Image Banner'}</span>
+                    {selectedProducts.length > 0 && products.find(p => selectedProducts.includes(p.id))?.image && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const prod = products.find(p => selectedProducts.includes(p.id))
+                          if (prod?.image) setHeaderImageUrl(prod.image)
+                        }}
+                        className="text-[10px] font-bold text-emerald-600 hover:text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md"
+                      >
+                        Use Selected Product Photo
+                      </button>
+                    )}
+                  </div>
+                  <Input
+                    className="w-full bg-slate-50 border-slate-200 focus:ring-1 focus:ring-blue-600 rounded-lg text-xs"
+                    placeholder={hasImageHeader ? "Leave empty to auto-use selected product's photo, or paste URL" : "https://example.com/media.mp4"}
+                    value={headerImageUrl}
+                    onChange={(e) => setHeaderImageUrl(e.target.value)}
+                  />
+                  {hasImageHeader && (
+                    <p className="text-[10px] text-slate-400 italic">
+                      ✨ Auto-picks photo from the selected product on the right if left blank.
+                    </p>
+                  )}
+                </div>
               )}
             </div>
           </div>
