@@ -11,7 +11,8 @@ import {
   CheckCircle2, 
   Loader2, 
   Image as ImageIcon,
-  Smartphone
+  Smartphone,
+  ShoppingBag
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { uploadSingleOrMultipleImages } from '@/lib/image-compressor'

@@ -239,72 +239,41 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
         </div>
       </div>
 
-    <div className="flex-1 relative overflow-hidden bg-[#e5ddd5] dark:bg-[#0b0d14]">
-      {/* Fixed Background Layer */}
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute inset-0 dark:hidden" style={{ backgroundImage: `url('/images/doodle-light.jpg')`, backgroundRepeat: 'repeat', backgroundSize: '800px', mixBlendMode: 'multiply', opacity: '0.8' }}></div>
-        <div className="absolute inset-0 hidden dark:block" style={{ backgroundImage: `url('/images/doodle-dark.png')`, backgroundRepeat: 'repeat', backgroundSize: '800px', mixBlendMode: 'screen', opacity: '0.4' }}></div>
-        <div className="absolute inset-0 bg-[#e5ddd5]/30 dark:bg-[#0b0d14]/50 pointer-events-none"></div>
-      </div>
-
-      {/* Messages Scroll Layer */}
+      {/* Messages Feed */}
       <div 
         ref={messagesContainerRef}
-        className="absolute inset-0 overflow-y-auto z-10 scroll-smooth"
+        className="flex-1 overflow-y-auto px-6 py-4 space-y-3 bg-[#efeae2]/30 dark:bg-[#0b0d14]"
       >
-        <div className="p-4 md:p-8 space-y-4 max-w-4xl mx-auto min-h-full">
-          {messages.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-20 text-center opacity-40">
-              <div className="w-16 h-16 bg-gray-100 dark:bg-slate-800 rounded-full flex items-center justify-center mb-4">
-                <MessageSquare className="w-8 h-8 text-gray-400" />
-              </div>
-              <p className="text-gray-500 dark:text-gray-400 font-medium">No messages yet</p>
+        {messages.length === 0 ? (
+          <div className="flex h-full flex-col items-center justify-center text-center p-8">
+            <div className="w-16 h-16 rounded-3xl bg-emerald-50 dark:bg-emerald-950/30 flex items-center justify-center text-emerald-600 dark:text-emerald-400 mb-4 border border-emerald-100 dark:border-emerald-900/30 shadow-sm">
+              <MessageSquare className="w-8 h-8" />
             </div>
-          )}
-          
-          {messages.map((message, idx) => {
-            const isCustomer = message.isCustomer;
-            const imgSource = message.imageUrl || message.image || message.mediaUrl;
-            
+            <h3 className="text-base font-bold text-gray-900 dark:text-white mb-1">No messages yet</h3>
+            <p className="text-xs text-gray-400 max-w-xs">
+              Start the conversation by sending a text message or sharing a product photo below.
+            </p>
+          </div>
+        ) : (
+          messages.map((message, index) => {
+            const isCustomer = message.isCustomer ?? (message.sender === 'customer' || message.sender === 'user')
+            const timeStr = message.timestamp ? format(new Date(message.timestamp), 'h:mm a') : ''
+            const messageImages = Array.isArray(message.imageUrls) 
+              ? message.imageUrls 
+              : (message.imageUrl ? [message.imageUrl] : [])
+
             return (
               <div
-                key={message.id || idx}
-                className={`flex w-full mb-1 ${isCustomer ? 'justify-start' : 'justify-end'}`}
+                key={message.id || index}
+                className={`flex flex-col ${isCustomer ? 'items-start' : 'items-end'} animate-in fade-in-50 duration-200`}
               >
                 <div
-                  className={`relative max-w-[85%] md:max-w-[75%] px-4 py-2.5 shadow-sm backdrop-blur-md transition-all ${
+                  className={`max-w-[85%] md:max-w-[70%] rounded-2xl p-3.5 shadow-sm space-y-2 ${
                     isCustomer
-                      ? 'bg-white/90 dark:bg-[#1f2937]/90 text-gray-800 dark:text-gray-100 border border-white/20 dark:border-slate-700/50 rounded-2xl rounded-tl-none'
-                      : 'bg-[#dcf8c6]/95 dark:bg-[#056162]/90 text-gray-800 dark:text-white border border-white/10 dark:border-white/5 rounded-2xl rounded-tr-none'
+                      ? 'bg-white dark:bg-slate-800 text-gray-900 dark:text-white rounded-tl-sm border border-gray-100 dark:border-slate-700/50'
+                      : 'bg-emerald-600 text-white rounded-tr-sm shadow-emerald-600/10'
                   }`}
                 >
-                  <div className="flex flex-col">
-                    {imgSource && (
-                      <div className="mb-2 rounded-xl overflow-hidden max-w-[280px] border border-black/10 dark:border-white/10">
-                        <img src={imgSource} alt="Attached" className="w-full h-auto object-cover max-h-64" />
-                      </div>
-                    )}
-                    {message.text && message.text !== '[Image]' && (
-                      <span className="text-[14.5px] md:text-[15.5px] leading-[1.5] break-words whitespace-pre-wrap font-normal">
-                        {message.text || message.message}
-                      </span>
-                    )}
-                    <div className={`flex items-center justify-end space-x-1 mt-1 opacity-40 self-end`}>
-                      <span className="text-[9px] md:text-[10px] font-medium tabular-nums">
-                        {formatTime(message.timestamp || message.createdAt)}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        <div ref={messagesEndRef} className="h-4" />
-      </div>
-    </div>
-
-      {/* AI Suggestions Row */}
                   {/* Render Message Photos */}
                   {messageImages.length > 0 && (
                     <div className={`grid gap-1.5 rounded-xl overflow-hidden ${
