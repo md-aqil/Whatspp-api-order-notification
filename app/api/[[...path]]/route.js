@@ -2080,7 +2080,8 @@ async function handleRoute(request, { params }) {
       try {
         integrations = await getStoredIntegrations(currentUserId);
         const instagram = await getStoredInstagramAccounts(currentUserId);
-        if (instagram.length > 0) {
+        if (instagram && instagram.length > 0) {
+          if (!integrations) integrations = {};
           integrations.instagram = { connected: true, data: instagram[0] };
         }
       } catch (error) {
