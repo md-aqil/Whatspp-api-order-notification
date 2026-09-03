@@ -2913,6 +2913,60 @@ export function AutomationStudio() {
                               })}
                             </div>
                           )}
+
+                          {/* Conditionally Show Media Inputs for Templates Requiring Media */}
+                          {(() => {
+                            const comps = selTpl?.components || sel.templateComponents || [];
+                            const headerComp = comps.find(c => c.type === 'HEADER');
+                            if (!headerComp) return null;
+
+                            if (headerComp.format === 'IMAGE') {
+                              return (
+                                <div className="space-y-1.5 p-3 rounded-xl border border-emerald-500/20 bg-emerald-950/20">
+                                  <Label htmlFor="tpl-header-image" className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                                    <span>🖼️</span> Header Image URL (Required by Template)
+                                  </Label>
+                                  <Input
+                                    id="tpl-header-image"
+                                    placeholder="https://yourdomain.com/banner.jpg"
+                                    value={sel.imageUrl || sel.config?.imageUrl || ''}
+                                    onChange={e => {
+                                      const val = e.target.value;
+                                      updStep({
+                                        imageUrl: val,
+                                        config: { ...(sel.config || {}), imageUrl: val }
+                                      });
+                                    }}
+                                    className={inputCls}
+                                  />
+                                </div>
+                              );
+                            }
+
+                            if (headerComp.format === 'DOCUMENT') {
+                              return (
+                                <div className="space-y-1.5 p-3 rounded-xl border border-emerald-500/20 bg-emerald-950/20">
+                                  <Label htmlFor="tpl-header-pdf" className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                                    <span>📄</span> PDF Document URL (Required by Template)
+                                  </Label>
+                                  <Input
+                                    id="tpl-header-pdf"
+                                    placeholder="https://yourdomain.com/catalog.pdf"
+                                    value={sel.config?.pdfUrl || sel.config?.fileUrl || ''}
+                                    onChange={e => {
+                                      const val = e.target.value;
+                                      updStep({
+                                        config: { ...(sel.config || {}), pdfUrl: val, fileUrl: val }
+                                      });
+                                    }}
+                                    className={inputCls}
+                                  />
+                                </div>
+                              );
+                            }
+
+                            return null;
+                          })()}
                         </div>
                       )}
 
@@ -2962,60 +3016,91 @@ export function AutomationStudio() {
                             </div>
                           )}
 
-                          <div className="space-y-3 pt-3 border-t border-white/[0.05]">
-                            <div className="text-[10px] font-bold uppercase tracking-widest text-white/40 flex items-center gap-1.5">
-                              <span>📁</span> Rich Media & Attachments
-                            </div>
+                          {/* Optional Rich Media Section for Non-Template Messages (Hidden unless media attached or toggled) */}
+                          {Boolean(sel.imageUrl || sel.config?.imageUrl || sel.config?.pdfUrl || sel.config?.fileUrl || sel.config?.linkUrl) ? (
+                            <div className="space-y-3 pt-3 border-t border-white/[0.05]">
+                              <div className="flex items-center justify-between">
+                                <div className="text-[10px] font-bold uppercase tracking-widest text-white/40 flex items-center gap-1.5">
+                                  <span>📁</span> Rich Media & Attachments
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    updStep({
+                                      imageUrl: '',
+                                      config: { ...(sel.config || {}), imageUrl: '', pdfUrl: '', fileUrl: '', linkUrl: '' }
+                                    });
+                                  }}
+                                  className="text-[10px] text-rose-400/80 hover:text-rose-300 font-medium"
+                                >
+                                  Clear Media
+                                </button>
+                              </div>
 
-                            <div className="space-y-1">
-                              <Label htmlFor="msg-image" className="text-[9px] text-white/30 font-medium uppercase tracking-wider">Header Image URL</Label>
-                              <Input
-                                id="msg-image"
-                                placeholder="e.g. https://images.unsplash.com/photo-..."
-                                value={sel.imageUrl || sel.config?.imageUrl || ''}
-                                onChange={e => {
-                                  const val = e.target.value;
+                              <div className="space-y-1">
+                                <Label htmlFor="msg-image" className="text-[9px] text-white/30 font-medium uppercase tracking-wider">Header Image URL</Label>
+                                <Input
+                                  id="msg-image"
+                                  placeholder="e.g. https://images.unsplash.com/photo-..."
+                                  value={sel.imageUrl || sel.config?.imageUrl || ''}
+                                  onChange={e => {
+                                    const val = e.target.value;
+                                    updStep({
+                                      imageUrl: val,
+                                      config: { ...(sel.config || {}), imageUrl: val }
+                                    });
+                                  }}
+                                  className={inputCls}
+                                />
+                              </div>
+
+                              <div className="space-y-1">
+                                <Label htmlFor="msg-pdf" className="text-[9px] text-white/30 font-medium uppercase tracking-wider">PDF Document URL</Label>
+                                <Input
+                                  id="msg-pdf"
+                                  placeholder="e.g. https://example.com/catalog.pdf"
+                                  value={sel.config?.pdfUrl || sel.config?.fileUrl || ''}
+                                  onChange={e => {
+                                    const val = e.target.value;
+                                    updStep({
+                                      config: { ...(sel.config || {}), pdfUrl: val, fileUrl: val }
+                                    });
+                                  }}
+                                  className={inputCls}
+                                />
+                              </div>
+
+                              <div className="space-y-1">
+                                <Label htmlFor="msg-link" className="text-[9px] text-white/30 font-medium uppercase tracking-wider">Button Link URL</Label>
+                                <Input
+                                  id="msg-link"
+                                  placeholder="e.g. https://vaclav.fashion/shop"
+                                  value={sel.config?.linkUrl || ''}
+                                  onChange={e => {
+                                    const val = e.target.value;
+                                    updStep({
+                                      config: { ...(sel.config || {}), linkUrl: val }
+                                    });
+                                  }}
+                                  className={inputCls}
+                                />
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="pt-2">
+                              <button
+                                type="button"
+                                onClick={() => {
                                   updStep({
-                                    imageUrl: val,
-                                    config: { ...(sel.config || {}), imageUrl: val }
+                                    config: { ...(sel.config || {}), linkUrl: '' }
                                   });
                                 }}
-                                className={inputCls}
-                              />
+                                className="text-[10px] text-white/35 hover:text-white/70 font-semibold flex items-center gap-1.5 transition-colors py-1 px-2 rounded-lg hover:bg-white/5 border border-transparent hover:border-white/10"
+                              >
+                                <span>📎</span> + Attach Rich Media / Link (Optional)
+                              </button>
                             </div>
-
-                            <div className="space-y-1">
-                              <Label htmlFor="msg-pdf" className="text-[9px] text-white/30 font-medium uppercase tracking-wider">PDF Document URL</Label>
-                              <Input
-                                id="msg-pdf"
-                                placeholder="e.g. https://example.com/catalog.pdf"
-                                value={sel.config?.pdfUrl || sel.config?.fileUrl || ''}
-                                onChange={e => {
-                                  const val = e.target.value;
-                                  updStep({
-                                    config: { ...(sel.config || {}), pdfUrl: val, fileUrl: val }
-                                  });
-                                }}
-                                className={inputCls}
-                              />
-                            </div>
-
-                            <div className="space-y-1">
-                              <Label htmlFor="msg-link" className="text-[9px] text-white/30 font-medium uppercase tracking-wider">Button Link URL</Label>
-                              <Input
-                                id="msg-link"
-                                placeholder="e.g. https://vaclav.fashion/shop"
-                                value={sel.config?.linkUrl || ''}
-                                onChange={e => {
-                                  const val = e.target.value;
-                                  updStep({
-                                    config: { ...(sel.config || {}), linkUrl: val }
-                                  });
-                                }}
-                                className={inputCls}
-                              />
-                            </div>
-                          </div>
+                          )}
                         </>
                       )}
                     </>
