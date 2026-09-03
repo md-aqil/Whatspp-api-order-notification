@@ -38,10 +38,9 @@ export function Sidebar({ sidebarOpen, setSidebarOpen, user }) {
     { name: 'Dashboard', href: '/dashboard', icon: Store },
     { name: 'Analytics', href: '/dashboard/analytics', icon: Shield },
     { name: 'Chat', href: '/dashboard/chat', icon: MessageCircle },
-    { name: 'Campaigns', href: '/dashboard/campaigns', icon: Megaphone },
+    { name: 'Broadcast & Catalog', href: '/dashboard/campaigns', icon: Megaphone },
     { name: 'Automations', href: '/dashboard/automations', icon: Workflow, badge: activeCount },
     { name: 'AI Knowledge', href: '/dashboard/knowledge', icon: Brain },
-    { name: 'Send Catalog', href: '/dashboard/send-catalog', icon: Send },
     { name: 'Orders', href: '/dashboard/orders', icon: CreditCard },
     { name: 'Settings', href: '/dashboard/settings', icon: Settings },
   ]
