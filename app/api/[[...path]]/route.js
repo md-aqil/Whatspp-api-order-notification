@@ -1288,7 +1288,7 @@ async function handleRoute(request, { params }) {
                       const savedMessage = await saveIncomingMessage(
                         message,
                         incomingUserId,
-                        contact
+                        contact,
                       );
 
                       const context = buildIncomingWhatsAppAutomationContext(
@@ -1304,6 +1304,33 @@ async function handleRoute(request, { params }) {
                         integrations,
                         incomingUserId,
                       );
+                    }
+                  }
+
+                  // Handle delivery statuses (sent, delivered, read, failed)
+                  if (
+                    change.value?.statuses &&
+                    Array.isArray(change.value.statuses)
+                  ) {
+                    for (const statusObj of change.value.statuses) {
+                      console.log(
+                        `[WhatsApp Status Webhook] ID: ${statusObj.id}, Status: ${statusObj.status}, Recipient: ${statusObj.recipient_id}, Errors:`,
+                        JSON.stringify(statusObj.errors || []),
+                      );
+                      if (statusObj.id) {
+                        try {
+                          const pool = getPool();
+                          await pool.execute(
+                            `UPDATE messages SET status = ?, updatedAt = NOW() WHERE whatsappMessageId = ?`,
+                            [statusObj.status, statusObj.id],
+                          );
+                        } catch (stErr) {
+                          console.warn(
+                            "Status message update note:",
+                            stErr.message,
+                          );
+                        }
+                      }
                     }
                   }
                 }
