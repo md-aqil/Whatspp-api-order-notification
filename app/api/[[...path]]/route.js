@@ -853,17 +853,19 @@ function buildCatalogTemplatePayload({
 
     if (component?.type === "BODY") {
       const matches = component.text?.match(/\{\{\d+\}\}/g) || [];
-      components.push({
-        type: "body",
-        parameters: matches.map(() => {
-          const value = resolveCatalogTemplateVariable(
-            resolvedVariableOrder[cursor] || "",
-            mergedContext,
-          );
-          cursor += 1;
-          return { type: "text", text: value };
-        }),
-      });
+      if (matches.length > 0) {
+        components.push({
+          type: "body",
+          parameters: matches.map(() => {
+            const value = resolveCatalogTemplateVariable(
+              resolvedVariableOrder[cursor] || "",
+              mergedContext,
+            );
+            cursor += 1;
+            return { type: "text", text: value };
+          }),
+        });
+      }
     }
 
     if (component?.type === "BUTTONS" && Array.isArray(component.buttons)) {
@@ -888,15 +890,20 @@ function buildCatalogTemplatePayload({
     }
   }
 
-  return {
+  const payload = {
     messaging_product: "whatsapp",
     type: "template",
     template: {
       name: templateName,
-      language: { code: templateLanguage },
-      components,
+      language: { code: templateLanguage || (templateName === 'hello_world' ? 'en_US' : 'en') },
     },
   };
+
+  if (components.length > 0) {
+    payload.template.components = components;
+  }
+
+  return payload;
 }
 
 // Legacy executeAutomationsForEvent removed. Using triggerAutomationEvent queue instead.
