@@ -896,16 +896,16 @@ function CampaignsStudio() {
             )}
           </div>
 
-          {/* SECTION B: SHOPIFY PRODUCT CATALOG (Only shown when mode is Custom or template has product/media actions) */}
-          {templateSupportsProducts ? (
-            <div className="space-y-3 flex-1 flex flex-col">
+          {/* SECTION B: SHOPIFY PRODUCT CATALOG (Exclusively shown in Custom Image & Text mode) */}
+          {messageMode === 'custom' && (
+            <div className="space-y-3 flex-1 flex flex-col pt-2 border-t border-slate-100">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <h2 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
                     <ShoppingBag className="w-4 h-4 text-blue-600" />
                     Attach Shopify Catalog Products ({selectedProductIds.length} Selected)
                   </h2>
-                  <p className="text-[11px] text-slate-500">Pick products to feature in the catalog or banner</p>
+                  <p className="text-[11px] text-slate-500">Pick products to feature in the banner or insert into text</p>
                 </div>
                 
                 <div className="flex items-center gap-2">
@@ -976,13 +976,6 @@ function CampaignsStudio() {
                   )
                 })}
               </div>
-            </div>
-          ) : (
-            <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/80 text-center space-y-1">
-              <p className="text-xs font-bold text-slate-700">Text-Only Meta Template</p>
-              <p className="text-[11px] text-slate-500 leading-relaxed">
-                This template does not require catalog product attachments. To broadcast multiple products with images, switch to <strong>🎨 Custom Image & Text</strong> mode.
-              </p>
             </div>
           )}
         </section>
