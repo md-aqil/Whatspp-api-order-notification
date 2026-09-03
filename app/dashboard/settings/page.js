@@ -2470,23 +2470,24 @@ function IntegrationForm({ type, integration, loading, user, onSave }) {
     switch (type) {
       case 'whatsapp':
         return [
-          { key: 'phoneNumberId', label: 'Phone Number ID', placeholder: '818391834688215' },
-          { key: 'accessToken', label: 'Access Token', placeholder: 'Paste the raw Meta access token', type: 'password' },
-          { key: 'businessAccountId', label: 'Business Account ID', placeholder: '832073532824981' },
-          { key: 'catalogId', label: 'Meta Catalog ID', placeholder: 'Your Commerce Manager catalog ID' },
-          { key: 'webhookVerifyToken', label: 'Webhook Verify Token', placeholder: 'your_verify_token' }
+          { key: 'phoneNumberId', label: 'Phone Number ID', placeholder: '818391834688215', required: true },
+          { key: 'accessToken', label: 'Access Token', placeholder: 'Paste the raw Meta access token', type: 'password', required: true },
+          { key: 'businessAccountId', label: 'Business Account ID', placeholder: '832073532824981', required: true },
+          { key: 'catalogId', label: 'Meta Catalog ID', placeholder: 'Your Commerce Manager catalog ID', required: false },
+          { key: 'webhookVerifyToken', label: 'Webhook Verify Token', placeholder: 'your_verify_token', required: true }
         ]
       case 'shopify':
         return [
-          { key: 'shopDomain', label: 'Shop Domain', placeholder: 'your-shop.myshopify.com' },
-          { key: 'clientId', label: 'Client ID', placeholder: 'Shopify app client ID' },
-          { key: 'clientSecret', label: 'Client Secret', placeholder: 'Shopify app client secret', type: 'password' }
+          { key: 'shopDomain', label: 'Shop Domain', placeholder: 'your-store.myshopify.com', required: true },
+          { key: 'accessToken', label: 'Admin API Access Token (shpat_...)', placeholder: 'shpat_...', type: 'password', required: false, hint: 'Create a Custom App in Shopify Admin > Settings > Apps and paste the Admin API access token.' },
+          { key: 'clientId', label: 'Client ID / API Key (Optional)', placeholder: 'Shopify app client ID', required: false },
+          { key: 'clientSecret', label: 'Client Secret (Optional)', placeholder: 'Shopify app client secret', type: 'password', required: false }
         ]
       case 'stripe':
         return [
-          { key: 'publishableKey', label: 'Publishable Key', placeholder: 'pk_test_...' },
-          { key: 'secretKey', label: 'Secret Key', placeholder: 'sk_test_...', type: 'password' },
-          { key: 'webhookSecret', label: 'Webhook Secret', placeholder: 'whsec_...', type: 'password' }
+          { key: 'publishableKey', label: 'Publishable Key', placeholder: 'pk_test_...', required: true },
+          { key: 'secretKey', label: 'Secret Key', placeholder: 'sk_test_...', type: 'password', required: true },
+          { key: 'webhookSecret', label: 'Webhook Secret', placeholder: 'whsec_...', type: 'password', required: true }
         ]
       default:
         return []
@@ -2520,7 +2521,7 @@ function IntegrationForm({ type, integration, loading, user, onSave }) {
                 placeholder={field.placeholder}
                 value={formData[field.key] || ''}
                 onChange={(e) => setFormData(prev => ({ ...prev, [field.key]: e.target.value }))}
-                required={field.key !== 'catalogId'}
+                required={Boolean(field.required)}
                 className="bg-white"
               />
             </div>
@@ -2540,10 +2541,15 @@ function IntegrationForm({ type, integration, loading, user, onSave }) {
                   {copiedField === 'webhookUrl' ? 'Copied!' : <><Copy className="w-3 h-3 mr-1" /> Copy URL</>}
                 </Button>
               </div>
-              <div className="p-3 bg-white border border-emerald-100 rounded-lg break-all font-mono text-[11px] text-emerald-800 shadow-sm">
-                {webhookUrl || 'Loading URL...'}
-              </div>
-              <p className="text-[10px] text-emerald-600/70 italic px-1">Paste this into the Meta App "Callback URL" field.</p>
+              <Input
+                id="webhookCallbackUrl"
+                value={webhookUrl}
+                readOnly
+                className="bg-white border-emerald-100 font-mono text-[11px] text-emerald-800"
+              />
+              <p className="text-[10px] text-emerald-600/70 italic px-1">
+                Paste this into the Meta App Dashboard under WhatsApp ➔ Configuration ➔ Callback URL.
+              </p>
             </div>
 
             <div className="space-y-2">
@@ -2576,15 +2582,21 @@ function IntegrationForm({ type, integration, loading, user, onSave }) {
 
       {type !== 'whatsapp' && getFields().map(field => (
         <div key={field.key} className="space-y-2">
-          <Label htmlFor={field.key}>{field.label}</Label>
+          <Label htmlFor={field.key}>
+            {field.label} {field.required && <span className="text-red-500 font-bold">*</span>}
+          </Label>
           <Input
             id={field.key}
             type={field.type || 'text'}
             placeholder={field.placeholder}
             value={formData[field.key] || ''}
             onChange={(e) => setFormData(prev => ({ ...prev, [field.key]: e.target.value }))}
-            required
+            required={Boolean(field.required)}
+            className="bg-white"
           />
+          {field.hint && (
+            <p className="text-[11px] text-slate-500 leading-tight">{field.hint}</p>
+          )}
         </div>
       ))}
 
