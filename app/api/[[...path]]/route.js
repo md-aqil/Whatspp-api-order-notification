@@ -64,10 +64,14 @@ import {
   getShopifyAccessToken,
   normalizeShopifyDomain,
   extractShopifyHandleFromUrl,
+  addShopifyOrderTags,
+  cancelShopifyOrder,
 } from "@/lib/integrations/shopify";
 import {
   getLatestStoredOrderByPhone,
   getStoredOrders,
+  getStoredOrderByShopifyOrderId,
+  updateStoredOrderByShopifyOrderId,
 } from "@/lib/db/order-repository";
 import {
   getStoredProducts,
@@ -1303,6 +1307,68 @@ async function handleRoute(request, { params }) {
                         savedMessage,
                         contact,
                       );
+
+                      // Handle Interactive WhatsApp Quick Actions (e.g. COD Confirmation / Cancellation)
+                      const buttonId = message.interactive?.button_reply?.id || message.button?.payload || "";
+                      if (buttonId && integrations?.whatsapp?.phoneNumberId && integrations?.whatsapp?.accessToken) {
+                        try {
+                          const waPhoneId = integrations.whatsapp.phoneNumberId;
+                          const waToken = integrations.whatsapp.accessToken;
+
+                          if (buttonId.startsWith("cod_confirm:")) {
+                            const shopifyOrderId = buttonId.replace("cod_confirm:", "");
+                            const existingOrder = await getStoredOrderByShopifyOrderId(shopifyOrderId);
+                            await updateStoredOrderByShopifyOrderId(shopifyOrderId, {
+                              status: "cod_confirmed",
+                              updatedAt: new Date()
+                            });
+
+                            if (integrations.shopify?.shopDomain) {
+                              await addShopifyOrderTags(integrations.shopify, shopifyOrderId, ["COD-Confirmed", "WhatsApp-Verified"]).catch(e => console.warn("Tagging failed:", e.message));
+                            }
+
+                            const replyBody = `🎉 *Order Confirmed!*\n\nThank you, your Cash on Delivery order *#${existingOrder?.orderNumber || shopifyOrderId}* has been verified.\n\nOur fulfillment team is packaging it for dispatch right now! 🚚`;
+                            await sendWhatsAppMessage(waPhoneId, waToken, message.from, {
+                              type: "text",
+                              text: { body: replyBody }
+                            });
+                          } else if (buttonId.startsWith("cod_cancel:")) {
+                            const shopifyOrderId = buttonId.replace("cod_cancel:", "");
+                            const existingOrder = await getStoredOrderByShopifyOrderId(shopifyOrderId);
+                            await updateStoredOrderByShopifyOrderId(shopifyOrderId, {
+                              status: "cancelled",
+                              updatedAt: new Date()
+                            });
+
+                            if (integrations.shopify?.shopDomain) {
+                              await cancelShopifyOrder(integrations.shopify, shopifyOrderId, "customer").catch(e => console.warn("Cancel API failed:", e.message));
+                            }
+
+                            const replyBody = `❌ *Order Cancelled*\n\nYour order *#${existingOrder?.orderNumber || shopifyOrderId}* has been cancelled as requested.\n\nIf you have any questions, feel free to reach out anytime! 🙏`;
+                            await sendWhatsAppMessage(waPhoneId, waToken, message.from, {
+                              type: "text",
+                              text: { body: replyBody }
+                            });
+                          } else if (buttonId.startsWith("order_status:")) {
+                            const shopifyOrderId = buttonId.replace("order_status:", "");
+                            const existingOrder = await getStoredOrderByShopifyOrderId(shopifyOrderId);
+                            const currentStatus = String(existingOrder?.status || "Processing").toUpperCase();
+                            const replyBody = `📦 *Order #${existingOrder?.orderNumber || shopifyOrderId}*\n\nStatus: *${currentStatus}*\nTotal: *${existingOrder?.currency || "USD"} ${existingOrder?.total || "0.00"}*\n\nWe will message you with live updates as it moves! 🚚`;
+                            await sendWhatsAppMessage(waPhoneId, waToken, message.from, {
+                              type: "text",
+                              text: { body: replyBody }
+                            });
+                          } else if (buttonId.startsWith("need_support:")) {
+                            const replyBody = `💬 *Customer Support*\n\nHow can we help you today? Please type your message below and an agent will assist you shortly! ✨`;
+                            await sendWhatsAppMessage(waPhoneId, waToken, message.from, {
+                              type: "text",
+                              text: { body: replyBody }
+                            });
+                          }
+                        } catch (interactiveActionErr) {
+                          console.error("[WhatsApp Interactive Action Error]:", interactiveActionErr.message);
+                        }
+                      }
 
                       // Trigger automation asynchronously via Queue
                       await triggerAutomationEvent(
