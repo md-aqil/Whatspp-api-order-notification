@@ -3441,6 +3441,21 @@ ${productInfo ? `${productInfo}` : ""}Browse our full collection and find someth
         const successfulSends = results.filter((r) => r.success).length;
         const failedSends = results.filter((r) => !r.success).length;
 
+        if (successfulSends === 0 && failedSends > 0) {
+          return handleCORS(
+            NextResponse.json(
+              {
+                success: false,
+                error: results[0]?.error || "Meta WhatsApp API rejected the message",
+                sentCount: 0,
+                failedCount: failedSends,
+                results: results,
+              },
+              { status: 400 },
+            ),
+          );
+        }
+
         return handleCORS(
           NextResponse.json({
             success: successfulSends > 0,

@@ -396,7 +396,10 @@ function CampaignsStudio() {
         })
 
         const data = await res.json()
-        if (!res.ok) throw new Error(data.error || 'Failed to send message')
+        if (!res.ok || data.success === false) {
+          const failMsg = (data.results || []).find(r => !r.success)?.error || data.error || 'Failed to send message'
+          throw new Error(failMsg)
+        }
         toast.success(`Message sent successfully to +${phone}!`)
         return
       }
