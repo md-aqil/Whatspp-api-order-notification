@@ -830,7 +830,7 @@ function CampaignsStudio() {
                   
                   {/* Dynamic Variable Quick-Insert Chips */}
                   <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mr-1">Insert Tag:</span>
+                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mr-1">Insert:</span>
                     {[
                       { tag: '{{customer_name}}', label: '👤 Name' },
                       { tag: '{{catalog_link}}', label: '🔗 Store Link' },
@@ -846,6 +846,27 @@ function CampaignsStudio() {
                         {chip.label}
                       </button>
                     ))}
+
+                    {selectedProductIds.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const selectedProds = products.filter(p => selectedProductIds.includes(p.id))
+                          const lines = selectedProds.map((p, idx) => {
+                            const price = p.price || p.variants?.[0]?.price ? `₹${p.price || p.variants?.[0]?.price}` : ''
+                            const link = p.url || (p.handle ? `https://vaclavfashion.com/products/${p.handle}` : '')
+                            return `${idx + 1}️⃣ *${p.title || p.name}* ${price ? `— ${price}` : ''}${link ? `\n🔗 ${link}` : ''}`
+                          })
+                          const catalogBlock = `🛍️ *Our Featured Products:*\n\n${lines.join('\n\n')}\n\n✨ Tap any link to order or reply to chat!`
+                          setCustomText(prev => prev.trim() ? `${prev.trim()}\n\n${catalogBlock}` : catalogBlock)
+                          toast.success(`Inserted ${selectedProds.length} product(s) into message!`)
+                        }}
+                        className="px-2 py-0.5 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] shadow-sm transition-colors flex items-center gap-1"
+                      >
+                        <ShoppingBag className="w-3 h-3" />
+                        + Insert {selectedProductIds.length} Products
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
