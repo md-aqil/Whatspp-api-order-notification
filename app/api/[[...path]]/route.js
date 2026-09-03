@@ -71,6 +71,7 @@ import {
   getLatestStoredOrderByPhone,
   getStoredOrders,
   getStoredOrderByShopifyOrderId,
+  getStoredOrderByOrderNumber,
   updateStoredOrderByShopifyOrderId,
 } from "@/lib/db/order-repository";
 import {
@@ -1403,15 +1404,35 @@ async function handleRoute(request, { params }) {
                               type: "text",
                               text: { body: replyBody }
                             });
-                          } else if (buttonId.startsWith("order_status:")) {
-                            const shopifyOrderId = buttonId.replace("order_status:", "");
-                            const existingOrder = await getStoredOrderByShopifyOrderId(shopifyOrderId);
-                            const currentStatus = String(existingOrder?.status || "Processing").toUpperCase();
-                            const replyBody = `📦 *Order #${existingOrder?.orderNumber || shopifyOrderId}*\n\nStatus: *${currentStatus}*\nTotal: *${existingOrder?.currency || "USD"} ${existingOrder?.total || "0.00"}*\n\nWe will message you with live updates as it moves! 🚚`;
-                            await sendWhatsAppMessage(waPhoneId, waToken, message.from, {
-                              type: "text",
-                              text: { body: replyBody }
-                            });
+                          } else if (buttonId.startsWith("order_status:") || buttonId === "opt0") {
+                            const explicitOrderId = buttonId.startsWith("order_status:") ? buttonId.replace("order_status:", "") : "";
+                            let existingOrder = null;
+                            if (explicitOrderId) {
+                              existingOrder = await getStoredOrderByShopifyOrderId(explicitOrderId);
+                            } else {
+                              existingOrder = await getLatestStoredOrderByPhone(message.from, incomingUserId);
+                            }
+
+                            if (existingOrder) {
+                              const currentStatus = String(existingOrder?.status || "Processing").toUpperCase();
+                              const itemsText = (existingOrder.lineItems || []).map(i => `${i.quantity || 1}x ${i.title || i.name}`).join(', ') || 'Your items';
+                              const replyBody = `📦 *Live Order Status*\n\n` +
+                                `📋 *Order:* #${existingOrder?.orderNumber || existingOrder?.id}\n` +
+                                `💰 *Total:* ${existingOrder?.currency || "USD"} ${existingOrder?.total || "0.00"}\n` +
+                                `🚚 *Status:* *${currentStatus}*\n` +
+                                `🛍️ *Items:* ${itemsText}\n\n` +
+                                `✨ *Tip:* If you want to check a different order, reply with *#* followed by your Order ID (e.g. *#1045*)!`;
+                              await sendWhatsAppMessage(waPhoneId, waToken, message.from, {
+                                type: "text",
+                                text: { body: replyBody }
+                              });
+                            } else {
+                              const replyBody = `🔍 *Order Status Lookup*\n\nWe couldn't find an order linked to your phone number (+${message.from}).\n\nPlease reply with your **Order ID** (e.g. *#1042* or *1042*), and we'll pull up the live status immediately! 📦`;
+                              await sendWhatsAppMessage(waPhoneId, waToken, message.from, {
+                                type: "text",
+                                text: { body: replyBody }
+                              });
+                            }
                           } else if (buttonId.startsWith("need_support:")) {
                             const replyBody = `💬 *Customer Support*\n\nHow can we help you today? Please type your message below and an agent will assist you shortly! ✨`;
                             await sendWhatsAppMessage(waPhoneId, waToken, message.from, {
@@ -1421,6 +1442,38 @@ async function handleRoute(request, { params }) {
                           }
                         } catch (interactiveActionErr) {
                           console.error("[WhatsApp Interactive Action Error]:", interactiveActionErr.message);
+                        }
+                      }
+
+                      // Check if customer typed an Order Number query (e.g. "#1042" or "Order 1042" or 4-6 digits)
+                      const incomingText = String(message.text?.body || "").trim();
+                      const orderNumMatch = incomingText.match(/^#?(\d{3,8})$/i) || incomingText.match(/^order\s*#?(\d{3,8})/i);
+                      if (orderNumMatch && integrations?.whatsapp?.phoneNumberId && integrations?.whatsapp?.accessToken) {
+                        try {
+                          const queriedOrderNum = orderNumMatch[1];
+                          const foundOrder = await getStoredOrderByOrderNumber(queriedOrderNum, incomingUserId);
+                          if (foundOrder) {
+                            const currentStatus = String(foundOrder?.status || "Processing").toUpperCase();
+                            const itemsText = (foundOrder.lineItems || []).map(i => `${i.quantity || 1}x ${i.title || i.name}`).join(', ') || 'Your items';
+                            const replyBody = `📦 *Order #${foundOrder?.orderNumber || queriedOrderNum} Details*\n\n` +
+                              `👤 *Customer:* ${foundOrder?.customerName || 'Valued Customer'}\n` +
+                              `💰 *Total:* ${foundOrder?.currency || 'USD'} ${foundOrder?.total || '0.00'}\n` +
+                              `🚚 *Status:* *${currentStatus}*\n` +
+                              `🛍️ *Items:* ${itemsText}\n\n` +
+                              `We will message you automatically when your tracking updates! 🚚`;
+                            await sendWhatsAppMessage(integrations.whatsapp.phoneNumberId, integrations.whatsapp.accessToken, message.from, {
+                              type: "text",
+                              text: { body: replyBody }
+                            });
+                          } else if (incomingText.startsWith("#") || incomingText.toLowerCase().startsWith("order")) {
+                            const notFoundBody = `🔍 We searched for order *#${queriedOrderNum}*, but couldn't find a match in our system.\n\nPlease check the number on your order confirmation email/receipt and try again, or type *Support* to chat with an agent! 🙏`;
+                            await sendWhatsAppMessage(integrations.whatsapp.phoneNumberId, integrations.whatsapp.accessToken, message.from, {
+                              type: "text",
+                              text: { body: notFoundBody }
+                            });
+                          }
+                        } catch (orderLookupErr) {
+                          console.warn("[WhatsApp Order Number Lookup Warning]:", orderLookupErr.message);
                         }
                       }
 
