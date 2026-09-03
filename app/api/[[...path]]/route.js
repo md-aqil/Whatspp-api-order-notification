@@ -81,6 +81,7 @@ import { buildInstagramAutomationEvents } from "@/lib/instagram-webhook";
 import { enqueueAutomationEvent } from "@/lib/queue";
 import { triggerAutomationEvent } from "@/lib/automation-engine";
 import { getGoogleSheetsClient } from "@/lib/google-sheets-api";
+import { normalizePhoneNumber } from "@/lib/phone-utils";
 
 // Automation State Helpers (To be moved to lib/automation-engine.js if needed)
 
@@ -874,6 +875,59 @@ function buildCatalogTemplatePayload({
 
     if (component?.type === "BUTTONS" && Array.isArray(component.buttons)) {
       component.buttons.forEach((button, bIdx) => {
+        const buttonType = String(button?.type || "").toUpperCase();
+
+        if (buttonType === "MPM") {
+          const retailerIds = Array.isArray(productContext?.explicit_product_retailer_ids)
+            ? productContext.explicit_product_retailer_ids
+            : (Array.isArray(productContext?.product_retailer_ids) ? productContext.product_retailer_ids : []);
+          
+          if (retailerIds.length > 0) {
+            components.push({
+              type: "button",
+              sub_type: "mpm",
+              index: String(bIdx),
+              parameters: [
+                {
+                  type: "action",
+                  action: {
+                    thumbnail_product_retailer_id: retailerIds[0],
+                    sections: [
+                      {
+                        title: "Products",
+                        product_items: retailerIds.slice(0, 30).map((productRetailerId) => ({
+                          product_retailer_id: productRetailerId,
+                        })),
+                      },
+                    ],
+                  },
+                },
+              ],
+            });
+          }
+          return;
+        }
+
+        if (buttonType === "CATALOG") {
+          const retailerId = productContext?.explicit_product_retailer_id || productContext?.product_retailer_id;
+          if (retailerId) {
+            components.push({
+              type: "button",
+              sub_type: "catalog",
+              index: String(bIdx),
+              parameters: [
+                {
+                  type: "action",
+                  action: {
+                    thumbnail_product_retailer_id: retailerId,
+                  },
+                },
+              ],
+            });
+          }
+          return;
+        }
+
         const matches = button?.url?.match(/\{\{\d+\}\}/g) || [];
         if (matches.length > 0) {
           components.push({
@@ -2950,7 +3004,7 @@ async function handleRoute(request, { params }) {
         }
 
         const templateName = body.templateName || body.template;
-        const templateLanguage = body.templateLanguage || body.language || 'en_US';
+        let templateLanguage = body.templateLanguage || body.language || 'en_US';
         const templateHeaderImageUrl = body.templateHeaderImageUrl || body.headerImageUrl;
         const templateVariables = body.templateVariables || body.variables || [];
         const templateComponents = body.templateComponents || [];
@@ -3004,12 +3058,44 @@ async function handleRoute(request, { params }) {
           integrations.shopify,
           integrations.whatsapp,
         );
-        const selectedTemplateComponents = Array.isArray(templateComponents)
+        let selectedTemplateComponents = Array.isArray(templateComponents) && templateComponents.length > 0
           ? templateComponents
           : [];
-        const selectedTemplateVariables = Array.isArray(templateVariables)
+        let selectedTemplateVariables = Array.isArray(templateVariables)
           ? templateVariables
           : [];
+
+        // If template components were not passed, fetch template definition directly from Meta
+        if (templateName && selectedTemplateComponents.length === 0 && accessToken) {
+          try {
+            let wabaId = integrations?.whatsapp?.businessAccountId;
+            if (!wabaId && phoneNumberId) {
+              const pRes = await fetch(`https://graph.facebook.com/v22.0/${phoneNumberId}?fields=whatsapp_business_account_id`, {
+                headers: buildMetaAuthHeaders(accessToken)
+              });
+              const pData = await pRes.json();
+              if (pData?.whatsapp_business_account_id) wabaId = pData.whatsapp_business_account_id;
+            }
+            if (wabaId) {
+              const tRes = await fetch(`https://graph.facebook.com/v22.0/${wabaId}/message_templates?limit=500`, {
+                headers: buildMetaAuthHeaders(accessToken),
+                cache: 'no-store'
+              });
+              const tData = await tRes.json();
+              const found = (tData?.data || []).find(t => t.name === templateName && String(t.status).toUpperCase() === 'APPROVED');
+              if (found) {
+                if (Array.isArray(found.components)) {
+                  selectedTemplateComponents = found.components;
+                }
+                if (found.language && !body.templateLanguage) {
+                  templateLanguage = found.language;
+                }
+              }
+            }
+          } catch (fetchErr) {
+            console.warn('[Template Fetch Warning]:', fetchErr.message);
+          }
+        }
         const requiresProducts = templateName
           ? templateRequiresProductContext(
             selectedTemplateComponents,
@@ -3116,12 +3202,12 @@ async function handleRoute(request, { params }) {
                 JSON.stringify(templatePayload, null, 2),
               );
 
-              // Send using the selected template
+              // Send using the selected template (without double-nesting)
               const messageData = {
                 messaging_product: "whatsapp",
                 to: formattedRecipient,
                 type: "template",
-                template: templatePayload,
+                template: templatePayload.template || templatePayload,
               };
 
               const result = await sendWhatsAppMessage(

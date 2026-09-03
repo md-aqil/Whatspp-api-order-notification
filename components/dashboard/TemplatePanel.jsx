@@ -370,30 +370,35 @@ export function TemplatePanel({ selectedProducts, recipient, onSendWithTemplate,
           </div>
         ) : (
           <div className="space-y-4">
-            <div className="grid gap-3">
+            <div className="flex gap-3 overflow-x-auto pb-3 pt-1 scrollbar-thin scroll-smooth">
               {templates.map((template) => (
                 <div
                   key={template.id || template.name}
-                  className={`cursor-pointer rounded-lg border p-3 transition-colors ${
-                    selectedTemplate?.id === template.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'
+                  className={`min-w-[280px] max-w-[320px] shrink-0 cursor-pointer rounded-xl border-2 p-3.5 transition-all select-none ${
+                    selectedTemplate?.id === template.id || selectedTemplate?.name === template.name 
+                      ? 'border-blue-600 bg-gradient-to-br from-blue-50/70 to-indigo-50/40 ring-2 ring-blue-600/20 shadow-md scale-[1.01]' 
+                      : 'border-gray-200 bg-white hover:border-blue-300 hover:shadow-sm'
                   }`}
                   onClick={() => setSelectedTemplate(template)}
                 >
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-medium">{template.name}</h3>
-                    <Badge variant="secondary">{template.category}</Badge>
+                  <div className="flex items-start justify-between gap-2">
+                    <h3 className="font-bold text-sm text-slate-900 truncate" title={template.name}>{template.name}</h3>
+                    <span className="text-[9px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200/60 px-2 py-0.5 rounded-md uppercase tracking-wider shrink-0 flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span>
+                      {template.status || 'Approved'}
+                    </span>
                   </div>
-                  <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
+                  <p className="mt-1.5 line-clamp-2 text-xs text-muted-foreground font-mono bg-slate-50/90 p-1.5 rounded border border-slate-100">
                     {template.components?.find((component) => component.type === 'BODY')?.text || 'No preview available'}
                   </p>
-                  <div className="mt-2 flex items-center">
-                    <Badge variant="outline" className="text-xs">{template.language}</Badge>
-                    <Badge variant="default" className="ml-2 bg-green-500 text-xs">{template.status}</Badge>
+                  <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                    <Badge variant="secondary" className="text-[10px]">{template.category || 'MARKETING'}</Badge>
+                    <Badge variant="outline" className="text-[10px]">{template.language || 'en'}</Badge>
                     {template.components?.some((component) => component.type === 'HEADER' && component.format === 'IMAGE') && (
-                      <Badge variant="outline" className="ml-2 text-xs">Image header</Badge>
+                      <Badge variant="outline" className="text-[10px]">Image</Badge>
                     )}
                     {template.components?.some((component) => component.type === 'HEADER' && component.format === 'VIDEO') && (
-                      <Badge variant="outline" className="ml-2 text-xs">Video header</Badge>
+                      <Badge variant="outline" className="text-[10px]">Video</Badge>
                     )}
                   </div>
                 </div>
