@@ -541,10 +541,10 @@ function CampaignsStudio() {
       </header>
 
       {/* Main 3-Column Studio */}
-      <main className="flex-1 flex flex-col md:flex-row overflow-hidden">
+      <main className="flex-1 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden">
         
         {/* ===================== COLUMN 1: STEP 1 - AUDIENCE ===================== */}
-        <section className="w-full md:w-1/4 md:min-w-[280px] lg:min-w-[320px] bg-slate-50 p-5 flex flex-col gap-5 overflow-y-auto border-r border-slate-200 shrink-0">
+        <section className="w-full lg:w-[280px] xl:w-[320px] bg-slate-50 p-4 lg:p-5 flex flex-col gap-4 lg:gap-5 overflow-y-auto border-b lg:border-b-0 lg:border-r border-slate-200 shrink-0">
           <div>
             <span className="text-[10px] font-bold text-blue-600 uppercase tracking-widest block mb-1">Step 1</span>
             <h2 className="text-sm font-bold text-slate-900 mb-3">Choose Audience</h2>
@@ -713,7 +713,7 @@ function CampaignsStudio() {
         </section>
 
         {/* ===================== COLUMN 2: STEP 2 - TEMPLATE & PRODUCTS ===================== */}
-        <section className="flex-1 bg-white p-5 lg:p-6 flex flex-col gap-5 overflow-y-auto border-r border-slate-200">
+        <section className="w-full lg:flex-1 bg-white p-4 lg:p-6 flex flex-col gap-4 lg:gap-5 overflow-y-auto border-b lg:border-b-0 lg:border-r border-slate-200">
           
           {/* MODE SELECTOR: APPROVED TEMPLATES VS CUSTOM IMAGE/TEXT */}
           <div className="space-y-3 pb-4 border-b border-slate-100">
@@ -981,7 +981,7 @@ function CampaignsStudio() {
         </section>
 
         {/* ===================== COLUMN 3: STEP 3 - PREVIEW & DISPATCH ===================== */}
-        <section className="w-full md:w-1/3 md:min-w-[320px] lg:min-w-[350px] bg-slate-50 p-5 lg:p-6 flex flex-col gap-4 overflow-y-auto shrink-0">
+        <section className="w-full lg:w-[320px] xl:w-[360px] bg-slate-50 p-4 lg:p-6 flex flex-col gap-4 overflow-y-auto shrink-0">
           <div>
             <span className="text-[10px] font-bold text-blue-600 uppercase tracking-widest block">Step 3</span>
             <h2 className="text-sm font-bold text-slate-900">Preview & Dispatch</h2>

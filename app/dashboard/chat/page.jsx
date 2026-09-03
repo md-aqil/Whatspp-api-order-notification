@@ -255,7 +255,7 @@ export default function DashboardChatPage() {
     <div className="flex h-[calc(100%+2rem)] md:h-[calc(100%+3rem)] -m-4 md:-m-6 w-[calc(100%+2rem)] md:w-[calc(100%+3rem)] overflow-hidden bg-white dark:bg-[#0b0d14]">
       
       {/* Sidebar */}
-      <div className="w-[320px] lg:w-[380px] flex-shrink-0 z-30 border-r border-gray-100 dark:border-slate-800 hidden md:flex flex-col">
+      <div className="w-[240px] md:w-[250px] lg:w-[280px] xl:w-[300px] flex-shrink-0 z-30 border-r border-gray-100 dark:border-slate-800 hidden md:flex flex-col">
         <ChatList 
           chats={chats} 
           activeChatId={activeChat?.id} 
