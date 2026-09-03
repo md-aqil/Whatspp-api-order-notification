@@ -1477,6 +1477,42 @@ async function handleRoute(request, { params }) {
                         }
                       }
 
+                      // Natural language WISMO (Where Is My Order) NLP handler (Layer 3)
+                      const isWismoQuery = /where.*(order|package|delivery|parcel)/i.test(incomingText) ||
+                        /(track|status).*(order|package|delivery|parcel|item)/i.test(incomingText) ||
+                        /^(track|status|my order|order status)$/i.test(incomingText) ||
+                        /(kahan.*(order|packet|saman|parcel))/i.test(incomingText) ||
+                        /(kab.*(aayega|deliver|pohchega|milega))/i.test(incomingText) ||
+                        /(mera.*order)/i.test(incomingText);
+
+                      if (isWismoQuery && !orderNumMatch && integrations?.whatsapp?.phoneNumberId && integrations?.whatsapp?.accessToken) {
+                        try {
+                          const latestOrder = await getLatestStoredOrderByPhone(message.from, incomingUserId);
+                          if (latestOrder) {
+                            const currentStatus = String(latestOrder?.status || "Processing").toUpperCase();
+                            const itemsText = (latestOrder.lineItems || []).map(i => `${i.quantity || 1}x ${i.title || i.name}`).join(', ') || 'Your items';
+                            const replyBody = `📦 *Live Order Tracking*\n\n` +
+                              `Hi *${latestOrder.customerName || 'there'}*! Here is the latest status of your order *#${latestOrder.orderNumber || latestOrder.id}*:\n\n` +
+                              `🚚 *Status:* *${currentStatus}*\n` +
+                              `💰 *Total:* ${latestOrder.currency || 'USD'} ${latestOrder.total || '0.00'}\n` +
+                              `🛍️ *Items:* ${itemsText}\n\n` +
+                              `✨ *Tip:* To check another order, reply with *#* followed by your Order ID (e.g. *#1045*)!`;
+                            await sendWhatsAppMessage(integrations.whatsapp.phoneNumberId, integrations.whatsapp.accessToken, message.from, {
+                              type: "text",
+                              text: { body: replyBody }
+                            });
+                          } else {
+                            const replyBody = `🔍 *Track Your Order*\n\nI'd love to help track your package! Please reply with your **Order ID** (e.g. *#1042* or *1042*), and I'll find your tracking details immediately! 📦`;
+                            await sendWhatsAppMessage(integrations.whatsapp.phoneNumberId, integrations.whatsapp.accessToken, message.from, {
+                              type: "text",
+                              text: { body: replyBody }
+                            });
+                          }
+                        } catch (wismoErr) {
+                          console.warn("[WISMO NLP Warning]:", wismoErr.message);
+                        }
+                      }
+
                       // Trigger automation asynchronously via Queue
                       await triggerAutomationEvent(
                         "whatsapp.message_received",
