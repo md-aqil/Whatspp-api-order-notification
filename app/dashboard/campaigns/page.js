@@ -78,6 +78,14 @@ function fillTemplatePreview(body, variables) {
   return body.replace(/\{\{(\d+)\}\}/g, (_match, rawIndex) => {
     const index = Number(rawIndex) - 1
     const value = Array.isArray(variables) ? variables[index] : ''
+    if (value === '{{customer_name}}') return 'John Doe'
+    if (value === '{{customer_phone}}') return '+91 98765 43210'
+    if (value === '{{order_number}}') return '#1042'
+    if (value === '{{catalog_link}}') return 'https://vaclavfashion.com'
+    if (value === '{{product_name}}') return 'Vaclav Kurta'
+    if (value === '{{product_price}}') return '₹1,499'
+    if (value === '{{product_link}}') return 'https://vaclavfashion.com/products/kurta'
+    if (value === 'custom' || value === 'text') return `[custom text]`
     return value?.trim() || `[value ${rawIndex}]`
   })
 }
@@ -976,29 +984,67 @@ function CampaignsStudio() {
 
           {/* Variable Mapping (Only in Template Mode) */}
           {messageMode === 'template' && selectedTemplateSlots.length > 0 && (
-            <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-sm space-y-2">
-              <Label className="text-xs font-bold text-slate-800">Dynamic Template Variables</Label>
-              <div className="space-y-1.5">
-                {selectedTemplateSlots.map((slot, index) => (
-                  <div key={slot.id} className="space-y-0.5">
-                    <div className="flex items-center justify-between text-[10px]">
-                      <span className="font-semibold text-slate-600">{slot.label}</span>
-                      {slot.example && <span className="text-slate-400">e.g. {slot.example}</span>}
-                    </div>
-                    <Select value={templateVariables[index] || 'text'} onValueChange={(val) => handleVariableChange(index, val)}>
-                      <SelectTrigger className="h-7 text-xs bg-slate-50 border-slate-200 rounded-lg">
-                        <SelectValue placeholder="Select mapping" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {variableOptions.map((opt) => (
-                          <SelectItem key={opt.value} value={opt.value} className="text-xs">
-                            {opt.label}
+            <div className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-sm space-y-2.5">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-bold text-slate-800">Dynamic Template Variables</Label>
+                <span className="text-[10px] text-slate-400 font-medium">Mapped to Shopify & Custom Data</span>
+              </div>
+              
+              <div className="space-y-2.5">
+                {selectedTemplateSlots.map((slot, index) => {
+                  const rawVal = templateVariables[index] || ''
+                  const isDynamic = rawVal.startsWith('{{') && rawVal.endsWith('}}')
+                  const selectValue = isDynamic ? rawVal : 'custom'
+
+                  return (
+                    <div key={slot.id} className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/70 space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="font-bold text-slate-700">{slot.label}</span>
+                        {slot.example && <span className="text-slate-400 text-[10px]">e.g. {slot.example}</span>}
+                      </div>
+
+                      <Select 
+                        value={selectValue} 
+                        onValueChange={(val) => {
+                          if (val === 'custom') {
+                            handleVariableChange(index, slot.example || '')
+                          } else {
+                            handleVariableChange(index, val)
+                          }
+                        }}
+                      >
+                        <SelectTrigger className="h-7 text-xs bg-white border-slate-200 rounded-lg shadow-2xs">
+                          <SelectValue placeholder="Select variable mapping" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="custom" className="text-xs font-semibold text-blue-600">
+                            ✏️ Custom text / URL
                           </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                ))}
+                          <SelectItem value="{{customer_name}}" className="text-xs">👤 Customer name</SelectItem>
+                          <SelectItem value="{{customer_phone}}" className="text-xs">📞 Customer phone</SelectItem>
+                          <SelectItem value="{{order_number}}" className="text-xs">📦 Order number</SelectItem>
+                          <SelectItem value="{{catalog_link}}" className="text-xs">🔗 Catalog link</SelectItem>
+                          <SelectItem value="{{product_name}}" className="text-xs">👗 First product name</SelectItem>
+                          <SelectItem value="{{product_price}}" className="text-xs">💰 First product price</SelectItem>
+                          <SelectItem value="{{product_link}}" className="text-xs">🌐 First product direct link</SelectItem>
+                        </SelectContent>
+                      </Select>
+
+                      {/* Custom Text Input Box */}
+                      {selectValue === 'custom' && (
+                        <div className="pt-1 animate-in fade-in slide-in-from-top-1 duration-150">
+                          <Input
+                            type="text"
+                            value={rawVal === 'custom' || rawVal === 'text' ? '' : rawVal}
+                            onChange={(e) => handleVariableChange(index, e.target.value)}
+                            placeholder={slot.example ? `Enter value (e.g. ${slot.example})` : 'Enter custom text or URL...'}
+                            className="h-7 text-xs bg-white border-blue-300 focus:border-blue-500 rounded-lg shadow-2xs font-medium"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             </div>
           )}
