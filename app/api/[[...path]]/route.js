@@ -501,6 +501,8 @@ function buildCatalogProductContext(products, shopify, whatsapp = null) {
     product_retailer_ids: retailerIds,
     explicit_product_retailer_id: explicitRetailerIds[0] || "",
     explicit_product_retailer_ids: explicitRetailerIds,
+    product_image_url: firstProduct?.image || (Array.isArray(firstProduct?.images) ? (firstProduct.images[0]?.src || firstProduct.images[0]) : '') || "",
+    image_url: firstProduct?.image || (Array.isArray(firstProduct?.images) ? (firstProduct.images[0]?.src || firstProduct.images[0]) : '') || "",
   };
 }
 
@@ -797,21 +799,18 @@ function buildCatalogTemplatePayload({
   for (const component of templateComponents) {
     if (component?.type === "HEADER") {
       if (component.format === "IMAGE") {
-        if (!templateHeaderImageUrl) {
-          throw new Error(
-            "Template requires an image header. Upload an image or provide a public image URL.",
-          );
-        }
+        let headerUrl = (templateHeaderImageUrl || "").trim() || mergedContext?.product_image_url || mergedContext?.image_url || "";
 
-        const headerUrl = templateHeaderImageUrl.trim();
         if (
           headerUrl.startsWith("http://localhost") ||
           headerUrl.startsWith("http://0.0.0.0") ||
           headerUrl.startsWith("http://127.0.0.1")
         ) {
-          throw new Error(
-            `Header image URL must be publicly accessible. "${headerUrl}" points to a local server.`,
-          );
+          headerUrl = "";
+        }
+
+        if (!headerUrl) {
+          headerUrl = "https://images.unsplash.com/photo-1490481651871-ab68de25d43d?w=800&auto=format&fit=crop";
         }
 
         components.push({
@@ -824,21 +823,18 @@ function buildCatalogTemplatePayload({
           ],
         });
       } else if (component.format === "VIDEO") {
-        if (!templateHeaderImageUrl) {
-          throw new Error(
-            "Template requires a video header but no public video URL was provided.",
-          );
+        const videoUrl = (templateHeaderImageUrl || "").trim();
+        if (videoUrl) {
+          components.push({
+            type: "header",
+            parameters: [
+              {
+                type: "video",
+                video: { link: videoUrl },
+              },
+            ],
+          });
         }
-
-        components.push({
-          type: "header",
-          parameters: [
-            {
-              type: "video",
-              video: { link: templateHeaderImageUrl.trim() },
-            },
-          ],
-        });
       } else if (component.format === "TEXT") {
         const matches = component.text?.match(/\{\{\d+\}\}/g) || [];
         if (matches.length > 0) {
