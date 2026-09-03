@@ -239,10 +239,21 @@ function CampaignsStudio() {
     getTemplateParameterSlots(selectedTemplate)
   , [selectedTemplate])
 
+  const templateSupportsMediaHeader = useMemo(() => {
+    if (!selectedTemplate) return false
+    const headerComponent = selectedTemplate.components?.find(c => c.type === 'HEADER')
+    return Boolean(headerComponent && (headerComponent.format === 'IMAGE' || headerComponent.format === 'VIDEO' || headerComponent.format === 'DOCUMENT'))
+  }, [selectedTemplate])
+
   function selectTemplate(template) {
     setSelectedTemplateName(template.name)
     const slots = getTemplateParameterSlots(template)
     setTemplateVariables(slots.map((s, idx) => inferVariableFromExample(s.example, idx)))
+    const headerComponent = template.components?.find(c => c.type === 'HEADER')
+    const supportsMedia = Boolean(headerComponent && (headerComponent.format === 'IMAGE' || headerComponent.format === 'VIDEO' || headerComponent.format === 'DOCUMENT'))
+    if (!supportsMedia) {
+      setHeaderImageUrl('')
+    }
   }
 
   function handleVariableChange(index, value) {
@@ -259,7 +270,7 @@ function CampaignsStudio() {
       const next = isSelected ? prev.filter(id => id !== productId) : [...prev, productId]
       const prod = products.find(p => p.id === productId)
       const imgSrc = prod?.image || (prod?.images && prod.images[0]?.src)
-      if (!isSelected && imgSrc && !headerImageUrl) {
+      if (!isSelected && imgSrc && templateSupportsMediaHeader && !headerImageUrl) {
         setHeaderImageUrl(imgSrc)
       }
       return next
@@ -812,44 +823,46 @@ function CampaignsStudio() {
             <h2 className="text-sm font-bold text-slate-900">Preview & Dispatch</h2>
           </div>
 
-          {/* Header Image Dropzone */}
-          <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-sm space-y-2">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                <ImagePlus className="w-3.5 h-3.5 text-blue-600" />
-                Header Image Banner
-              </Label>
-              {headerImageUrl && (
-                <button type="button" onClick={() => setHeaderImageUrl('')} className="text-[11px] text-rose-600 hover:underline font-semibold">
-                  Clear
-                </button>
-              )}
-            </div>
-
-            {headerImageUrl ? (
-              <div className="relative rounded-lg overflow-hidden border border-slate-200 bg-slate-100 max-h-32 flex items-center justify-center">
-                <img src={headerImageUrl} alt="Header" className="w-full h-full object-cover max-h-32" />
-              </div>
-            ) : (
-              <div 
-                onClick={() => fileInputRef.current?.click()}
-                className="p-3 border-2 border-dashed border-slate-200 hover:border-blue-500 rounded-lg text-center cursor-pointer transition-colors bg-slate-50"
-              >
-                <input type="file" ref={fileInputRef} onChange={handleHeaderImageUpload} accept="image/jpeg,image/png,image/webp" className="hidden" />
-                {uploadingImage ? (
-                  <div className="flex items-center justify-center gap-1.5 text-xs text-blue-600 font-semibold py-1">
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    Uploading...
-                  </div>
-                ) : (
-                  <div className="space-y-0.5">
-                    <ImagePlus className="w-4 h-4 text-slate-400 mx-auto" />
-                    <p className="text-[11px] font-bold text-slate-700">Click to upload image</p>
-                  </div>
+          {/* Header Image Dropzone (Only when template supports Image/Media) */}
+          {templateSupportsMediaHeader && (
+            <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-sm space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <ImagePlus className="w-3.5 h-3.5 text-blue-600" />
+                  Header Image Banner
+                </Label>
+                {headerImageUrl && (
+                  <button type="button" onClick={() => setHeaderImageUrl('')} className="text-[11px] text-rose-600 hover:underline font-semibold">
+                    Clear
+                  </button>
                 )}
               </div>
-            )}
-          </div>
+
+              {headerImageUrl ? (
+                <div className="relative rounded-lg overflow-hidden border border-slate-200 bg-slate-100 max-h-32 flex items-center justify-center">
+                  <img src={headerImageUrl} alt="Header" className="w-full h-full object-cover max-h-32" />
+                </div>
+              ) : (
+                <div 
+                  onClick={() => fileInputRef.current?.click()}
+                  className="p-3 border-2 border-dashed border-slate-200 hover:border-blue-500 rounded-lg text-center cursor-pointer transition-colors bg-slate-50"
+                >
+                  <input type="file" ref={fileInputRef} onChange={handleHeaderImageUpload} accept="image/jpeg,image/png,image/webp" className="hidden" />
+                  {uploadingImage ? (
+                    <div className="flex items-center justify-center gap-1.5 text-xs text-blue-600 font-semibold py-1">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      Uploading...
+                    </div>
+                  ) : (
+                    <div className="space-y-0.5">
+                      <ImagePlus className="w-4 h-4 text-slate-400 mx-auto" />
+                      <p className="text-[11px] font-bold text-slate-700">Click to upload image</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Variable Mapping */}
           {selectedTemplateSlots.length > 0 && (
@@ -890,7 +903,7 @@ function CampaignsStudio() {
                 </div>
 
                 <div className="bg-white rounded-xl p-2.5 shadow-sm space-y-1 max-w-[95%] self-start mt-6">
-                  {headerImageUrl && (
+                  {templateSupportsMediaHeader && headerImageUrl && (
                     <div className="rounded-lg overflow-hidden max-h-24 bg-slate-100">
                       <img src={headerImageUrl} alt="Preview" className="w-full h-full object-cover" />
                     </div>
