@@ -120,9 +120,11 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
   const [productsList, setProductsList] = useState([])
   const [loadingProducts, setLoadingProducts] = useState(false)
   const [productSearch, setProductSearch] = useState('')
+  const [selectedProductIds, setSelectedProductIds] = useState([])
 
   const openProductPicker = async () => {
     setShowProductModal(true)
+    setSelectedProductIds([])
     if (productsList.length === 0) {
       setLoadingProducts(true)
       try {
@@ -139,23 +141,52 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
     }
   }
 
-  const handlePickProduct = (product) => {
-    if (product.image) {
-      setSelectedImages((prev) => [
-        ...prev,
-        {
+  const toggleProductSelection = (productId) => {
+    setSelectedProductIds(prev =>
+      prev.includes(productId) ? prev.filter(id => id !== productId) : [...prev, productId]
+    )
+  }
+
+  const selectAllProducts = () => {
+    setSelectedProductIds(filteredProducts.map(p => p.id))
+  }
+
+  const clearProductSelection = () => {
+    setSelectedProductIds([])
+  }
+
+  const handleAttachSelectedProducts = () => {
+    const selectedProds = productsList.filter(p => selectedProductIds.includes(p.id))
+    if (selectedProds.length === 0) {
+      setShowProductModal(false)
+      return
+    }
+
+    const newImageEntries = []
+    const infoLines = []
+
+    selectedProds.forEach(product => {
+      if (product.image) {
+        newImageEntries.push({
           file: null,
           previewUrl: product.image,
           isRemoteUrl: true,
           url: product.image
-        }
-      ])
+        })
+      }
+      const priceStr = product.price ? `₹${product.price}` : ''
+      const urlStr = product.url ? `\n🔗 ${product.url}` : ''
+      infoLines.push(`🛍️ *${product.title}* ${priceStr ? `— ${priceStr}` : ''}${urlStr}`)
+    })
+
+    if (newImageEntries.length > 0) {
+      setSelectedImages(prev => [...prev, ...newImageEntries])
     }
 
-    const productInfo = `🛍️ *${product.title}*\n💰 Price: ${product.price ? '₹' + product.price : ''}\n${product.url ? '🔗 ' + product.url : ''}`.trim()
-    setInputValue((prev) => (prev ? `${prev}\n\n${productInfo}` : productInfo))
+    const combinedInfo = infoLines.join('\n\n')
+    setInputValue(prev => (prev ? `${prev}\n\n${combinedInfo}` : combinedInfo))
     setShowProductModal(false)
-    toast.success(`Attached "${product.title}"`)
+    toast.success(`Attached ${selectedProds.length} Shopify product(s) with images`)
   }
 
   const filteredProducts = productsList.filter((p) =>
@@ -273,7 +304,7 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
         onChange={handleImageFilesChange}
       />
 
-      {/* Product Picker Modal */}
+      {/* Multi-Product Picker Modal */}
       {showProductModal && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
           <div className="bg-white dark:bg-[#11131d] rounded-3xl max-w-lg w-full max-h-[85vh] flex flex-col shadow-2xl border border-gray-100 dark:border-slate-800 overflow-hidden">
@@ -284,8 +315,13 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
                   <ShoppingBag className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-gray-900 dark:text-white text-base">Select Shopify Product</h3>
-                  <p className="text-xs text-gray-400">Attaches product photo and details to your message</p>
+                  <h3 className="font-bold text-gray-900 dark:text-white text-base flex items-center gap-2">
+                    Attach Shopify Catalog Products
+                    <span className="text-[11px] font-extrabold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                      {selectedProductIds.length} Selected
+                    </span>
+                  </h3>
+                  <p className="text-xs text-gray-400">Select single or multiple products to insert into chat with images</p>
                 </div>
               </div>
               <button
@@ -296,19 +332,39 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
               </button>
             </div>
 
-            {/* Search Bar */}
-            <div className="p-4 border-b border-gray-100 dark:border-slate-800 bg-gray-50/50 dark:bg-slate-900/30">
+            {/* Search Bar & Quick Selection Buttons */}
+            <div className="p-3.5 border-b border-gray-100 dark:border-slate-800 bg-gray-50/50 dark:bg-slate-900/30 flex items-center gap-2">
               <input
                 type="text"
                 value={productSearch}
                 onChange={(e) => setProductSearch(e.target.value)}
-                placeholder="Search products by title or description..."
-                className="w-full bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-xs text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                placeholder="Search products by title, SKU or vendor..."
+                className="flex-1 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl px-3.5 py-2 text-xs text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
               />
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={selectAllProducts}
+                className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 h-8 px-2.5 rounded-lg"
+              >
+                Select All
+              </Button>
+              {selectedProductIds.length > 0 && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={clearProductSelection}
+                  className="text-[11px] font-bold text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 h-8 px-2.5 rounded-lg"
+                >
+                  Clear
+                </Button>
+              )}
             </div>
 
             {/* Products List */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-2.5 divide-y divide-gray-50 dark:divide-slate-800/50">
+            <div className="flex-1 overflow-y-auto p-4 space-y-2 divide-y divide-gray-50 dark:divide-slate-800/50">
               {loadingProducts ? (
                 <div className="py-12 flex flex-col items-center justify-center gap-3">
                   <Loader2 className="w-7 h-7 text-emerald-500 animate-spin" />
@@ -319,42 +375,86 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
                   No products matched your search.
                 </div>
               ) : (
-                filteredProducts.map((prod) => (
-                  <div
-                    key={prod.id}
-                    onClick={() => handlePickProduct(prod)}
-                    className="pt-2.5 first:pt-0 flex items-center justify-between gap-3 p-2.5 rounded-2xl hover:bg-emerald-50/60 dark:hover:bg-emerald-950/20 cursor-pointer transition-all border border-transparent hover:border-emerald-200 dark:hover:border-emerald-800/40 group"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-14 h-14 rounded-xl overflow-hidden bg-gray-100 dark:bg-slate-800 flex-shrink-0 border border-gray-200 dark:border-slate-700">
-                        {prod.image ? (
-                          <img src={prod.image} alt={prod.title} className="w-full h-full object-cover" />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center text-gray-400">
-                            <ShoppingBag className="w-6 h-6" />
-                          </div>
-                        )}
-                      </div>
-                      <div className="min-w-0">
-                        <h4 className="text-xs font-bold text-gray-900 dark:text-white truncate group-hover:text-emerald-600 transition-colors">
-                          {prod.title}
-                        </h4>
-                        <p className="text-[11px] font-extrabold text-emerald-600 dark:text-emerald-400 mt-0.5">
-                          {prod.price ? `₹${prod.price}` : 'Free'}
-                        </p>
-                        {prod.description && (
-                          <p className="text-[10px] text-gray-400 truncate max-w-[280px]">
-                            {prod.description}
+                filteredProducts.map((prod) => {
+                  const isChecked = selectedProductIds.includes(prod.id)
+                  return (
+                    <div
+                      key={prod.id}
+                      onClick={() => toggleProductSelection(prod.id)}
+                      className={`pt-2 first:pt-0 flex items-center justify-between gap-3 p-2.5 rounded-2xl cursor-pointer transition-all border ${
+                        isChecked
+                          ? 'bg-emerald-500/10 border-emerald-500/40 dark:bg-emerald-950/30'
+                          : 'border-transparent hover:bg-gray-50 dark:hover:bg-slate-800/50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        {/* Checkbox */}
+                        <div className={`w-5 h-5 rounded-lg border flex items-center justify-center transition-all shrink-0 ${
+                          isChecked
+                            ? 'bg-emerald-500 border-emerald-500 text-white shadow-sm'
+                            : 'border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800'
+                        }`}>
+                          {isChecked && <span className="text-xs font-bold leading-none">✓</span>}
+                        </div>
+
+                        {/* Product Image */}
+                        <div className="w-13 h-13 rounded-xl overflow-hidden bg-gray-100 dark:bg-slate-800 flex-shrink-0 border border-gray-200 dark:border-slate-700">
+                          {prod.image ? (
+                            <img src={prod.image} alt={prod.title} className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center text-gray-400">
+                              <ShoppingBag className="w-5 h-5" />
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Details */}
+                        <div className="min-w-0">
+                          <h4 className={`text-xs font-bold truncate ${isChecked ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-900 dark:text-white'}`}>
+                            {prod.title}
+                          </h4>
+                          <p className="text-[11px] font-extrabold text-emerald-600 dark:text-emerald-400 mt-0.5">
+                            {prod.price ? `₹${prod.price}` : 'Free'}
                           </p>
-                        )}
+                          {prod.description && (
+                            <p className="text-[10px] text-gray-400 truncate max-w-[260px]">
+                              {prod.description}
+                            </p>
+                          )}
+                        </div>
                       </div>
                     </div>
-                    <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold h-8 px-3 rounded-xl flex-shrink-0">
-                      Attach
-                    </Button>
-                  </div>
-                ))
+                  )
+                })
               )}
+            </div>
+
+            {/* Modal Footer / Action Bar */}
+            <div className="p-4 border-t border-gray-100 dark:border-slate-800 bg-gray-50/50 dark:bg-slate-900/40 flex items-center justify-between">
+              <span className="text-xs font-semibold text-gray-500 dark:text-slate-400">
+                {selectedProductIds.length === 0 ? 'Click products to select' : `${selectedProductIds.length} product(s) selected`}
+              </span>
+
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowProductModal(false)}
+                  className="text-xs text-gray-500 hover:text-gray-800 dark:hover:text-white"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={selectedProductIds.length === 0}
+                  onClick={handleAttachSelectedProducts}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-4 rounded-xl shadow-md disabled:opacity-40"
+                >
+                  Attach ({selectedProductIds.length}) Products
+                </Button>
+              </div>
             </div>
           </div>
         </div>

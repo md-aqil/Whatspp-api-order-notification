@@ -281,9 +281,15 @@ function CampaignsStudio() {
       const isSelected = prev.includes(productId)
       const next = isSelected ? prev.filter(id => id !== productId) : [...prev, productId]
       const prod = products.find(p => p.id === productId)
-      const imgSrc = prod?.image || (prod?.images && prod.images[0]?.src)
-      if (!isSelected && imgSrc && templateSupportsMediaHeader && !headerImageUrl) {
+      const imgSrc = prod?.image || (prod?.images && prod.images[0]?.src) || ''
+      if (!isSelected && imgSrc) {
         setHeaderImageUrl(imgSrc)
+      } else if (isSelected && next.length > 0) {
+        const remainingProd = products.find(p => p.id === next[0])
+        const remImg = remainingProd?.image || (remainingProd?.images && remainingProd.images[0]?.src) || ''
+        if (remImg) setHeaderImageUrl(remImg)
+      } else if (isSelected && next.length === 0 && headerImageUrl === imgSrc) {
+        setHeaderImageUrl('')
       }
       return next
     })
