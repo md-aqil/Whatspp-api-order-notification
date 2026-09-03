@@ -401,10 +401,17 @@ function BroadcastCatalogStudio() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           phone: recipient,
+          recipient: recipient,
+          recipients: [recipient],
+          products: selectedProducts,
           productIds: selectedProducts,
           customMessage: customCatalogMessage || undefined,
           template: campaignForm.template || undefined,
-          templateHeaderImageUrl: campaignForm.templateHeaderImageUrl || undefined
+          templateName: campaignForm.template || undefined,
+          templateLanguage: campaignForm.templateLanguage || undefined,
+          templateHeaderImageUrl: campaignForm.templateHeaderImageUrl || undefined,
+          variables: campaignForm.variables || [],
+          templateVariables: campaignForm.variables || []
         })
       })
 

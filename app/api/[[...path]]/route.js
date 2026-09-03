@@ -2849,38 +2849,38 @@ async function handleRoute(request, { params }) {
     if (route === "/send-catalog" && method === "POST") {
       try {
         const body = await request.json();
-        const {
-          products: productIds,
-          recipient,
-          recipients,
-          templateName,
-          templateLanguage,
-          templateComponents,
-          templateVariables,
-          templateHeaderImageUrl,
-        } = body;
+        const productIds = body.products || body.productIds || [];
         const normalizedProductIds = Array.isArray(productIds)
           ? productIds
-          : [];
+          : (typeof productIds === 'string' ? [productIds] : []);
 
-        // Handle both single recipient and multiple recipients
+        const rawPhone = body.phone || body.recipient || body.to;
+        const rawPhones = body.recipients || body.phones || [];
+
         let recipientList = [];
-        if (recipients && Array.isArray(recipients) && recipients.length > 0) {
-          recipientList = recipients;
-        } else if (recipient) {
-          // Support both single recipient and comma-separated recipients
-          recipientList = recipient
-            .split(",")
-            .map((r) => r.trim())
-            .filter((r) => r);
-        } else {
+        if (Array.isArray(rawPhones) && rawPhones.length > 0) {
+          recipientList = rawPhones.map((r) => String(r).replace(/\D/g, '')).filter((r) => r.length >= 10);
+        } else if (rawPhone) {
+          recipientList = String(rawPhone)
+            .split(/[\n,]/)
+            .map((r) => r.replace(/\D/g, ''))
+            .filter((r) => r.length >= 10);
+        }
+
+        if (recipientList.length === 0) {
           return handleCORS(
             NextResponse.json(
-              { error: "Recipient phone number(s) required" },
+              { error: "Recipient phone number(s) required (e.g. 917210562014)" },
               { status: 400 },
             ),
           );
         }
+
+        const templateName = body.templateName || body.template;
+        const templateLanguage = body.templateLanguage || body.language || 'en_US';
+        const templateHeaderImageUrl = body.templateHeaderImageUrl || body.headerImageUrl;
+        const templateVariables = body.templateVariables || body.variables || [];
+        const templateComponents = body.templateComponents || [];
 
         // Get integrations with fallbacks
         const integrations = await getStoredIntegrations(currentUserId);
