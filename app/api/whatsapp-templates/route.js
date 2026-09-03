@@ -1,31 +1,7 @@
 import { NextResponse } from 'next/server'
 import { buildMetaAuthHeaders, mapMetaAccessTokenError } from '@/lib/meta-auth'
-import { query } from '@/lib/postgres'
 import { requireRequestUserId } from '@/lib/request-user'
-
-import { decrypt } from '@/lib/encryption'
-
-async function getStoredIntegrations(userId) {
-  const [rows] = await query(
-    `SELECT whatsapp
-     FROM integrations
-     WHERE userId = ?
-     ORDER BY updatedAt DESC, id DESC
-     LIMIT 1`,
-    [userId]
-  )
-  const row = rows[0]
-  if (!row) return null
-  
-  let whatsappStr = row.whatsapp
-  if (typeof whatsappStr === 'string' && whatsappStr.includes(':')) {
-    whatsappStr = decrypt(whatsappStr)
-  }
-  
-  return {
-    whatsapp: typeof whatsappStr === 'string' ? JSON.parse(whatsappStr) : whatsappStr
-  }
-}
+import { getStoredIntegrations } from '@/lib/db/integration-repository'
 
 export async function GET(request) {
   try {
