@@ -5,7 +5,8 @@ import { toast, Toaster } from 'sonner'
 import { 
   CheckCircle2, CheckCheck, Loader2, ImagePlus, RefreshCw, Send, Users, 
   Clock3, Wand2, Search, PlusCircle, Check, Package, User, 
-  Megaphone, ShoppingBag, Layers, AlertCircle, Sparkles, Phone
+  Megaphone, ShoppingBag, Layers, AlertCircle, Sparkles, Phone, X,
+  UserCheck, UserX, SlidersHorizontal, Filter
 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -126,6 +127,11 @@ function CampaignsStudio() {
   const [isSending, setIsSending] = useState(false)
   
   const [audienceCounts, setAudienceCounts] = useState({ allCustomers: 0, recentBuyers: 0 })
+  const [allCustomersList, setAllCustomersList] = useState([])
+  const [excludedPhones, setExcludedPhones] = useState([])
+  const [showCustomerModal, setShowCustomerModal] = useState(false)
+  const [customerModalSearch, setCustomerModalSearch] = useState('')
+  const [loadingAudience, setLoadingAudience] = useState(false)
   const [existingContacts, setExistingContacts] = useState([])
   const [contactSearch, setContactSearch] = useState('')
   const [productSearch, setProductSearch] = useState('')
@@ -141,7 +147,9 @@ function CampaignsStudio() {
 
   async function loadAudienceStats() {
     try {
-      const [chatsRes, ordersRes] = await Promise.all([
+      setLoadingAudience(true)
+      const [customersRes, chatsRes, ordersRes] = await Promise.all([
+        fetch('/api/customers').then(r => r.ok ? r.json() : []).catch(() => []),
         fetch('/api/chats').then(r => r.ok ? r.json() : []).catch(() => []),
         fetch('/api/orders').then(r => r.ok ? r.json() : []).catch(() => [])
       ])
@@ -149,7 +157,7 @@ function CampaignsStudio() {
       const contactsMap = new Map()
       const uniquePhones = new Set()
 
-      ;(chatsRes || []).forEach(c => {
+      ;(customersRes || []).forEach(c => {
         if (c.phone) {
           const raw = String(c.phone).replace(/\D/g, '')
           if (raw.length >= 10) {
@@ -157,8 +165,34 @@ function CampaignsStudio() {
             contactsMap.set(raw, {
               id: c.id || raw,
               name: c.name || 'Customer',
-              phone: raw
+              phone: raw,
+              email: c.email || '',
+              ordersCount: c.ordersCount || 0,
+              totalSpent: c.totalSpent || '0.00',
+              lastOrderDate: c.lastOrderDate || null,
+              source: c.source || 'shopify'
             })
+          }
+        }
+      })
+
+      ;(chatsRes || []).forEach(c => {
+        if (c.phone) {
+          const raw = String(c.phone).replace(/\D/g, '')
+          if (raw.length >= 10) {
+            uniquePhones.add(raw)
+            if (!contactsMap.has(raw)) {
+              contactsMap.set(raw, {
+                id: c.id || raw,
+                name: c.name || 'WhatsApp Contact',
+                phone: raw,
+                email: '',
+                ordersCount: 0,
+                totalSpent: '0.00',
+                lastOrderDate: c.timestamp || null,
+                source: 'chat'
+              })
+            }
           }
         }
       })
@@ -173,46 +207,43 @@ function CampaignsStudio() {
               contactsMap.set(raw, {
                 id: o.id || raw,
                 name: o.customerName || 'Store Buyer',
-                phone: raw
+                phone: raw,
+                email: '',
+                ordersCount: 1,
+                totalSpent: String(o.total || '0.00'),
+                lastOrderDate: o.createdAt || null,
+                source: 'order'
               })
             }
           }
         }
       })
 
+      const contactsList = Array.from(contactsMap.values())
+      setAllCustomersList(contactsList)
+      setExistingContacts(contactsList)
+
       const thirtyDaysAgo = new Date()
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
 
-      const recentOrders = (ordersRes || []).filter(o => {
-        const orderDate = new Date(o.createdAt || o.created_at || o.timestamp)
-        return !isNaN(orderDate.getTime()) && orderDate >= thirtyDaysAgo
+      const recentList = contactsList.filter(c => {
+        if (!c.lastOrderDate) return false
+        const d = new Date(c.lastOrderDate)
+        return !isNaN(d.getTime()) && d >= thirtyDaysAgo
       })
-      const recentPhones = new Set()
-      recentOrders.forEach(o => {
-        const p = o.customerPhone || o.phone
-        if (p) recentPhones.add(String(p).replace(/\D/g, ''))
-      })
-
-      if (recentPhones.size === 0) {
-        (chatsRes || []).forEach(c => {
-          const chatDate = new Date(c.timestamp || c.createdAt)
-          if (!isNaN(chatDate.getTime()) && chatDate >= thirtyDaysAgo && c.phone) {
-            recentPhones.add(String(c.phone).replace(/\D/g, ''))
-          }
-        })
-      }
 
       setAudienceCounts({
-        allCustomers: uniquePhones.size,
-        recentBuyers: recentPhones.size
+        allCustomers: contactsList.length,
+        recentBuyers: recentList.length > 0 ? recentList.length : contactsList.length
       })
-      const contactsList = Array.from(contactsMap.values())
-      setExistingContacts(contactsList)
+
       if (contactsList.length > 0 && !singlePhone) {
         setSinglePhone(contactsList[0].phone)
       }
     } catch (e) {
       console.error('Failed to load audience stats:', e)
+    } finally {
+      setLoadingAudience(false)
     }
   }
 
@@ -384,22 +415,42 @@ function CampaignsStudio() {
     return templates.filter(t => (t.category || '').toUpperCase() === templateFilter)
   }, [templates, templateFilter])
 
+  const activeAudienceList = useMemo(() => {
+    if (audienceType === 'all_customers') return allCustomersList
+    if (audienceType === 'recent_buyers') {
+      const thirtyDaysAgo = new Date()
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+      const recents = allCustomersList.filter(c => {
+        if (!c.lastOrderDate) return false
+        const d = new Date(c.lastOrderDate)
+        return !isNaN(d.getTime()) && d >= thirtyDaysAgo
+      })
+      return recents.length > 0 ? recents : allCustomersList
+    }
+    return []
+  }, [audienceType, allCustomersList])
+
+  function toggleExcludePhone(phone) {
+    setExcludedPhones(prev => 
+      prev.includes(phone) ? prev.filter(p => p !== phone) : [...prev, phone]
+    )
+  }
+
   // Recipient Count & Estimation
   const resolvedRecipients = useMemo(() => {
     if (audienceType === 'single') {
       const clean = singlePhone.replace(/\D/g, '')
       return clean.length >= 10 ? [clean] : []
     }
-    if (audienceType === 'all_customers') {
-      return Array.from({ length: audienceCounts.allCustomers || 1 })
-    }
-    if (audienceType === 'recent_buyers') {
-      return Array.from({ length: audienceCounts.recentBuyers || 1 })
+    if (audienceType === 'all_customers' || audienceType === 'recent_buyers') {
+      return activeAudienceList
+        .filter(c => !excludedPhones.includes(c.phone))
+        .map(c => c.phone)
     }
     // Custom
     const fromInput = customPhones.split(/[\n,]/).map(p => p.replace(/\D/g, '')).filter(p => p.length >= 10)
     return Array.from(new Set([...selectedContacts, ...fromInput]))
-  }, [audienceType, singlePhone, customPhones, selectedContacts, audienceCounts])
+  }, [audienceType, singlePhone, customPhones, selectedContacts, activeAudienceList, excludedPhones])
 
   const estimatedCost = useMemo(() => {
     return (resolvedRecipients.length * 0.78).toFixed(2)
@@ -474,7 +525,7 @@ function CampaignsStudio() {
           variables: messageMode === 'template' ? templateVariables : [],
           productIds: selectedProductIds,
           audience: audienceType,
-          recipients: audienceType === 'custom' ? resolvedRecipients : [],
+          recipients: resolvedRecipients,
           status: 'scheduled'
         })
       })
@@ -575,7 +626,7 @@ function CampaignsStudio() {
               >
                 <Users className={`w-4 h-4 mb-1 ${audienceType === 'all_customers' ? 'text-blue-600' : 'text-slate-400'}`} />
                 <p className="text-xs font-bold text-slate-900">All Customers</p>
-                <p className="text-[10px] text-slate-400">{(audienceCounts.allCustomers || 0).toLocaleString()} Total</p>
+                <p className="text-[10px] text-slate-400">{(allCustomersList.length || audienceCounts.allCustomers || 0).toLocaleString()} Total</p>
               </button>
 
               <button
@@ -641,6 +692,111 @@ function CampaignsStudio() {
                       </div>
                     )
                   })}
+                </div>
+              </div>
+            </div>
+          ) : (audienceType === 'all_customers' || audienceType === 'recent_buyers') ? (
+            <div className="space-y-3 p-3.5 bg-white rounded-xl border border-slate-200 shadow-sm">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-xs font-bold text-slate-900">
+                    {audienceType === 'all_customers' ? 'All Customers List' : 'Recent Buyers List'}
+                  </h3>
+                  <p className="text-[10px] text-slate-500 font-medium">
+                    {resolvedRecipients.length} of {activeAudienceList.length} selected
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={loadAudienceStats}
+                    disabled={loadingAudience}
+                    title="Sync latest customers from Shopify"
+                    className="h-7 w-7 p-0 text-slate-500 hover:text-blue-600 rounded-lg"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${loadingAudience ? 'animate-spin text-blue-600' : ''}`} />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowCustomerModal(true)}
+                    className="h-7 px-2.5 text-[11px] font-bold text-blue-600 border-blue-200 bg-blue-50/50 hover:bg-blue-100 rounded-lg flex items-center gap-1"
+                  >
+                    <Users className="w-3 h-3" />
+                    View / Exclude
+                  </Button>
+                </div>
+              </div>
+
+              {/* Exclusion Summary & Controls */}
+              <div className="space-y-2 pt-1 border-t border-slate-100">
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="font-semibold text-slate-600">
+                    {excludedPhones.length > 0 ? (
+                      <span className="text-amber-600 font-bold">⚠️ {excludedPhones.length} excluded</span>
+                    ) : (
+                      <span className="text-emerald-600 font-bold">✅ 100% selected</span>
+                    )}
+                  </span>
+                  {excludedPhones.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setExcludedPhones([])}
+                      className="text-[10px] font-bold text-blue-600 hover:underline"
+                    >
+                      Reset (Include All)
+                    </button>
+                  )}
+                </div>
+
+                {/* Quick List Preview with Checkboxes */}
+                <div className="max-h-52 overflow-y-auto space-y-1.5 pr-1 divide-y divide-slate-100">
+                  {activeAudienceList.slice(0, 30).map(c => {
+                    const isExcluded = excludedPhones.includes(c.phone)
+                    return (
+                      <div
+                        key={c.phone}
+                        onClick={() => toggleExcludePhone(c.phone)}
+                        className={`p-2 rounded-lg cursor-pointer text-xs flex items-center justify-between transition-all ${
+                          isExcluded
+                            ? 'bg-slate-50 text-slate-400 opacity-60'
+                            : 'bg-blue-50/40 hover:bg-blue-50/80 text-slate-800'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <input
+                            type="checkbox"
+                            checked={!isExcluded}
+                            onChange={() => {}}
+                            className="w-3.5 h-3.5 rounded text-blue-600 pointer-events-none"
+                          />
+                          <div className="truncate">
+                            <p className="font-bold text-[11px] text-slate-900 truncate">{c.name}</p>
+                            <p className="text-[10px] text-slate-500">+{c.phone} {c.ordersCount > 0 ? `• ${c.ordersCount} orders` : ''}</p>
+                          </div>
+                        </div>
+                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${isExcluded ? 'bg-slate-200 text-slate-600' : 'bg-emerald-100 text-emerald-800'}`}>
+                          {isExcluded ? 'Excluded' : 'Included'}
+                        </span>
+                      </div>
+                    )
+                  })}
+                  {activeAudienceList.length > 30 && (
+                    <div className="pt-2 text-center">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setShowCustomerModal(true)}
+                        className="text-[11px] font-bold text-blue-600 hover:underline"
+                      >
+                        + View all {activeAudienceList.length} customers in modal
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -1146,6 +1302,139 @@ function CampaignsStudio() {
           </div>
         </section>
       </main>
+
+      {/* ===================== CUSTOMER VIEW & EXCLUSION MODAL ===================== */}
+      {showCustomerModal && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
+                  <Users className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Manage Customer Audience</h3>
+                  <p className="text-[11px] text-slate-500">
+                    {resolvedRecipients.length} of {activeAudienceList.length} customers selected for this campaign
+                  </p>
+                </div>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowCustomerModal(false)}
+                className="h-8 w-8 p-0 rounded-full text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+
+            {/* Modal Search & Batch Controls */}
+            <div className="p-3 border-b border-slate-100 bg-white flex flex-col sm:flex-row gap-2 items-center justify-between">
+              <div className="relative w-full sm:w-72">
+                <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <Input
+                  className="pl-8 text-xs h-8 bg-slate-50 border-slate-200 rounded-lg"
+                  placeholder="Search by name, phone, email..."
+                  value={customerModalSearch}
+                  onChange={(e) => setCustomerModalSearch(e.target.value)}
+                />
+              </div>
+
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setExcludedPhones([])}
+                  className="h-7 text-[11px] font-bold text-emerald-700 bg-emerald-50 border-emerald-200 hover:bg-emerald-100"
+                >
+                  <UserCheck className="w-3 h-3 mr-1" />
+                  Select All ({activeAudienceList.length})
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setExcludedPhones(activeAudienceList.map(c => c.phone))}
+                  className="h-7 text-[11px] font-bold text-rose-700 bg-rose-50 border-rose-200 hover:bg-rose-100"
+                >
+                  <UserX className="w-3 h-3 mr-1" />
+                  Exclude All
+                </Button>
+              </div>
+            </div>
+
+            {/* Modal Customer List */}
+            <div className="flex-1 overflow-y-auto p-3 space-y-1.5 divide-y divide-slate-100">
+              {activeAudienceList
+                .filter(c => {
+                  if (!customerModalSearch.trim()) return true
+                  const q = customerModalSearch.toLowerCase()
+                  return (
+                    (c.name || '').toLowerCase().includes(q) ||
+                    (c.phone || '').includes(q) ||
+                    (c.email || '').toLowerCase().includes(q)
+                  )
+                })
+                .map(c => {
+                  const isExcluded = excludedPhones.includes(c.phone)
+                  return (
+                    <div
+                      key={c.phone}
+                      onClick={() => toggleExcludePhone(c.phone)}
+                      className={`p-2.5 rounded-xl cursor-pointer text-xs flex items-center justify-between transition-all ${
+                        isExcluded
+                          ? 'bg-slate-50 text-slate-400 opacity-60'
+                          : 'bg-blue-50/50 hover:bg-blue-50 text-slate-800'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <input
+                          type="checkbox"
+                          checked={!isExcluded}
+                          onChange={() => {}}
+                          className="w-4 h-4 rounded text-blue-600 pointer-events-none"
+                        />
+                        <div className="truncate">
+                          <p className="font-bold text-xs text-slate-900 truncate">{c.name}</p>
+                          <p className="text-[11px] text-slate-500 font-mono">+{c.phone}</p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        {c.ordersCount > 0 && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">
+                            {c.ordersCount} orders {c.totalSpent > 0 ? `(₹${Number(c.totalSpent).toLocaleString()})` : ''}
+                          </span>
+                        )}
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                          isExcluded ? 'bg-slate-200 text-slate-600' : 'bg-emerald-100 text-emerald-800'
+                        }`}>
+                          {isExcluded ? 'Excluded' : 'Selected'}
+                        </span>
+                      </div>
+                    </div>
+                  )
+                })}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-3 border-t border-slate-100 bg-slate-50 flex items-center justify-between">
+              <span className="text-xs text-slate-500 font-medium">
+                Estimated Cost: <strong className="text-slate-900">₹{(resolvedRecipients.length * 0.78).toFixed(2)}</strong>
+              </span>
+              <Button
+                onClick={() => setShowCustomerModal(false)}
+                className="h-8 px-4 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow-sm"
+              >
+                Apply Selection ({resolvedRecipients.length} Customers)
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
