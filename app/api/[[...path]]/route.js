@@ -3247,16 +3247,6 @@ async function handleRoute(request, { params }) {
                 getLatestStoredOrderByPhone(formattedRecipient),
               ]);
 
-              if (requiresOrderContext && !latestOrder) {
-                results.push({
-                  recipient,
-                  success: false,
-                  error:
-                    "This template is mapped to order or purchased-product fields, but no recent order was found for this recipient.",
-                });
-                continue;
-              }
-
               const orderProductContext = buildOrderProductContext(latestOrder);
               const templatePayload = buildCatalogTemplatePayload({
                 templateName,
@@ -3271,13 +3261,13 @@ async function handleRoute(request, { params }) {
                     latestOrder?.customerName ||
                     "Customer",
                   customer_phone: formattedRecipient,
-                  order_number: latestOrder?.orderNumber || "",
+                  order_number: latestOrder?.orderNumber || "1001",
                   tracking_number: "",
                   tracking_url: "",
                   order_total: latestOrder?.total
                     ? String(latestOrder.total)
-                    : "",
-                  currency: latestOrder?.currency || "",
+                    : "0.00",
+                  currency: latestOrder?.currency || "USD",
                 },
               });
 
@@ -3324,56 +3314,38 @@ async function handleRoute(request, { params }) {
                 messageId: result.messages?.[0]?.id,
               });
             } else {
-              // Use the existing text-based approach
-              const hasCatalogId = integrations.whatsapp.catalogId;
+              // Custom Image & Text / Direct Broadcast Mode
+              const customText = body.customMessage || customMessage || "";
+              const mediaUrl = body.imageUrl || body.templateHeaderImageUrl || (selectedProducts[0]?.image) || "";
 
-              // Always use text-based messages to avoid template approval requirements
-              // Create a catalog link
-              const businessAccountId =
-                integrations.whatsapp.businessAccountId ||
-                integrations.whatsapp.phoneNumberId;
-              const catalogLink = `https://wa.me/c/${businessAccountId}`;
+              let messageData;
+              let loggedContent = customText || "Direct WhatsApp Message";
 
-              // Create a message that includes information about selected products with images
-              let productInfo = "";
-              if (selectedProducts.length > 0) {
-                productInfo = "Selected products:\n";
-                selectedProducts.slice(0, 3).forEach((product, index) => {
-                  let productEntry = `${index + 1}. *${product.title}* - $${product.price}\n`;
-                  if (product.image) {
-                    productEntry += `   📷 Image: ${product.image}\n`;
-                  }
-                  if (product.description) {
-                    productEntry += `   📝 ${product.description.substring(0, 100)}${product.description.length > 100 ? "..." : ""}\n`;
-                  }
-                  productInfo += productEntry + "\n";
-                });
-                if (selectedProducts.length > 3) {
-                  productInfo += `...and ${selectedProducts.length - 3} more items\n`;
-                }
+              if (mediaUrl) {
+                messageData = {
+                  messaging_product: "whatsapp",
+                  to: formattedRecipient,
+                  type: "image",
+                  image: {
+                    link: mediaUrl,
+                    caption: (customText || "Check out our latest collection! ✨").slice(0, 1024),
+                  },
+                };
+                loggedContent = `[Image: ${mediaUrl}] ${customText}`;
+              } else {
+                messageData = {
+                  messaging_product: "whatsapp",
+                  to: formattedRecipient,
+                  type: "text",
+                  text: {
+                    body: customText || "Hello! Check out our collection.",
+                    preview_url: true,
+                  },
+                };
               }
 
-              const catalogMessage = `🛍️ *Our Product Catalog*
-
-Check out our latest products:
-${catalogLink}
-
-${productInfo ? `${productInfo}` : ""}Browse our full collection and find something special just for you!
-
-🛍️ *Shop Now* - Click the link above to browse our catalog with images`;
-
-              const messageData = {
-                messaging_product: "whatsapp",
-                to: formattedRecipient,
-                type: "text",
-                text: {
-                  body: catalogMessage,
-                  preview_url: true,
-                },
-              };
-
               console.log(
-                "Sending message with data:",
+                "Sending custom direct message with data:",
                 JSON.stringify(messageData, null, 2),
               );
 
@@ -3395,7 +3367,7 @@ ${productInfo ? `${productInfo}` : ""}Browse our full collection and find someth
                 userId: currentUserId,
                 recipient: formattedRecipient,
                 phone: formattedRecipient,
-                message: catalogMessage,
+                message: loggedContent,
                 isCustomer: false,
                 timestamp: new Date(),
                 products: selectedProducts,

@@ -543,27 +543,32 @@ export async function POST(request, props) {
       return NextResponse.json({ error: 'WhatsApp not configured. Please connect WhatsApp in Settings.' }, { status: 400 })
     }
 
-    // Fetch the live template definition from WhatsApp API
-    const templateDefinition = await getApprovedTemplateDefinition(
-      businessAccountId,
-      accessToken,
-      campaign.template,
-      phoneNumberId
-    )
-
-    const storedVariables = Array.isArray(campaign.variables) ? campaign.variables : []
-    const hasProductActions = templateHasProductActions(templateDefinition.components || [])
+    const isCustomMode = !campaign.template || campaign.campaignType?.startsWith('custom')
     const selectedProducts = await getSelectedProducts(campaign.productIds, userId)
+    let templateDefinition = null
+    let productContext = {}
 
-    if (hasProductActions && selectedProducts.length === 0) {
-      return NextResponse.json(
-        { error: `Campaign template "${campaign.template}" includes a catalog product button. Please select at least one product in Catalog Integration.` },
-        { status: 400 }
+    if (!isCustomMode) {
+      // Fetch the live template definition from WhatsApp API
+      templateDefinition = await getApprovedTemplateDefinition(
+        businessAccountId,
+        accessToken,
+        campaign.template,
+        phoneNumberId
       )
+
+      const hasProductActions = templateHasProductActions(templateDefinition.components || [])
+      if (hasProductActions && selectedProducts.length === 0) {
+        return NextResponse.json(
+          { error: `Campaign template "${campaign.template}" includes a catalog product button. Please select at least one product in Catalog Integration.` },
+          { status: 400 }
+        )
+      }
+
+      productContext = buildProductContext(selectedProducts, integrations.shopify, integrations.whatsapp)
     }
 
-    const productContext = buildProductContext(selectedProducts, integrations.shopify, integrations.whatsapp)
-
+    const storedVariables = Array.isArray(campaign.variables) ? campaign.variables : []
     const recipients = await getRecipients(campaign, userId)
     console.log(`[Send Campaign] Found ${recipients.length} recipients for campaign ${campaign.id}:`, recipients);
 
@@ -575,28 +580,60 @@ export async function POST(request, props) {
     for (const recipient of recipients) {
       try {
         const recipientContext = await getRecipientContext(recipient, userId)
-        const messageTemplate = buildCampaignTemplatePayload({
-          templateDefinition,
-          templateName: campaign.template,
-          templateLanguage: campaign.templateLanguage,
-          templateVariables: storedVariables,
-          templateHeaderImageUrl: campaign.templateHeaderImageUrl,
-          productContext,
-          recipientContext
-        })
+        let messagePayload = null
+        const cleanRecipient = recipient.replace(/\D/g, '')
 
-        console.log(`[Send Campaign] Sending template ${campaign.template} to ${recipient}...`);
+        if (isCustomMode) {
+          const mediaUrl = campaign.templateHeaderImageUrl || (selectedProducts[0]?.image) || ""
+          const customBody = campaign.message || "Hello! Check out our collection."
+
+          if (mediaUrl) {
+            messagePayload = {
+              messaging_product: 'whatsapp',
+              to: cleanRecipient,
+              type: 'image',
+              image: {
+                link: mediaUrl,
+                caption: customBody.slice(0, 1024)
+              }
+            }
+          } else {
+            messagePayload = {
+              messaging_product: 'whatsapp',
+              to: cleanRecipient,
+              type: 'text',
+              text: {
+                body: customBody,
+                preview_url: true
+              }
+            }
+          }
+        } else {
+          const messageTemplate = buildCampaignTemplatePayload({
+            templateDefinition,
+            templateName: campaign.template,
+            templateLanguage: campaign.templateLanguage,
+            templateVariables: storedVariables,
+            templateHeaderImageUrl: campaign.templateHeaderImageUrl,
+            productContext,
+            recipientContext
+          })
+
+          messagePayload = {
+            messaging_product: 'whatsapp',
+            to: cleanRecipient,
+            type: 'template',
+            template: messageTemplate
+          }
+        }
+
+        console.log(`[Send Campaign] Sending to ${recipient}...`);
 
         const result = await sendWhatsAppMessage(
           phoneNumberId,
           accessToken,
           recipient,
-          {
-            messaging_product: 'whatsapp',
-            to: recipient.replace(/\D/g, ''),
-            type: 'template',
-            template: messageTemplate
-          }
+          messagePayload
         )
 
         console.log(`[Send Campaign] Result for ${recipient}:`, result);

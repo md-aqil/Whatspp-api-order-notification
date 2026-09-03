@@ -370,8 +370,13 @@ function CampaignsStudio() {
 
   // Send Execution Handler
   async function handleSend() {
-    if (!selectedTemplateName) {
+    if (messageMode === 'template' && !selectedTemplateName) {
       toast.error('Please select an approved WhatsApp template.')
+      return
+    }
+
+    if (messageMode === 'custom' && !customText.trim() && !headerImageUrl && selectedProductIds.length === 0) {
+      toast.error('Please enter custom text or attach an image.')
       return
     }
 
