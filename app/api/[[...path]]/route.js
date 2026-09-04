@@ -84,6 +84,22 @@ import { triggerAutomationEvent } from "@/lib/automation-engine";
 import { getGoogleSheetsClient } from "@/lib/google-sheets-api";
 import { normalizePhoneNumber } from "@/lib/phone-utils";
 
+const recentlyProcessedWaMessages = new Map();
+function isDuplicateWaMessage(messageId) {
+  if (!messageId) return false;
+  const now = Date.now();
+  for (const [id, ts] of recentlyProcessedWaMessages.entries()) {
+    if (now - ts > 5 * 60 * 1000) {
+      recentlyProcessedWaMessages.delete(id);
+    }
+  }
+  if (recentlyProcessedWaMessages.has(messageId)) {
+    return true;
+  }
+  recentlyProcessedWaMessages.set(messageId, now);
+  return false;
+}
+
 // Automation State Helpers (To be moved to lib/automation-engine.js if needed)
 
 function collectInstagramMessageEditMids(body = {}) {
@@ -1345,6 +1361,12 @@ async function handleRoute(request, { params }) {
                       await getStoredIntegrations(incomingUserId);
 
                     for (const message of change.value.messages) {
+                      // Deduplicate: Meta webhooks can retry with identical message ID
+                      if (message.id && isDuplicateWaMessage(message.id)) {
+                        console.log(`[WhatsApp Webhook] Duplicate message skipped: ${message.id}`);
+                        continue;
+                      }
+
                       // Save incoming message to database
                       const contact = contactsByWaId.get(message.from);
                       const savedMessage = await saveIncomingMessage(
