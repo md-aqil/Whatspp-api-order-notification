@@ -82,26 +82,39 @@ async function setupDatabase() {
         CREATE TABLE IF NOT EXISTS integrations (
         id INT AUTO_INCREMENT PRIMARY KEY,
         userId VARCHAR(255) NOT NULL DEFAULT 'default',
-        whatsapp JSON,
-        shopify JSON,
-        stripe JSON,
-        zoho JSON,
-        googleSheets JSON,
+        whatsapp LONGTEXT,
+        shopify LONGTEXT,
+        stripe LONGTEXT,
+        zoho LONGTEXT,
+        googleSheets LONGTEXT,
         createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         UNIQUE (userId)
       )
     `);
 
-        // Migrate integrations table: add googleSheets column if not exists
+        // Migrate integrations table: ensure columns are LONGTEXT to support encrypted strings
         try {
-            const [columns] = await query("SHOW COLUMNS FROM integrations LIKE 'googleSheets'");
-            if (!columns || columns.length === 0) {
-                console.log("Migrating integrations table: adding googleSheets column");
-                await query("ALTER TABLE integrations ADD COLUMN googleSheets JSON AFTER zoho");
+            const columnsToMigrate = ['whatsapp', 'shopify', 'stripe', 'zoho', 'googleSheets'];
+            for (const col of columnsToMigrate) {
+                try {
+                    const [cols] = await query(`SHOW COLUMNS FROM integrations LIKE '${col}'`);
+                    if (cols && cols.length > 0) {
+                        const type = cols[0].Type ? cols[0].Type.toLowerCase() : '';
+                        if (type === 'json' || !type.includes('text')) {
+                            console.log(`Migrating integrations table: altering ${col} to LONGTEXT`);
+                            await query(`ALTER TABLE integrations MODIFY COLUMN ${col} LONGTEXT`);
+                        }
+                    } else if (col === 'googleSheets') {
+                        console.log("Migrating integrations table: adding googleSheets column");
+                        await query("ALTER TABLE integrations ADD COLUMN googleSheets LONGTEXT AFTER zoho");
+                    }
+                } catch (colErr) {
+                    console.warn(`Migration warning for integrations column ${col}:`, colErr.message);
+                }
             }
         } catch (err) {
-            console.warn("Migration warning for integrations googleSheets column:", err.message);
+            console.warn("Migration warning for integrations columns:", err.message);
         }
 
         // Migrate knowledge_base table: add embedding column if not exists
