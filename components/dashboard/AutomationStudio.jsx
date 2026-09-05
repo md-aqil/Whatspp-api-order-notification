@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import Link from 'next/link'
-import { BellRing, CheckCircle2, Clock3, CopyPlus, Copy, Database, HelpCircle, History, MessageSquareText, PackageCheck, PlayCircle, Plus, Settings, Sparkles, Square, Trash2, Truck, Workflow, X, Zap, ZoomIn, ZoomOut, Maximize2, ArrowLeft, Download, Upload, LayoutGrid, MousePointer2, Search, Rocket, Activity, ChevronRight, ArrowRight, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, ToggleLeft, Loader2, Instagram, Users, Smartphone, Send, Bot, RefreshCw } from 'lucide-react'
+import { BellRing, CheckCircle2, Clock3, CopyPlus, Copy, Database, Dices, HelpCircle, History, MessageSquareText, PackageCheck, PlayCircle, Plus, Settings, Sparkles, Square, Trash2, Truck, Workflow, X, Zap, ZoomIn, ZoomOut, Maximize2, ArrowLeft, Download, Upload, LayoutGrid, MousePointer2, Search, Rocket, Activity, ChevronRight, ArrowRight, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, ToggleLeft, Loader2, Instagram, Users, Smartphone, Send, Bot, RefreshCw } from 'lucide-react'
 import { toast, Toaster } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -44,6 +44,7 @@ const BLOCKS = [
   { type: 'interactive', tab: 'Actions', label: 'Interactive Menu', icon: HelpCircle, color: 'fuchsia', description: 'Send a menu with reply options', defaults: { title: 'Auto Reply Menu', message: 'Hello {{customer_name}}, welcome! 👋 We\'re here to provide you with a premium experience. How can we assist you today? Please select an option below:', options: [{ id: 'opt0', label: '📦 Order Status' }, { id: 'opt1', label: '💬 Talk to Specialist' }], description: 'Professional interactive menu' } },
   { type: 'ai_reply', tab: 'Actions', label: 'AI Assistant', icon: Sparkles, color: 'indigo', description: 'Natural AI response using knowledge base', defaults: { title: 'AI Assistant', description: 'AI-powered reply', recipientMode: 'customer' } },
   { type: 'zoho_action', tab: 'Actions', label: 'Zoho CRM', icon: Database, color: 'orange', description: 'Update CRM records or log notes', defaults: { title: 'Update Zoho CRM', action: 'add_note', content: 'Customer interacted with WhatsApp', status: 'Contacted', description: 'Real-time CRM writeback', createFields: { Company: '{{company}}', Last_Name: '{{customer_name}}' } } },
+  { type: 'spin_wheel', tab: 'Actions', label: 'Spin & Coupon', icon: Dices, color: 'rose', description: 'Pick a weighted reward tier and mint a single-use Shopify coupon', defaults: { title: 'Spin & mint coupon', description: 'Weighted reward — mints a Shopify discount code', tiers: [{ id: 'small', label: '5% off', weight: 60, valueType: 'percentage', value: 5, prefix: 'WHEEL5', ttlDays: 14 }, { id: 'medium', label: '10% off', weight: 30, valueType: 'percentage', value: 10, prefix: 'WHEEL10', ttlDays: 14 }, { id: 'large', label: '20% off', weight: 9, valueType: 'percentage', value: 20, prefix: 'WHEEL20', ttlDays: 14 }, { id: 'jackpot', label: '₹/$25 off', weight: 1, valueType: 'fixed_amount', value: 25, prefix: 'JACKPOT', ttlDays: 14 }], cooldownHours: 24 } },
   { type: 'google_sheets_action', tab: 'Actions', label: 'Google Sheets', icon: Database, color: 'green', description: 'Append lead & order data to spreadsheet', defaults: { title: 'Write to Google Sheet', spreadsheetId: '', sheetName: 'Sheet1', description: 'Log profile & checkout info dynamically' } },
   { type: 'http_request', tab: 'Actions', label: 'External API', icon: Workflow, color: 'sky', description: 'Connect to CRMs like Zoho, Salesforce, or custom APIs', defaults: { title: 'Zoho CRM Sync', method: 'POST', url: 'https://www.zohoapis.com/crm/v2/Leads', headers: '{\n  "Authorization": "Zoho-oauthtoken {{zoho_token}}",\n  "Content-Type": "application/json"\n}', body: '{\n  "data": [\n    {\n      "Last_Name": "{{customer_name}}",\n      "Phone": "{{customer_phone}}",\n      "Description": "Lead from WhatsApp Automation"\n    }\n  ]\n}', description: 'Send data to external CRM' } },
 ]
@@ -1258,9 +1259,9 @@ export function AutomationStudio() {
 
         <div className="flex items-center gap-2">
           {viewMode === 'editor' && active && (
-            <div className="flex items-center gap-2 mr-2 px-3 py-1.5 bg-white/5 rounded-xl border border-white/10 hidden lg:flex">
+            <div className="flex items-center gap-2 mr-2 px-3 py-1.5 bg-white/5 rounded-xl border border-white/10 hidden lg:flex" title={active?.name}>
                <div className={`h-2 w-2 rounded-full ${active?.status ? 'bg-emerald-500 dot-pulse' : 'bg-white/20'}`} />
-               <span className="text-xs font-bold truncate max-w-[150px]">{active?.name}</span>
+               <span className="text-xs font-bold whitespace-nowrap max-w-[320px] overflow-hidden text-ellipsis">{active?.name}</span>
                <span className="text-[10px] text-white/30 uppercase tracking-widest">{active?.status ? 'Live' : 'Draft'}</span>
             </div>
           )}
@@ -1544,7 +1545,7 @@ export function AutomationStudio() {
         {/* LEFT */}
         <aside aria-label="Node library" className="w-[264px] shrink-0 border-r border-white/[0.06] bg-[#0d0f17] flex flex-col">
           <div className="px-4 pt-4 pb-3 border-b border-white/[0.06]">
-            <h2 className="text-sm font-bold text-white truncate leading-tight">{active?.name || 'No flow'}</h2>
+            <h2 className="text-sm font-bold text-white break-words leading-snug" title={active?.name || 'No flow'}>{active?.name || 'No flow'}</h2>
             <p className="mt-0.5 text-[11px] text-white/35 line-clamp-2">{active?.summary}</p>
 	            <div className="mt-2.5 flex gap-1.5 flex-wrap">
 	              <span role="status" className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold ${active?.status ? 'bg-emerald-500/15 text-emerald-400' : 'bg-white/[0.06] text-white/35'}`}>
@@ -1877,7 +1878,7 @@ export function AutomationStudio() {
               const isThisTestRunning = testing && step.id === testingNodeId
               const body = step.type === 'test'
                 ? (step.testSource === 'dummy' ? 'Dummy order data' : 'Latest saved order data')
-                : (step.type === 'interactive' ? step.message : (step.type === 'ai_reply' ? 'Knowledge-based response' : (step.template ? `Template: ${step.template}` : step.message || step.rule || step.description || 'Configure node')))
+                : (step.type === 'interactive' ? step.message : (step.type === 'ai_reply' ? 'Knowledge-based response' : (step.type === 'spin_wheel' ? `${(step.tiers || []).length} reward tier(s) · ${step.cooldownHours ?? 24}h cooldown` : (step.template ? `Template: ${step.template}` : step.message || step.rule || step.description || 'Configure node'))))
               return (
                 <div key={step.id} data-node="true" role="article" aria-label={`${step.type} node: ${step.title}`} aria-selected={isSel} tabIndex={0}
 	                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') setSelId(step.id); if (e.key === 'Delete') delNode(step.id) }}
@@ -2561,6 +2562,126 @@ export function AutomationStudio() {
                         )}
                       </div>
                     </div>
+                  )}
+
+                  {sel.type === 'spin_wheel' && (
+                    <>
+                      <div className="rounded-xl border border-rose-500/20 bg-rose-500/5 px-3 py-2.5 text-[11px] text-rose-100/80">
+                        Picks a weighted reward tier for the customer and mints a single-use Shopify discount code. The follow-up message step can read <code className="text-rose-200/90">{`{{discount_code}}`}</code> and <code className="text-rose-200/90">{`{{spin_tier_label}}`}</code>.
+                      </div>
+                      <div className="space-y-1.5 mt-2">
+                        <Label htmlFor="spin-cooldown" className="text-[10px] font-bold uppercase tracking-widest text-white/25">Re-spin Cooldown (hours)</Label>
+                        <Input
+                          id="spin-cooldown"
+                          type="number"
+                          min={1}
+                          value={sel.cooldownHours ?? 24}
+                          onChange={e => updStep({ cooldownHours: Math.max(1, parseInt(e.target.value, 10) || 24) })}
+                          disabled={selLocked}
+                          className={inputCls}
+                        />
+                        <p className="text-[10px] text-white/30">Same phone can't win again for this many hours (default 24h).</p>
+                      </div>
+                      <div className="space-y-2 mt-4 pt-4 border-t border-white/[0.05]">
+                        <Label className="text-[10px] font-bold uppercase tracking-widest text-rose-300 flex justify-between">
+                          Reward Tiers
+                          <span className="text-white/40">{(sel.tiers || []).length} rows</span>
+                        </Label>
+                        {(sel.tiers || []).map((tier, idx) => (
+                          <div key={idx} className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-2.5 space-y-1.5">
+                            <div className="flex items-center gap-2">
+                              <Input
+                                value={tier.label || ''}
+                                onChange={e => updStep({
+                                  tiers: (sel.tiers || []).map((t, i) => i === idx ? { ...t, label: e.target.value } : t)
+                                })}
+                                disabled={selLocked}
+                                className={`${inputCls} flex-1`}
+                                placeholder="Label (e.g. 10% off)"
+                              />
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-white/40 hover:text-rose-400 bg-rose-500/5 hover:bg-rose-500/20"
+                                onClick={() => updStep({ tiers: (sel.tiers || []).filter((_, i) => i !== idx) })}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <Label className="text-[9px] font-bold uppercase tracking-widest text-white/25">Weight</Label>
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  value={tier.weight ?? 0}
+                                  onChange={e => updStep({
+                                    tiers: (sel.tiers || []).map((t, i) => i === idx ? { ...t, weight: Math.max(0, parseInt(e.target.value, 10) || 0) } : t)
+                                  })}
+                                  disabled={selLocked}
+                                  className={inputCls}
+                                />
+                              </div>
+                              <div>
+                                <Label className="text-[9px] font-bold uppercase tracking-widest text-white/25">Value</Label>
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  value={tier.value ?? 0}
+                                  onChange={e => updStep({
+                                    tiers: (sel.tiers || []).map((t, i) => i === idx ? { ...t, value: Math.max(0, parseFloat(e.target.value) || 0) } : t)
+                                  })}
+                                  disabled={selLocked}
+                                  className={inputCls}
+                                />
+                              </div>
+                              <div>
+                                <Label className="text-[9px] font-bold uppercase tracking-widest text-white/25">Type</Label>
+                                <Select
+                                  value={tier.valueType || 'percentage'}
+                                  onValueChange={v => updStep({
+                                    tiers: (sel.tiers || []).map((t, i) => i === idx ? { ...t, valueType: v } : t)
+                                  })}
+                                  disabled={selLocked}
+                                >
+                                  <SelectTrigger className={inputCls}><SelectValue /></SelectTrigger>
+                                  <SelectContent className="z-[260] bg-[#13151f] border-white/10">
+                                    <SelectItem value="percentage" className="text-white/70 text-xs">% Percentage</SelectItem>
+                                    <SelectItem value="fixed_amount" className="text-white/70 text-xs">$ Fixed amount</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div>
+                                <Label className="text-[9px] font-bold uppercase tracking-widest text-white/25">Prefix</Label>
+                                <Input
+                                  value={tier.prefix || ''}
+                                  onChange={e => updStep({
+                                    tiers: (sel.tiers || []).map((t, i) => i === idx ? { ...t, prefix: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '') } : t)
+                                  })}
+                                  disabled={selLocked}
+                                  className={inputCls}
+                                  placeholder="WHEEL10"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full border-rose-500/20 text-rose-300 hover:bg-rose-500/10"
+                          onClick={() => updStep({
+                            tiers: [
+                              ...(sel.tiers || []),
+                              { id: `tier${(sel.tiers || []).length + 1}`, label: 'New reward', weight: 10, valueType: 'percentage', value: 5, prefix: 'WHEEL', ttlDays: 14 }
+                            ]
+                          })}
+                          disabled={selLocked}
+                        >
+                          <Plus className="h-3.5 w-3.5 mr-1" /> Add Tier
+                        </Button>
+                      </div>
+                    </>
                   )}
 
                   {sel.type === 'zoho_action' && (
