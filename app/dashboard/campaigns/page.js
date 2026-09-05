@@ -104,7 +104,7 @@ export default function CampaignsStudioPage() {
 }
 
 function CampaignsStudio() {
-  const [audienceType, setAudienceType] = useState('single') // 'single' | 'all_customers' | 'recent_buyers' | 'custom'
+  const [audienceType, setAudienceType] = useState('single') // 'single' | 'all_customers' | 'recent_buyers' | 'custom' | 'segment'
   const [campaignName, setCampaignName] = useState('New Campaign')
   const [singlePhone, setSinglePhone] = useState('')
   const [customPhones, setCustomPhones] = useState('')
@@ -127,6 +127,10 @@ function CampaignsStudio() {
   const [isSending, setIsSending] = useState(false)
   
   const [audienceCounts, setAudienceCounts] = useState({ allCustomers: 0, recentBuyers: 0 })
+  const [segmentRules, setSegmentRules] = useState([{ field: 'lifetimeTier', op: 'in', value: ['gold', 'platinum'] }])
+  const [segmentMatchCount, setSegmentMatchCount] = useState(0)
+  const [segmentPreviewing, setSegmentPreviewing] = useState(false)
+  const [segmentError, setSegmentError] = useState(null)
   const [allCustomersList, setAllCustomersList] = useState([])
   const [excludedPhones, setExcludedPhones] = useState([])
   const [showCustomerModal, setShowCustomerModal] = useState(false)
@@ -244,6 +248,30 @@ function CampaignsStudio() {
       console.error('Failed to load audience stats:', e)
     } finally {
       setLoadingAudience(false)
+    }
+  }
+
+  async function previewSegment() {
+    setSegmentPreviewing(true)
+    setSegmentError(null)
+    try {
+      const res = await fetch('/api/audience/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rules: segmentRules })
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setSegmentError(data?.error || 'preview failed')
+        setSegmentMatchCount(0)
+        return
+      }
+      setSegmentMatchCount(data.matchingCustomers ?? 0)
+    } catch (err) {
+      setSegmentError(err.message)
+      setSegmentMatchCount(0)
+    } finally {
+      setSegmentPreviewing(false)
     }
   }
 
@@ -510,6 +538,34 @@ function CampaignsStudio() {
         return
       }
 
+      // Segment-based broadcast: rules are evaluated server-side and the
+      // campaign is dispatched by /api/campaigns/segment-send in one shot.
+      if (audienceType === 'segment') {
+        const res = await fetch('/api/campaigns/segment-send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: campaignName.trim() || 'Segment Broadcast',
+            rules: segmentRules,
+            audienceName: `Segment ${new Date().toISOString().slice(0, 16)}`,
+            template: messageMode === 'template' ? selectedTemplateName : undefined,
+            templateLanguage: messageMode === 'template' ? (selectedTemplate?.language || 'en') : undefined,
+            templateCategory: messageMode === 'template' ? (selectedTemplate?.category || 'MARKETING') : undefined,
+            templateHeaderImageUrl: headerImageUrl || undefined,
+            templateVariables: messageMode === 'template' ? templateVariables : [],
+            message: messageMode === 'custom' ? customText : getTemplateBody(selectedTemplate),
+            productIds: selectedProductIds,
+            imageUrl: headerImageUrl || undefined
+          })
+        })
+        const data = await res.json()
+        if (!res.ok || data.success === false) {
+          throw new Error(data.error || 'Segment broadcast failed')
+        }
+        toast.success(`Segment broadcast sent to ${data.sent || 0}/${data.matched || 0} customers!`)
+        return
+      }
+
       // Bulk Broadcast Dispatch via /api/campaigns
       const createRes = await fetch('/api/campaigns', {
         method: 'POST',
@@ -654,7 +710,21 @@ function CampaignsStudio() {
               >
                 <Wand2 className={`w-4 h-4 mb-1 ${audienceType === 'custom' ? 'text-blue-600' : 'text-slate-400'}`} />
                 <p className="text-xs font-bold text-slate-900">Custom List</p>
-                <p className="text-[10px] text-slate-400">Select / CSV</p>
+                <p className="text-[10px] text-slate-400">Pick contacts</p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => { setAudienceType('segment'); previewSegment() }}
+                className={`p-2.5 rounded-xl border-2 text-left transition-all ${
+                  audienceType === 'segment'
+                    ? 'border-blue-600 bg-white ring-2 ring-blue-600/10 shadow-sm'
+                    : 'border-slate-200 bg-white hover:border-slate-300'
+                }`}
+              >
+                <Filter className={`w-4 h-4 mb-1 ${audienceType === 'segment' ? 'text-blue-600' : 'text-slate-400'}`} />
+                <p className="text-xs font-bold text-slate-900">Segment</p>
+                <p className="text-[10px] text-slate-400">{segmentPreviewing ? 'Counting…' : `${segmentMatchCount.toLocaleString()} matches`}</p>
               </button>
             </div>
           </div>
@@ -840,6 +910,90 @@ function CampaignsStudio() {
                   onChange={(e) => setCustomPhones(e.target.value)}
                   placeholder="917210562014, 919876543210..."
                 />
+              </div>
+            </div>
+          ) : audienceType === 'segment' ? (
+            <div className="space-y-3 p-3.5 bg-white rounded-xl border border-slate-200 shadow-sm">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-bold text-slate-800">Segment Rules</Label>
+                <button
+                  type="button"
+                  onClick={previewSegment}
+                  disabled={segmentPreviewing}
+                  className="text-[10px] font-bold text-blue-600 hover:underline disabled:text-slate-400"
+                >
+                  {segmentPreviewing ? 'Counting…' : 'Refresh count'}
+                </button>
+              </div>
+
+              {segmentRules.map((rule, idx) => (
+                <div key={idx} className="grid grid-cols-12 gap-1.5 items-center">
+                  <select
+                    className="col-span-4 bg-slate-50 border border-slate-200 text-[11px] h-7 rounded-lg px-1.5"
+                    value={rule.field}
+                    onChange={(e) => {
+                      const next = [...segmentRules]
+                      next[idx] = { ...next[idx], field: e.target.value }
+                      setSegmentRules(next)
+                    }}
+                  >
+                    <option value="lifetimeTier">Tier</option>
+                    <option value="totalOrders">Orders</option>
+                    <option value="totalSpent">Total Spent</option>
+                    <option value="lastOrderAt">Last Order Days</option>
+                    <option value="marketingOptOut">Opted Out</option>
+                  </select>
+                  <select
+                    className="col-span-3 bg-slate-50 border border-slate-200 text-[11px] h-7 rounded-lg px-1.5"
+                    value={rule.op}
+                    onChange={(e) => {
+                      const next = [...segmentRules]
+                      next[idx] = { ...next[idx], op: e.target.value }
+                      setSegmentRules(next)
+                    }}
+                  >
+                    <option value="==">is</option>
+                    <option value="!=">is not</option>
+                    <option value=">">greater than</option>
+                    <option value=">=">at least</option>
+                    <option value="<">less than</option>
+                    <option value="<=">at most</option>
+                    <option value="in">in</option>
+                    <option value="not_in">not in</option>
+                  </select>
+                  <Input
+                    className="col-span-4 bg-slate-50 border-slate-200 text-[11px] h-7 rounded-lg"
+                    placeholder="gold,platinum or 500"
+                    value={Array.isArray(rule.value) ? rule.value.join(',') : String(rule.value ?? '')}
+                    onChange={(e) => {
+                      const next = [...segmentRules]
+                      const raw = e.target.value
+                      next[idx] = { ...next[idx], value: /,/.test(raw) ? raw.split(',').map(s => s.trim()) : raw }
+                      setSegmentRules(next)
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setSegmentRules(segmentRules.filter((_, i) => i !== idx))}
+                    className="col-span-1 text-slate-400 hover:text-red-500"
+                    title="Remove rule"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+
+              <button
+                type="button"
+                onClick={() => setSegmentRules([...segmentRules, { field: 'totalOrders', op: '>=', value: 2 }])}
+                className="text-[11px] font-semibold text-blue-600 hover:underline flex items-center gap-1"
+              >
+                <PlusCircle className="w-3 h-3" /> Add rule
+              </button>
+
+              <div className="rounded-lg bg-emerald-50/70 border border-emerald-200 px-3 py-2 text-[11px] text-emerald-800">
+                <strong>{segmentMatchCount.toLocaleString()}</strong> customers match this segment.
+                {segmentError && <span className="text-red-600 ml-2">({segmentError})</span>}
               </div>
             </div>
           ) : (

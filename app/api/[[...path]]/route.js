@@ -83,6 +83,11 @@ import { enqueueAutomationEvent } from "@/lib/queue";
 import { triggerAutomationEvent } from "@/lib/automation-engine";
 import { getGoogleSheetsClient } from "@/lib/google-sheets-api";
 import { normalizePhoneNumber } from "@/lib/phone-utils";
+import {
+  getWhatsAppMediaMetadata,
+  getMediaIdFromMessage,
+  getMediaMimeTypeFromMessage
+} from "@/lib/whatsapp/media";
 
 const recentlyProcessedWaMessages = new Map();
 function isDuplicateWaMessage(messageId) {
@@ -1381,6 +1386,27 @@ async function handleRoute(request, { params }) {
                         contact,
                       );
 
+                      // Resolve inbound media URLs (image / audio / video / document)
+                      // so AI steps can do vision + voice transcription.
+                      try {
+                        const mediaId = getMediaIdFromMessage(message)
+                        if (mediaId && integrations?.whatsapp?.accessToken) {
+                          const meta = await getWhatsAppMediaMetadata(mediaId, integrations.whatsapp.accessToken)
+                          if (meta?.url) {
+                            if (message.type === 'image') {
+                              context.inbound_image_url = meta.url
+                              context.customer_image_url = meta.url
+                            } else if (message.type === 'audio') {
+                              context.inbound_audio_url = meta.url
+                              context.customer_audio_url = meta.url
+                              context.inbound_audio_mime = getMediaMimeTypeFromMessage(message) || 'audio/ogg'
+                            }
+                          }
+                        }
+                      } catch (mediaErr) {
+                        console.warn('[WhatsApp Inbound Media] resolution failed:', mediaErr.message)
+                      }
+
                       // Handle Interactive WhatsApp Quick Actions (e.g. COD Confirmation / Cancellation)
                       const buttonId = message.interactive?.button_reply?.id || message.button?.payload || "";
                       if (buttonId && integrations?.whatsapp?.phoneNumberId && integrations?.whatsapp?.accessToken) {
@@ -1405,6 +1431,19 @@ async function handleRoute(request, { params }) {
                               type: "text",
                               text: { body: replyBody }
                             });
+
+                            context.order_number = existingOrder?.orderNumber || shopifyOrderId;
+                            context.orderNumber = existingOrder?.orderNumber || shopifyOrderId;
+                            context.order_total = existingOrder?.total || '';
+                            context.orderTotal = existingOrder?.total || '';
+                            context.total_price = existingOrder?.total || '';
+                            context.currency = existingOrder?.currency || 'USD';
+                            context.financial_status = 'cod_confirmed';
+                            context.shopify_order_id = shopifyOrderId;
+                            context.customer_name = existingOrder?.customerName || context.customer_name;
+                            context.customerName = existingOrder?.customerName || context.customerName;
+                            context._chosenOptionId = 'opt_confirm';
+                            context._isInteractiveReply = true;
                           } else if (buttonId.startsWith("cod_cancel:")) {
                             const shopifyOrderId = buttonId.replace("cod_cancel:", "");
                             const existingOrder = await getStoredOrderByShopifyOrderId(shopifyOrderId);
@@ -1422,6 +1461,17 @@ async function handleRoute(request, { params }) {
                               type: "text",
                               text: { body: replyBody }
                             });
+
+                            context.order_number = existingOrder?.orderNumber || shopifyOrderId;
+                            context.orderNumber = existingOrder?.orderNumber || shopifyOrderId;
+                            context.order_total = existingOrder?.total || '';
+                            context.orderTotal = existingOrder?.total || '';
+                            context.currency = existingOrder?.currency || 'USD';
+                            context.financial_status = 'cancelled';
+                            context.shopify_order_id = shopifyOrderId;
+                            context.customer_name = existingOrder?.customerName || context.customer_name;
+                            context._chosenOptionId = 'opt_cancel';
+                            context._isInteractiveReply = true;
                           } else if (buttonId.startsWith("order_status:") || buttonId === "opt0") {
                             const explicitOrderId = buttonId.startsWith("order_status:") ? buttonId.replace("order_status:", "") : "";
                             let existingOrder = null;
@@ -1460,6 +1510,29 @@ async function handleRoute(request, { params }) {
                           }
                         } catch (interactiveActionErr) {
                           console.error("[WhatsApp Interactive Action Error]:", interactiveActionErr.message);
+                        }
+                      }
+
+                      // Auto-enrich order context for all incoming messages if missing
+                      if (!context.order_number) {
+                        try {
+                          const latestOrderForPhone = await getLatestStoredOrderByPhone(message.from, incomingUserId);
+                          if (latestOrderForPhone) {
+                            context.order_number = latestOrderForPhone.orderNumber || latestOrderForPhone.id;
+                            context.orderNumber = latestOrderForPhone.orderNumber || latestOrderForPhone.id;
+                            context.order_total = latestOrderForPhone.total || '';
+                            context.orderTotal = latestOrderForPhone.total || '';
+                            context.total_price = latestOrderForPhone.total || '';
+                            context.currency = latestOrderForPhone.currency || 'USD';
+                            context.financial_status = latestOrderForPhone.status || 'pending';
+                            context.shopify_order_id = latestOrderForPhone.shopifyOrderId || latestOrderForPhone.id;
+                            if (!context.customer_name || context.customer_name === message.from) {
+                              context.customer_name = latestOrderForPhone.customerName || context.customer_name;
+                              context.customerName = latestOrderForPhone.customerName || context.customerName;
+                            }
+                          }
+                        } catch (enrichErr) {
+                          console.warn("[Order Context Enrich Note]:", enrichErr.message);
                         }
                       }
 
@@ -1538,6 +1611,25 @@ async function handleRoute(request, { params }) {
                         integrations,
                         incomingUserId,
                       );
+
+                      // First-touch after a silence / win-back: nudge an opt-in
+                      // list-message (one-shot per customer per promptKey).
+                      try {
+                        const { maybeSendOptinPrompt } = await import("@/lib/whatsapp/optin-prompt");
+                        if (context.customer_last_order_at) {
+                          const daysSince = Math.floor((Date.now() - new Date(context.customer_last_order_at).getTime()) / 86400000);
+                          if (daysSince >= 30) {
+                            await maybeSendOptinPrompt({
+                              userId: incomingUserId,
+                              phone: message.from,
+                              promptKey: 'winback_reengagement',
+                              context: { body: `Welcome back! 👋 It's been ${daysSince} days — stay in the loop for order updates, restock alerts and exclusive offers. Subscribe?` }
+                            });
+                          }
+                        }
+                      } catch (opErr) {
+                        // best-effort
+                      }
                     }
                   }
 
@@ -2688,9 +2780,10 @@ async function handleRoute(request, { params }) {
           { topic: "orders/paid", address: webhookUrl },
           { topic: "orders/fulfilled", address: webhookUrl },
           { topic: "orders/cancelled", address: webhookUrl },
+          { topic: "fulfillments/create", address: webhookUrl },
+          { topic: "fulfillments/update", address: webhookUrl },
           { topic: "checkouts/create", address: webhookUrl },
           { topic: "checkouts/update", address: webhookUrl },
-          // NEW: Add customer webhooks to capture phone numbers
           { topic: "customers/create", address: webhookUrl },
           { topic: "customers/update", address: webhookUrl },
         ];

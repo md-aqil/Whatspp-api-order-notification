@@ -488,8 +488,8 @@ export async function POST(request, props) {
     const [campaignRows] = await query(
       `SELECT id, name, template, templateLanguage, templateCategory, templateHeaderImageUrl, campaignType, productIds, message, variables, audience, recipients, status
        FROM campaigns
-       WHERE id = ?`,
-      [campaignId]
+       WHERE id = ? AND userId = ?`,
+      [campaignId, userId]
     )
 
     const campaign = campaignRows?.[0]

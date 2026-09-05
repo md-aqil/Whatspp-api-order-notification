@@ -1,0 +1,45 @@
+{
+  "$schema": "./CRON_PLAYBOOK.schema.json",
+  "version": 1,
+  "baseUrl": "${CHATFLOW_BASE_URL}",
+  "auth": {
+    "header": "x-cron-token",
+    "value": "${CRON_TOKEN}"
+  },
+  "jobs": [
+    {
+      "name": "sweeps-all",
+      "description": "Run all customer + reorder + CLV sweeps in one shot",
+      "path": "/api/cron/run-all",
+      "method": "POST",
+      "schedule": "0 */6 * * *",
+      "timeoutSeconds": 60
+    },
+    {
+      "name": "silence-sweep",
+      "description": "Detect customers that have gone silent for 24h+ and fire win-back events",
+      "path": "/api/customer/silence-sweep",
+      "method": "POST",
+      "schedule": "0 * * * *",
+      "timeoutSeconds": 30
+    },
+    {
+      "name": "customer-sweep",
+      "description": "Find win-back / birthday / tier-upgrade candidates",
+      "path": "/api/customer/sweep",
+      "method": "POST",
+      "query": "types=win_back,birthday,tier_upgrade",
+      "schedule": "0 9 * * *",
+      "timeoutSeconds": 45
+    },
+    {
+      "name": "reorder-sweep",
+      "description": "Fire shopify.reorder_due for consumables whose window elapsed (hour-of-day optimised)",
+      "path": "/api/reorder/sweep",
+      "method": "POST",
+      "query": "optimize=true&limit=100",
+      "schedule": "0 */6 * * *",
+      "timeoutSeconds": 60
+    }
+  ]
+}

@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import { buildOrigin, getConnectSession, isSessionValid, saveWhatsappForSession } from '@/lib/connect'
 import { httpClient } from '@/lib/httpClient'
 
+export const dynamic = 'force-dynamic'
+
 async function getAppAccessToken() {
   const res = await httpClient.get('https://graph.facebook.com/v22.0/oauth/access_token', {
     params: {

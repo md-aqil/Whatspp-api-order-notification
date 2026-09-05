@@ -1,13 +1,33 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Settings, ArrowRight } from 'lucide-react'
+import { Settings, ArrowRight, TrendingUp } from 'lucide-react'
 
 export default function DashboardPage() {
   const router = useRouter()
+  const [topSellers, setTopSellers] = useState([])
+  const [loadingTop, setLoadingTop] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      setLoadingTop(true)
+      try {
+        const res = await fetch('/api/products/top-sellers?days=90&limit=5')
+        if (!res.ok) return
+        const data = await res.json()
+        if (!cancelled) setTopSellers(data.products || [])
+      } catch (_) {
+      } finally {
+        if (!cancelled) setLoadingTop(false)
+      }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [])
 
   return (
     <div className="dashboard-home p-6 space-y-6">
@@ -76,6 +96,42 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card className="border-slate-200/70 bg-white/90 dark:border-white/[0.08] dark:bg-white/[0.04]">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-lg text-slate-900 dark:text-white">
+            <TrendingUp className="w-4 h-4 text-emerald-500" />
+            Top Sellers (last 90 days)
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {loadingTop ? (
+            <p className="text-sm text-slate-500 dark:text-white/50">Loading…</p>
+          ) : topSellers.length === 0 ? (
+            <p className="text-sm text-slate-500 dark:text-white/50">No orders yet — top sellers will appear here once orders come in.</p>
+          ) : (
+            <ul className="space-y-2">
+              {topSellers.map((p, idx) => (
+                <li key={p.productId} className="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-50 dark:hover:bg-white/[0.04]">
+                  <div className="w-7 h-7 flex items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 text-xs font-bold">
+                    {idx + 1}
+                  </div>
+                  {p.image ? (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img src={p.image} alt={p.title} className="w-9 h-9 rounded-md object-cover border border-slate-200 dark:border-white/10" />
+                  ) : (
+                    <div className="w-9 h-9 rounded-md bg-slate-100 dark:bg-white/[0.06]" />
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">{p.title || `Product #${p.productId}`}</p>
+                    <p className="text-[11px] text-slate-500 dark:text-white/45">{p.unitsSold} sold · ₹{Number(p.revenue).toLocaleString()}</p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
     </div>
   )
 }

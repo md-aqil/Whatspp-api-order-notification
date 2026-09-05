@@ -96,6 +96,33 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
     isInitialRenderRef.current = false
   }, [chat?.id])
 
+  useEffect(() => {
+    if (!chat?.phone) {
+      setHandoffSummary(null)
+      setShowHandoff(false)
+      return
+    }
+    let cancelled = false
+    const loadHandoff = async () => {
+      setLoadingHandoff(true)
+      try {
+        const res = await fetch(`/api/conversation/summary?phone=${encodeURIComponent(chat.phone)}&format=agent`)
+        if (!res.ok) {
+          if (!cancelled) setHandoffSummary(null)
+          return
+        }
+        const data = await res.json()
+        if (!cancelled) setHandoffSummary(data)
+      } catch (err) {
+        console.warn('Handoff summary load failed:', err?.message)
+      } finally {
+        if (!cancelled) setLoadingHandoff(false)
+      }
+    }
+    loadHandoff()
+    return () => { cancelled = true }
+  }, [chat?.phone])
+
   const fetchSuggestions = async () => {
     if (!chat?.phone) return
     setLoadingSuggestions(true)
@@ -121,6 +148,9 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
   const [loadingProducts, setLoadingProducts] = useState(false)
   const [productSearch, setProductSearch] = useState('')
   const [selectedProductIds, setSelectedProductIds] = useState([])
+  const [handoffSummary, setHandoffSummary] = useState(null)
+  const [loadingHandoff, setLoadingHandoff] = useState(false)
+  const [showHandoff, setShowHandoff] = useState(false)
 
   const openProductPicker = async () => {
     setShowProductModal(true)
@@ -303,6 +333,45 @@ export function ChatWindow({ chat, messages, onSendMessage }) {
         className="hidden"
         onChange={handleImageFilesChange}
       />
+
+      {/* Handoff summary banner — surfaced whenever a context-rich customer is open */}
+      {chat && handoffSummary?.success && (
+        <div className="px-4 pt-3">
+          <div className="rounded-2xl border border-amber-200/70 dark:border-amber-700/40 bg-amber-50/80 dark:bg-amber-950/30 px-4 py-2.5">
+            <div className="flex items-start gap-3">
+              <div className="text-amber-600 dark:text-amber-400 mt-0.5">
+                <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">Handoff context</span>
+                  {handoffSummary?.raw?.profile?.lifetimeTier && (
+                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-200/70 dark:bg-amber-800/60 text-amber-800 dark:text-amber-200">
+                      {String(handoffSummary.raw.profile.lifetimeTier).toUpperCase()}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setShowHandoff(s => !s)}
+                    className="ml-auto text-[11px] font-medium text-amber-700 dark:text-amber-300 hover:underline"
+                  >
+                    {showHandoff ? 'Hide' : 'Show details'}
+                  </button>
+                </div>
+                {loadingHandoff ? (
+                  <div className="text-xs text-amber-700/80 dark:text-amber-200/80">Loading context…</div>
+                ) : showHandoff ? (
+                  <pre className="text-[11px] leading-relaxed text-amber-900/90 dark:text-amber-100/90 whitespace-pre-wrap font-mono max-h-48 overflow-y-auto">{handoffSummary.summary}</pre>
+                ) : (
+                  <div className="text-xs text-amber-800/90 dark:text-amber-100/90 line-clamp-2">
+                    {String(handoffSummary.summary || '').split('\n').slice(0, 2).join(' · ')}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Multi-Product Picker Modal */}
       {showProductModal && (

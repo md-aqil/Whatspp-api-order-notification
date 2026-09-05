@@ -3,6 +3,8 @@ import { buildOrigin, getConnectSession, isSessionValid, requireConnectEnv, save
 import { createShopifyWebhook, normalizeShopifyDomain } from '@/lib/integrations/shopify'
 import { httpClient } from '@/lib/httpClient'
 
+export const dynamic = 'force-dynamic'
+
 const DEFAULT_SCOPES = [
   'read_products',
   'read_orders',

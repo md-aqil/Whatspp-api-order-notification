@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server'
 import { buildOrigin, getConnectSession, isSessionValid, saveShopifyForSession } from '@/lib/connect'
 import { httpClient } from '@/lib/httpClient'
+import { createShopifyWebhook } from '@/lib/integrations/shopify'
+
+export const dynamic = 'force-dynamic'
 
 export async function GET(request) {
   try {
@@ -56,10 +59,22 @@ export async function GET(request) {
     // Best-effort: register the webhooks this app relies on
     try {
       const webhookUrl = `${origin}/api/webhook/shopify`
-      const topics = ['orders/create', 'carts/update', 'checkouts/update']
+      const topics = [
+        'orders/create',
+        'orders/updated',
+        'orders/paid',
+        'orders/fulfilled',
+        'orders/cancelled',
+        'fulfillments/create',
+        'fulfillments/update',
+        'checkouts/create',
+        'checkouts/update',
+        'customers/create',
+        'customers/update'
+      ]
       for (const topic of topics) {
         await createShopifyWebhook(
-          { shopDomain: normalizedShop, clientId: process.env.SHOPIFY_CLIENT_ID, clientSecret: process.env.SHOPIFY_CLIENT_SECRET },
+          { shopDomain: normalizedShop, accessToken },
           topic,
           webhookUrl
         ).catch((e) => console.warn(`Shopify webhook ${topic} skipped:`, e.message))

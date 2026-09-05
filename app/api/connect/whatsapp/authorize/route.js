@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server'
 import { buildOrigin, getConnectSession, isSessionValid, requireConnectEnv } from '@/lib/connect'
 
+export const dynamic = 'force-dynamic'
+
 const META_SCOPES = 'whatsapp_business_messaging,whatsapp_business_management'
 
 export async function GET(request) {

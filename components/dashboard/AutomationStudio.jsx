@@ -605,7 +605,17 @@ export function AutomationStudio() {
   useEffect(() => {
     fetch('/api/automations').then(r => r.json()).then(d => {
       console.log('API automations response:', d)
-      if (Array.isArray(d) && d.length > 0) { const n = sortAutomations(d.map(item => normalize(alignDefaultAutomationLayout(item)))); setAutomations(n); setActiveId(n[0].id); setSelId(n[0].steps?.[0]?.id || null) }
+      const fetched = Array.isArray(d) ? d : []
+      const combined = [...fetched]
+      defaultAutomations.forEach(def => {
+        if (!fetched.some(a => a.id === def.id)) {
+          combined.push({ ...def, status: true })
+        }
+      })
+      const n = sortAutomations(combined.map(item => normalize(alignDefaultAutomationLayout(item))))
+      setAutomations(n)
+      setActiveId(n[0]?.id || defaultAutomations[0].id)
+      setSelId(n[0]?.steps?.[0]?.id || null)
     }).catch(console.error).finally(() => setHydrated(true))
   }, [])
   useEffect(() => {
