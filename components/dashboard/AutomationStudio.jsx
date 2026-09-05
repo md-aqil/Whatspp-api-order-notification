@@ -254,6 +254,7 @@ const normalize = a => {
   const defaultSeed = defaultAutomations.find(item => item.id === a?.id)
   return {
     ...a,
+    status: Boolean(a?.status === true || a?.status === 1 || a?.status === '1'),
     zohoFieldSummary: a?.zohoFieldSummary || defaultSeed?.zohoFieldSummary,
     metrics: a?.metrics || { sent: 0, openRate: 0, conversions: 0 },
     steps: (Array.isArray(a?.steps) ? a.steps : []).map((s, i, arr) => mapStep(s, i, arr))
@@ -610,10 +611,12 @@ export function AutomationStudio() {
       const combined = [...fetched]
       defaultAutomations.forEach(def => {
         if (!fetched.some(a => a.id === def.id)) {
-          combined.push({ ...def, status: true })
+          combined.push({ ...def, status: false })
         }
       })
       const n = sortAutomations(combined.map(item => normalize(alignDefaultAutomationLayout(item))))
+      skipNextAutoSaveRef.current = true
+      latestAutomationsRef.current = n
       setAutomations(n)
       setActiveId(n[0]?.id || defaultAutomations[0].id)
       setSelId(n[0]?.steps?.[0]?.id || null)
@@ -623,9 +626,13 @@ export function AutomationStudio() {
     fetch('/api/whatsapp-templates').then(r => r.json()).then(d => setTemplates(Array.isArray(d) ? d : [])).catch(e => { setTemplates([]); setTplErr(e.message) })
   }, [])
   useEffect(() => {
-    if (!templates.length) return
-    setAutomations(current => sortAutomations(current.map(automation => applyDefaultTemplateToAutomation(automation, templates))))
-  }, [templates])
+    if (!templates.length || !hydrated) return
+    setAutomations(current => {
+      const updated = sortAutomations(current.map(automation => applyDefaultTemplateToAutomation(automation, templates)))
+      latestAutomationsRef.current = updated
+      return updated
+    })
+  }, [templates, hydrated])
   useEffect(() => {
     if (!hydrated) return
     if (!autoSaveReadyRef.current) {
@@ -639,7 +646,7 @@ export function AutomationStudio() {
       return
     }
     setSaveState('dirty')
-    const t = setTimeout(() => persist(), 600)
+    const t = setTimeout(() => persist(latestAutomationsRef.current), 600)
     return () => clearTimeout(t)
   }, [automations, hydrated])
 
@@ -1414,41 +1421,84 @@ export function AutomationStudio() {
                       </div>
                       
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {categoryTemplates.map(template => (
-                          <div 
-                            key={template.id}
-                            className={`group p-6 rounded-3xl bg-gradient-to-br from-white/[0.03] to-transparent border border-white/[0.08] hover:border-white/20 transition-all cursor-pointer relative overflow-hidden`}
-                            onClick={() => {
-                              setCloneSourceId(template.id)
-                              setMode('template')
-                              setDraftName(`My ${template.name}`)
-                              setDlgOpen(true)
-                            }}
-                          >
-                            <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
-                              {category === 'Shopify' ? <PackageCheck className="w-24 h-24" /> :
-                               category === 'Google Sheets' ? <Database className="w-24 h-24" /> :
-                               category === 'Zoho' ? <Users className="w-24 h-24" /> :
-                               <Workflow className="w-24 h-24" />}
-                            </div>
-                            <div className="relative z-10">
-                              <div className={`h-10 w-10 rounded-xl flex items-center justify-center mb-4 shadow-lg ${
-                                category === 'Shopify' ? 'bg-emerald-600 shadow-emerald-500/20' :
-                                category === 'Google Sheets' ? 'bg-green-600 shadow-green-500/20' :
-                                category === 'Zoho' ? 'bg-orange-600 shadow-orange-500/20' :
-                                category === 'WhatsApp' ? 'bg-teal-600 shadow-teal-500/20' :
-                                'bg-violet-600 shadow-violet-500/20'
-                              }`}>
-                                <Zap className="w-5 h-5 text-white" />
+                        {categoryTemplates.map(template => {
+                          const existingFlow = automations.find(a => a.id === template.id)
+                          const isLive = Boolean(existingFlow?.status)
+
+                          return (
+                            <div 
+                              key={template.id}
+                              className="group p-6 rounded-3xl bg-gradient-to-br from-white/[0.03] to-transparent border border-white/[0.08] hover:border-white/20 transition-all cursor-pointer relative overflow-hidden flex flex-col justify-between"
+                              onClick={() => {
+                                if (existingFlow) {
+                                  setActiveId(existingFlow.id)
+                                  setSelId(existingFlow.steps[0]?.id || null)
+                                  setViewMode('editor')
+                                } else {
+                                  const newFlow = normalize(alignDefaultAutomationLayout({ ...template, status: false }))
+                                  const nextAutomations = sortAutomations([newFlow, ...automations])
+                                  skipNextAutoSaveRef.current = true
+                                  latestAutomationsRef.current = nextAutomations
+                                  setAutomations(nextAutomations)
+                                  setActiveId(newFlow.id)
+                                  setSelId(newFlow.steps[0]?.id || null)
+                                  setViewMode('editor')
+                                  persist(nextAutomations)
+                                }
+                              }}
+                            >
+                              <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
+                                {category === 'Shopify' ? <PackageCheck className="w-24 h-24" /> :
+                                 category === 'Google Sheets' ? <Database className="w-24 h-24" /> :
+                                 category === 'Zoho' ? <Users className="w-24 h-24" /> :
+                                 category === 'WhatsApp' ? <MessageSquareText className="w-24 h-24" /> :
+                                 <Workflow className="w-24 h-24" />}
                               </div>
-                              <h3 className="font-black text-white text-lg">{template.name}</h3>
-                              <p className="text-white/50 text-xs mt-2 leading-relaxed">{template.summary}</p>
-                              <div className="mt-6 flex items-center gap-2 text-white/40 text-xs font-bold uppercase tracking-widest group-hover:text-white group-hover:gap-3 transition-all">
-                                Use Template <ArrowRight className="w-4 h-4" />
+                              <div className="relative z-10">
+                                <div className="flex items-start justify-between mb-4">
+                                  <div className={`h-10 w-10 rounded-xl flex items-center justify-center shadow-lg ${
+                                    category === 'Shopify' ? 'bg-emerald-600 shadow-emerald-500/20' :
+                                    category === 'Google Sheets' ? 'bg-green-600 shadow-green-500/20' :
+                                    category === 'Zoho' ? 'bg-orange-600 shadow-orange-500/20' :
+                                    category === 'WhatsApp' ? 'bg-teal-600 shadow-teal-500/20' :
+                                    'bg-violet-600 shadow-violet-500/20'
+                                  }`}>
+                                    <Zap className="w-5 h-5 text-white" />
+                                  </div>
+                                  {existingFlow && (
+                                    <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider ${
+                                      isLive ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30' : 'bg-white/5 text-white/40 border border-white/10'
+                                    }`}>
+                                      {isLive ? '● Live' : 'Draft'}
+                                    </span>
+                                  )}
+                                </div>
+                                <h3 className="font-black text-white text-lg group-hover:text-violet-300 transition-colors">{template.name}</h3>
+                                <p className="text-white/50 text-xs mt-2 leading-relaxed">{template.summary}</p>
+                              </div>
+
+                              <div className="mt-6 pt-4 border-t border-white/[0.04] flex items-center justify-between relative z-10">
+                                <div className="flex items-center gap-2 text-white/60 text-xs font-bold uppercase tracking-widest group-hover:text-white transition-all">
+                                  Open Flow <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                                </div>
+                                <button
+                                  type="button"
+                                  title="Clone a duplicate copy"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setCloneSourceId(template.id)
+                                    setMode('template')
+                                    setDraftName(`My ${template.name}`)
+                                    setDlgOpen(true)
+                                  }}
+                                  className="text-[11px] text-white/30 hover:text-white/80 px-2 py-1 rounded-md hover:bg-white/5 transition-all"
+                                >
+                                  Clone Copy
+                                </button>
                               </div>
                             </div>
-                          </div>
-                        ))}
+                          )
+                        })}
                       </div>
                     </div>
                   ))}

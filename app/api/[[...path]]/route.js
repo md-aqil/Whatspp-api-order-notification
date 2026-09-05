@@ -3641,10 +3641,8 @@ async function handleRoute(request, { params }) {
                 automationId,
                 currentUserId,
                 automation.name || "Unnamed",
-                automation.status !== undefined
-                  ? automation.status
-                    ? 1
-                    : 0
+                automation.status === true || automation.status === 1 || automation.status === '1'
+                  ? 1
                   : 0,
                 automation.source || "Custom",
                 automation.summary || "",
@@ -3703,9 +3701,10 @@ async function handleRoute(request, { params }) {
           [currentUserId],
         );
 
-        // Parse JSON columns
+        // Parse JSON columns and format boolean status
         const parsedRows = (rows || []).map((row) => ({
           ...row,
+          status: row.status === 1 || row.status === true || row.status === '1',
           steps:
             typeof row.steps === "string" ? JSON.parse(row.steps) : row.steps,
           metrics:
@@ -3715,7 +3714,7 @@ async function handleRoute(request, { params }) {
         }));
         console.log(
           "Returning automations:",
-          parsedRows.map((a) => ({ id: a.id, stepsCount: a.steps?.length })),
+          parsedRows.map((a) => ({ id: a.id, status: a.status, stepsCount: a.steps?.length })),
         );
 
         return handleCORS(NextResponse.json(parsedRows || []));
